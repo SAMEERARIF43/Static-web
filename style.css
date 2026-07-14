@@ -4,119 +4,6 @@
     box-sizing: border-box;
 }
 
-.main{
-    width: 100%;
-    height: 100vh;
-
-    background: linear-gradient(
-        to top,
-        rgba(0,0,0,0.5)50%,
-        rgba(0,0,0,0.5)50%
-    )
-
-    
-}
-.main{
-    width: 100%;
-    height: 100vh;
-    background-image: url("anime.jpeg");
-    background-size: cover;
-    background-position: center;
-    background-repeat: no-repeat;
-}
-
-.navbar{
-    width: 1200px;
-    height: 75px;
-    margin: auto;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-}
-
-.icon{
-    height: 70px;
-    margin-left: -20px;
-}
-
-.logo{
-    color: #ff7200;
-    font-size: 35px;
-    font-family: Arial, sans-serif;
-    padding-top: 10px;
-    white-space: nowrap;
-}
-
-.menu{
-    height: 25px;
-}
-
-ul{
-    display: flex;
-    align-items: center;
-    justify-content: center;
-}
-
-ul li{
-    list-style: none;
-    margin-left: 40px;
-}
-
-ul li a{
-    text-decoration: none;
-    color: white;
-    font-family: Arial, sans-serif;
-    font-weight: bold;
-    transition: 0.4s ease-in-out;
-}
-
-ul li a:hover{
-    color: #ff7200;
-}
-
-.search{
-    display: flex;
-    align-items: center;
-}
-
-.search input{
-    font-family: 'Times New Roman';
-    width: 200px;
-    height: 40px;
-    background: transparent;
-    border: 1px solid #ff7200;
-    color: rgb(0, 0, 0);
-    border-right: none;
-    font-size: 16px;
-    padding: 10px;
-    border-top-left-radius: 5px;
-    border-bottom-left-radius: 5px;
-}
-
-.btn{
-    width: 100px;
-    height: 40px;
-    background: #ff7200;
-    border: 2px solid #ff7200;
-    color: white;
-    font-size: 16px;
-    cursor: pointer;
-    border-top-right-radius: 5px;
-    border-bottom-right-radius: 5px;
-}
-
-.btn:focus{
-    outline: none;
-}
-
-.srch:focus{
-    outline: none;
-}*{
-    margin: 0;
-    padding: 0;
-    box-sizing: border-box;
-}
-
 body{
     background: #10131c;
     font-family: 'Poppins', Arial, sans-serif;
@@ -312,5 +199,76 @@ body{
         flex-wrap: wrap;
         gap: 20px;
         justify-content: center;
+    }
+}
+
+@media (max-width: 600px){
+    body{
+        padding: 12px;
+    }
+
+    .topnav{
+        padding: 12px 0 20px;
+    }
+
+    .topnav ul{
+        gap: 14px 24px;
+        row-gap: 14px;
+    }
+
+    .topnav ul li a{
+        font-size: 14px;
+    }
+
+    .hero{
+        border-radius: 20px;
+    }
+
+    .hero-left{
+        padding: 32px 22px;
+    }
+
+    .logo{
+        font-size: 32px;
+        margin-bottom: 24px;
+    }
+
+    .search{
+        margin-bottom: 22px;
+    }
+
+    .search .text{
+        max-width: none;
+        height: 48px;
+        font-size: 14px;
+    }
+
+    .search .btn{
+        width: 48px;
+        height: 48px;
+    }
+
+    .top-search{
+        max-width: none;
+        font-size: 13px;
+        line-height: 1.75;
+        margin-bottom: 28px;
+    }
+
+    .cta-group{
+        max-width: none;
+    }
+
+    .cta-btn{
+        padding: 14px 20px;
+        font-size: 15px;
+    }
+
+    .hero-right{
+        min-height: 260px;
+    }
+
+    .hero-right img{
+        object-position: top;
     }
 }
