@@ -1,31 +1,714 @@
-document.addEventListener('DOMContentLoaded', () => {
-    // Navbar Scroll Effect
-    const navbar = document.getElementById('navbar');
-    
-    window.addEventListener('scroll', () => {
-        if (window.scrollY > 50) {
-            navbar.classList.add('scrolled');
-        } else {
-            navbar.classList.remove('scrolled');
-        }
-    });
+/* ============================================================
+   ANIME HUB — MAIN SCRIPT
+   SPA Router · Search · Watchlist · Render Engine
+   ============================================================ */
 
-    // Mobile Menu Toggle
-    const menuToggle = document.getElementById('mobile-menu');
-    const navLinks = document.querySelector('.nav-links');
+'use strict';
 
-    if (menuToggle) {
-        menuToggle.addEventListener('click', () => {
-            menuToggle.classList.toggle('active');
-            navLinks.classList.toggle('active');
-        });
+// ────────────────────────────────────────────────────────────
+// STATE
+// ────────────────────────────────────────────────────────────
+const State = {
+  currentPage: 'home',
+  currentAnimeId: null,
+  currentEpisode: 1,
+  watchlist: JSON.parse(localStorage.getItem('ah_watchlist') || '[]'),
+  continueWatching: JSON.parse(localStorage.getItem('ah_continue') || '[]'),
+  activeGenre: 'All',
+  searchQuery: '',
+};
+
+// ────────────────────────────────────────────────────────────
+// UTILITIES
+// ────────────────────────────────────────────────────────────
+function saveWatchlist() {
+  localStorage.setItem('ah_watchlist', JSON.stringify(State.watchlist));
+}
+
+function saveContinue() {
+  localStorage.setItem('ah_continue', JSON.stringify(State.continueWatching));
+}
+
+function isInWatchlist(id) {
+  return State.watchlist.includes(id);
+}
+
+function toggleWatchlist(id) {
+  const anime = getAnimeById(id);
+  if (!anime) return;
+  if (isInWatchlist(id)) {
+    State.watchlist = State.watchlist.filter(i => i !== id);
+    showToast(`Removed "${anime.title}" from watchlist`, 'info');
+  } else {
+    State.watchlist.push(id);
+    showToast(`Added "${anime.title}" to watchlist ✓`, 'success');
+  }
+  saveWatchlist();
+  // Refresh watchlist badge on any visible buttons
+  document.querySelectorAll(`[data-watchlist-id="${id}"]`).forEach(btn => {
+    btn.classList.toggle('saved', isInWatchlist(id));
+    btn.title = isInWatchlist(id) ? 'Remove from Watchlist' : 'Add to Watchlist';
+    btn.textContent = isInWatchlist(id) ? '🔖' : '🔖';
+  });
+}
+
+function addToContinue(animeId, episode) {
+  State.continueWatching = State.continueWatching.filter(i => i.id !== animeId);
+  State.continueWatching.unshift({ id: animeId, ep: episode, progress: 60 });
+  if (State.continueWatching.length > 6) State.continueWatching.pop();
+  saveContinue();
+}
+
+// ────────────────────────────────────────────────────────────
+// TOAST
+// ────────────────────────────────────────────────────────────
+let toastTimer = null;
+function showToast(message, type = 'info') {
+  const toast = document.getElementById('toast');
+  const icons = { success: '✅', error: '❌', info: 'ℹ️' };
+  toast.innerHTML = `<span>${icons[type] || ''}</span><span>${message}</span>`;
+  toast.className = `toast ${type} show`;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => toast.classList.remove('show'), 3200);
+}
+
+// ────────────────────────────────────────────────────────────
+// ROUTER — navigate between pages
+// ────────────────────────────────────────────────────────────
+function navigate(page, payload = {}) {
+  // Hide all pages
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+
+  // Update nav highlight
+  document.querySelectorAll('.nav-link').forEach(a => {
+    a.classList.toggle('active', a.dataset.nav === page);
+  });
+
+  // Close mobile menu
+  closeMobileMenu();
+
+  State.currentPage = page;
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+
+  switch (page) {
+    case 'home':      renderHome(); break;
+    case 'popular':   renderPopularPage(); break;
+    case 'movies':    renderMoviesPage(); break;
+    case 'series':    renderSeriesPage(); break;
+    case 'watchlist': renderWatchlistPage(); break;
+    case 'search':    renderSearchPage(payload.query); break;
+    case 'detail':    renderDetailPage(payload.id); break;
+    case 'watch':     renderWatchPage(payload.id, payload.ep); break;
+    default:          renderHome();
+  }
+
+  document.getElementById(`page-${page}`)?.classList.add('active');
+}
+
+// ────────────────────────────────────────────────────────────
+// CARD HTML BUILDER
+// ────────────────────────────────────────────────────────────
+function buildCard(anime, opts = {}) {
+  const saved = isInWatchlist(anime.id);
+  const badgeText = anime.status === 'Completed' ? 'Completed' : `Ep ${anime.episodes}`;
+  const badgeClass = anime.status === 'Completed' ? 'card-badge completed' : 'card-badge';
+
+  return `
+    <div class="anime-card" data-id="${anime.id}" role="button" tabindex="0" aria-label="${anime.title}">
+      <div class="card-image-wrapper" ${opts.progress ? `style="--progress:${opts.progress}%"` : ''}>
+        <img class="card-image"
+             src="${anime.poster}"
+             alt="${anime.title}"
+             loading="lazy"
+             onerror="this.src='https://placehold.co/300x450/0d1117/ff7200?text=${encodeURIComponent(anime.title)}'">
+        <div class="card-overlay">
+          <button class="play-btn" aria-label="Play ${anime.title}">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+          </button>
+        </div>
+        <span class="${badgeClass}">${badgeText}</span>
+        <button class="card-watchlist-btn ${saved ? 'saved' : ''}"
+                data-watchlist-id="${anime.id}"
+                title="${saved ? 'Remove from Watchlist' : 'Add to Watchlist'}"
+                aria-label="Toggle watchlist for ${anime.title}">🔖</button>
+      </div>
+      <div class="card-info">
+        <h3 class="card-title">${anime.title}</h3>
+        <div class="card-meta">
+          <span class="card-rating"><span class="star">⭐</span> ${anime.rating}</span>
+          <span class="card-type">${anime.type}</span>
+        </div>
+      </div>
+    </div>`;
+}
+
+// Render a grid of skeleton loading cards
+function buildSkeletons(count = 5) {
+  return Array.from({ length: count }, () => `
+    <div class="skeleton-card">
+      <div class="skeleton skeleton-img"></div>
+      <div class="skeleton skeleton-title"></div>
+      <div class="skeleton skeleton-meta"></div>
+    </div>`).join('');
+}
+
+// ────────────────────────────────────────────────────────────
+// GENRE FILTER BUILDER
+// ────────────────────────────────────────────────────────────
+function buildGenreFilter(containerId, onSelect) {
+  const bar = document.getElementById(containerId);
+  if (!bar) return;
+  const allGenres = ['All', ...ALL_GENRES];
+  bar.innerHTML = allGenres.map(g =>
+    `<button class="genre-btn${g === 'All' ? ' active' : ''}" data-genre="${g}">${g}</button>`
+  ).join('');
+
+  bar.addEventListener('click', e => {
+    const btn = e.target.closest('.genre-btn');
+    if (!btn) return;
+    bar.querySelectorAll('.genre-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    onSelect(btn.dataset.genre);
+  });
+}
+
+// ────────────────────────────────────────────────────────────
+// RENDER: HOME
+// ────────────────────────────────────────────────────────────
+function renderHome() {
+  const tGrid = document.getElementById('trending-grid');
+  const pGrid = document.getElementById('popular-grid');
+  tGrid.innerHTML = buildSkeletons(5);
+  pGrid.innerHTML = buildSkeletons(6);
+
+  // Simulate brief data load
+  setTimeout(() => {
+    tGrid.innerHTML = getTrending().map(a => buildCard(a)).join('');
+    pGrid.innerHTML = getPopular().map(a => buildCard(a)).join('');
+    attachCardListeners(tGrid);
+    attachCardListeners(pGrid);
+  }, 300);
+
+  // Continue Watching
+  renderContinueWatching();
+
+  // Genre filter (home)
+  buildGenreFilter('genre-filter-bar', genre => {
+    const filtered = filterByGenre(genre);
+    const tFiltered = filtered.filter(a => a.trending);
+    const pFiltered = filtered.filter(a => a.popular);
+    document.getElementById('trending-grid').innerHTML = tFiltered.length
+      ? tFiltered.map(a => buildCard(a)).join('')
+      : '<p class="search-no-results">No anime in this genre.</p>';
+    document.getElementById('popular-grid').innerHTML = pFiltered.length
+      ? pFiltered.map(a => buildCard(a)).join('')
+      : '<p class="search-no-results">No anime in this genre.</p>';
+    attachCardListeners(document.getElementById('trending-grid'));
+    attachCardListeners(document.getElementById('popular-grid'));
+  });
+}
+
+function renderContinueWatching() {
+  const section = document.getElementById('section-continue');
+  const grid = document.getElementById('continue-grid');
+  if (!State.continueWatching.length) {
+    section.style.display = 'none';
+    return;
+  }
+  section.style.display = '';
+  grid.innerHTML = State.continueWatching.map(item => {
+    const anime = getAnimeById(item.id);
+    if (!anime) return '';
+    return buildCard(anime, { progress: item.progress });
+  }).join('');
+  attachCardListeners(grid);
+}
+
+// ────────────────────────────────────────────────────────────
+// RENDER: POPULAR PAGE
+// ────────────────────────────────────────────────────────────
+function renderPopularPage() {
+  const grid = document.getElementById('popular-page-grid');
+  grid.innerHTML = buildSkeletons(8);
+
+  buildGenreFilter('popular-genre-filter', genre => {
+    const filtered = filterByGenre(genre);
+    grid.innerHTML = filtered.map(a => buildCard(a)).join('');
+    attachCardListeners(grid);
+  });
+
+  setTimeout(() => {
+    grid.innerHTML = getPopular().map(a => buildCard(a)).join('');
+    attachCardListeners(grid);
+  }, 250);
+}
+
+// ────────────────────────────────────────────────────────────
+// RENDER: MOVIES PAGE
+// ────────────────────────────────────────────────────────────
+function renderMoviesPage() {
+  const movies = ANIME_DB.filter(a => a.type === 'Movie');
+  const grid = document.getElementById('movies-grid');
+  const empty = document.getElementById('movies-empty');
+  if (movies.length === 0) {
+    grid.innerHTML = '';
+    empty.style.display = 'flex';
+  } else {
+    empty.style.display = 'none';
+    grid.innerHTML = movies.map(a => buildCard(a)).join('');
+    attachCardListeners(grid);
+  }
+}
+
+// ────────────────────────────────────────────────────────────
+// RENDER: SERIES PAGE
+// ────────────────────────────────────────────────────────────
+function renderSeriesPage() {
+  const grid = document.getElementById('series-grid');
+  grid.innerHTML = buildSkeletons(6);
+
+  buildGenreFilter('series-genre-filter', genre => {
+    const filtered = filterByGenre(genre).filter(a => a.type === 'TV');
+    grid.innerHTML = filtered.length
+      ? filtered.map(a => buildCard(a)).join('')
+      : '<p class="search-no-results">No series found for this genre.</p>';
+    attachCardListeners(grid);
+  });
+
+  setTimeout(() => {
+    const series = ANIME_DB.filter(a => a.type === 'TV');
+    grid.innerHTML = series.map(a => buildCard(a)).join('');
+    attachCardListeners(grid);
+  }, 250);
+}
+
+// ────────────────────────────────────────────────────────────
+// RENDER: WATCHLIST PAGE
+// ────────────────────────────────────────────────────────────
+function renderWatchlistPage() {
+  const grid = document.getElementById('watchlist-grid');
+  const empty = document.getElementById('watchlist-empty');
+  if (!State.watchlist.length) {
+    grid.innerHTML = '';
+    empty.style.display = 'flex';
+  } else {
+    empty.style.display = 'none';
+    const items = State.watchlist.map(id => getAnimeById(id)).filter(Boolean);
+    grid.innerHTML = items.map(a => buildCard(a)).join('');
+    attachCardListeners(grid);
+  }
+}
+
+// ────────────────────────────────────────────────────────────
+// RENDER: SEARCH RESULTS PAGE
+// ────────────────────────────────────────────────────────────
+function renderSearchPage(query) {
+  document.getElementById('search-query-label').textContent = query;
+  const grid = document.getElementById('search-results-grid');
+  const empty = document.getElementById('search-empty');
+  const results = searchAnime(query);
+  if (!results.length) {
+    grid.innerHTML = '';
+    empty.style.display = 'flex';
+  } else {
+    empty.style.display = 'none';
+    grid.innerHTML = results.map(a => buildCard(a)).join('');
+    attachCardListeners(grid);
+  }
+}
+
+// ────────────────────────────────────────────────────────────
+// RENDER: DETAIL PAGE
+// ────────────────────────────────────────────────────────────
+function renderDetailPage(id) {
+  State.currentAnimeId = id;
+  const anime = getAnimeById(id);
+  const container = document.getElementById('detail-content');
+
+  if (!anime) {
+    container.innerHTML = `
+      <div class="empty-state" style="padding-top:120px">
+        <div class="empty-icon">😕</div>
+        <h3>Anime Not Found</h3>
+        <p>The anime you're looking for doesn't exist or has been removed.</p>
+        <button class="cta-btn primary-btn" data-nav="home">Back to Home</button>
+      </div>`;
+    attachNavListeners(container);
+    return;
+  }
+
+  const episodes = getEpisodes(anime);
+  const recommendations = getRecommendations(id, 4);
+  const saved = isInWatchlist(id);
+
+  container.innerHTML = `
+    <div class="detail-banner">
+      <img src="${anime.banner}"
+           alt="${anime.title} banner"
+           onerror="this.src='https://placehold.co/1280x480/0d1117/ff7200?text=${encodeURIComponent(anime.title)}'">
+      <div class="detail-banner-overlay"></div>
+    </div>
+    <div class="detail-content">
+      <button class="back-btn" id="detail-back">← Back</button>
+      <div class="detail-top">
+        <img class="detail-poster"
+             src="${anime.poster}"
+             alt="${anime.title} poster"
+             onerror="this.src='https://placehold.co/300x450/0d1117/ff7200?text=${encodeURIComponent(anime.title)}'">
+        <div class="detail-info">
+          <h1 class="detail-title">${anime.title}</h1>
+          <div class="detail-tags">
+            ${anime.genres.map(g => `<span class="detail-tag genre-tag">${g}</span>`).join('')}
+            <span class="detail-tag">${anime.studio}</span>
+            <span class="detail-tag">${anime.year}</span>
+          </div>
+          <div class="detail-meta-row">
+            <span><b>Type:</b> ${anime.type}</span>
+            <span><b>Status:</b> ${anime.status}</span>
+            <span><b>Episodes:</b> ${anime.episodes}</span>
+          </div>
+          <div class="detail-rating">⭐ ${anime.rating} <span style="font-size:14px;color:var(--text-muted);font-weight:400">/ 5.0</span></div>
+          <div class="detail-actions">
+            <button class="cta-btn primary-btn" id="detail-watch-btn">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+              Watch Now
+            </button>
+            <button class="cta-btn secondary-btn" id="detail-watchlist-btn"
+                    data-watchlist-id="${anime.id}"
+                    style="gap:8px">
+              ${saved ? '🔖 In Watchlist' : '🔖 Add to Watchlist'}
+            </button>
+          </div>
+          <p class="detail-description">${anime.description}</p>
+        </div>
+      </div>
+
+      <div class="episodes-section">
+        <h2 class="episodes-title">Episodes</h2>
+        <div class="episode-list">
+          ${episodes.map(ep => `
+            <div class="episode-item" data-ep="${ep.number}" role="button" tabindex="0" aria-label="Episode ${ep.number}">
+              <span class="ep-num">Ep ${ep.number}</span>
+              <span class="ep-title">${ep.title}</span>
+              <span class="ep-dur">${ep.duration}</span>
+            </div>`).join('')}
+          ${anime.episodes > 24 ? `<div class="episode-item" style="opacity:0.5;cursor:default">+ ${anime.episodes - 24} more…</div>` : ''}
+        </div>
+      </div>
+
+      ${recommendations.length ? `
+      <div class="reco-section">
+        <h2 class="episodes-title">You May Also Like</h2>
+        <div class="reco-grid">
+          ${recommendations.map(a => buildCard(a)).join('')}
+        </div>
+      </div>` : ''}
+    </div>`;
+
+  // Listeners
+  document.getElementById('detail-back').addEventListener('click', () => history.back() || navigate('home'));
+  document.getElementById('detail-watch-btn').addEventListener('click', () => navigate('watch', { id, ep: 1 }));
+
+  const wlBtn = document.getElementById('detail-watchlist-btn');
+  wlBtn.addEventListener('click', () => {
+    toggleWatchlist(id);
+    wlBtn.textContent = isInWatchlist(id) ? '🔖 In Watchlist' : '🔖 Add to Watchlist';
+  });
+
+  container.querySelectorAll('.episode-item[data-ep]').forEach(el => {
+    el.addEventListener('click', () => navigate('watch', { id, ep: +el.dataset.ep }));
+    el.addEventListener('keydown', e => { if (e.key === 'Enter') navigate('watch', { id, ep: +el.dataset.ep }); });
+  });
+
+  const recoGrid = container.querySelector('.reco-grid');
+  if (recoGrid) attachCardListeners(recoGrid);
+  attachNavListeners(container);
+}
+
+// ────────────────────────────────────────────────────────────
+// RENDER: WATCH PAGE
+// ────────────────────────────────────────────────────────────
+function renderWatchPage(id, epNum = 1) {
+  State.currentAnimeId = id;
+  State.currentEpisode = epNum;
+  addToContinue(id, epNum);
+  renderContinueWatching(); // update home section silently
+
+  const anime = getAnimeById(id);
+  const container = document.getElementById('watch-layout');
+
+  if (!anime) {
+    container.innerHTML = `<div class="empty-state" style="padding-top:120px"><div class="empty-icon">😕</div><h3>Anime Not Found</h3><button class="cta-btn primary-btn" data-nav="home">Home</button></div>`;
+    attachNavListeners(container);
+    return;
+  }
+
+  const episodes = getEpisodes(anime);
+  const ep = episodes.find(e => e.number === epNum) || episodes[0];
+  const recommendations = getRecommendations(id, 4);
+
+  container.innerHTML = `
+    <div class="watch-main">
+      <button class="back-btn" id="watch-back">← Back to Details</button>
+      <div class="video-player">
+        <div class="video-placeholder">
+          <div class="video-placeholder-icon">▶</div>
+          <div class="video-placeholder-text">${anime.title}</div>
+          <div class="video-placeholder-sub">Episode ${ep.number} · ${ep.duration}</div>
+        </div>
+      </div>
+      <div class="watch-info">
+        <h2 class="watch-title">${anime.title}</h2>
+        <p class="watch-episode-name">Episode ${ep.number}: ${ep.title}</p>
+        <div class="watch-controls">
+          <button class="watch-ctrl-btn" id="prev-ep" ${ep.number <= 1 ? 'disabled' : ''}>
+            ← Previous
+          </button>
+          <button class="watch-ctrl-btn" id="next-ep" ${ep.number >= episodes.length ? 'disabled' : ''}>
+            Next →
+          </button>
+          <button class="watch-ctrl-btn" id="watch-add-wl" data-watchlist-id="${anime.id}">
+            🔖 ${isInWatchlist(id) ? 'In Watchlist' : 'Add to Watchlist'}
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <div class="watch-sidebar">
+      <div>
+        <h3 class="sidebar-section-title">Episode List</h3>
+        <div class="sidebar-episode-list">
+          ${episodes.map(e => `
+            <div class="sidebar-ep-item${e.number === ep.number ? ' active' : ''}"
+                 data-ep="${e.number}" role="button" tabindex="0">
+              <span class="sidebar-ep-num">Ep ${e.number}</span>
+              <div class="sidebar-ep-info">
+                <div class="sidebar-ep-title">${e.title}</div>
+                <div class="sidebar-ep-dur">${e.duration}</div>
+              </div>
+            </div>`).join('')}
+          ${anime.episodes > 24 ? `<div class="sidebar-ep-item" style="opacity:0.5;cursor:default;justify-content:center">+ ${anime.episodes - 24} more…</div>` : ''}
+        </div>
+      </div>
+      <div>
+        <h3 class="sidebar-section-title">You May Also Like</h3>
+        ${recommendations.map(a => `
+          <div class="watch-reco-card" data-id="${a.id}" role="button" tabindex="0">
+            <img class="watch-reco-img" src="${a.poster}" alt="${a.title}"
+                 onerror="this.src='https://placehold.co/80x110/0d1117/ff7200?text=AH'">
+            <div class="watch-reco-info">
+              <div class="watch-reco-title">${a.title}</div>
+              <div class="watch-reco-meta">⭐ ${a.rating} · ${a.type}</div>
+              <div class="watch-reco-btn">Watch Now →</div>
+            </div>
+          </div>`).join('')}
+      </div>
+    </div>`;
+
+  // Back button
+  document.getElementById('watch-back').addEventListener('click', () => navigate('detail', { id }));
+
+  // Episode nav
+  document.getElementById('prev-ep')?.addEventListener('click', () => navigate('watch', { id, ep: ep.number - 1 }));
+  document.getElementById('next-ep')?.addEventListener('click', () => navigate('watch', { id, ep: ep.number + 1 }));
+
+  // Watchlist
+  const wlBtn = document.getElementById('watch-add-wl');
+  wlBtn.addEventListener('click', () => {
+    toggleWatchlist(id);
+    wlBtn.textContent = `🔖 ${isInWatchlist(id) ? 'In Watchlist' : 'Add to Watchlist'}`;
+  });
+
+  // Sidebar episodes
+  container.querySelectorAll('.sidebar-ep-item[data-ep]').forEach(el => {
+    el.addEventListener('click', () => navigate('watch', { id, ep: +el.dataset.ep }));
+    el.addEventListener('keydown', e => { if (e.key === 'Enter') navigate('watch', { id, ep: +el.dataset.ep }); });
+  });
+
+  // Reco cards
+  container.querySelectorAll('.watch-reco-card[data-id]').forEach(el => {
+    el.addEventListener('click', () => navigate('detail', { id: +el.dataset.id }));
+    el.addEventListener('keydown', e => { if (e.key === 'Enter') navigate('detail', { id: +el.dataset.id }); });
+  });
+}
+
+// ────────────────────────────────────────────────────────────
+// CARD EVENT DELEGATION
+// ────────────────────────────────────────────────────────────
+function attachCardListeners(container) {
+  container.addEventListener('click', e => {
+    // Watchlist button
+    const wlBtn = e.target.closest('.card-watchlist-btn');
+    if (wlBtn) {
+      e.stopPropagation();
+      const id = +wlBtn.dataset.watchlistId;
+      toggleWatchlist(id);
+      // If on watchlist page, re-render
+      if (State.currentPage === 'watchlist') renderWatchlistPage();
+      return;
     }
 
-    // Close mobile menu when clicking outside
-    document.addEventListener('click', (e) => {
-        if (!menuToggle.contains(e.target) && !navLinks.contains(e.target) && navLinks.classList.contains('active')) {
-            menuToggle.classList.remove('active');
-            navLinks.classList.remove('active');
-        }
+    // Play button
+    const playBtn = e.target.closest('.play-btn');
+    if (playBtn) {
+      e.stopPropagation();
+      const card = playBtn.closest('.anime-card');
+      if (card) navigate('watch', { id: +card.dataset.id, ep: 1 });
+      return;
+    }
+
+    // Card click → detail
+    const card = e.target.closest('.anime-card');
+    if (card) navigate('detail', { id: +card.dataset.id });
+  });
+
+  // Keyboard
+  container.addEventListener('keydown', e => {
+    if (e.key === 'Enter') {
+      const card = e.target.closest('.anime-card');
+      if (card) navigate('detail', { id: +card.dataset.id });
+    }
+  });
+}
+
+// Attach nav listeners to arbitrary containers (detail/watch empty states)
+function attachNavListeners(container) {
+  container.querySelectorAll('[data-nav]').forEach(el => {
+    el.addEventListener('click', e => {
+      e.preventDefault();
+      navigate(el.dataset.nav);
     });
+  });
+}
+
+// ────────────────────────────────────────────────────────────
+// SEARCH
+// ────────────────────────────────────────────────────────────
+function doSearch(query) {
+  const q = (query || '').trim();
+  if (!q) return;
+  closeSearchOverlay();
+  navigate('search', { query: q });
+}
+
+function renderSearchOverlayResults(query) {
+  const resultsEl = document.getElementById('search-results');
+  const q = (query || '').trim();
+  if (!q) {
+    resultsEl.innerHTML = '<p class="search-hint">Start typing to search anime…</p>';
+    return;
+  }
+  const results = searchAnime(q);
+  if (!results.length) {
+    resultsEl.innerHTML = `<p class="search-no-results">No results for "<b>${q}</b>". Try a different keyword.</p>`;
+    return;
+  }
+  resultsEl.innerHTML = `
+    <div class="search-results-grid">
+      ${results.slice(0, 8).map(a => buildCard(a)).join('')}
+    </div>`;
+  attachCardListeners(resultsEl);
+}
+
+function openSearchOverlay() {
+  const overlay = document.getElementById('search-overlay');
+  overlay.classList.add('open');
+  setTimeout(() => document.getElementById('search-overlay-input')?.focus(), 100);
+}
+
+function closeSearchOverlay() {
+  document.getElementById('search-overlay').classList.remove('open');
+  document.getElementById('search-overlay-input').value = '';
+  document.getElementById('search-results').innerHTML = '';
+}
+
+// ────────────────────────────────────────────────────────────
+// MOBILE MENU
+// ────────────────────────────────────────────────────────────
+function closeMobileMenu() {
+  document.getElementById('mobile-menu')?.classList.remove('active');
+  document.getElementById('nav-links')?.classList.remove('open');
+}
+
+// ────────────────────────────────────────────────────────────
+// NAVBAR SCROLL
+// ────────────────────────────────────────────────────────────
+function initNavbar() {
+  const navbar = document.getElementById('navbar');
+  window.addEventListener('scroll', () => {
+    navbar.classList.toggle('scrolled', window.scrollY > 60);
+  }, { passive: true });
+}
+
+// ────────────────────────────────────────────────────────────
+// INIT — wire up all global events
+// ────────────────────────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', () => {
+  initNavbar();
+
+  // ── NAV LINKS (desktop + mobile) ──
+  document.querySelectorAll('[data-nav]').forEach(el => {
+    el.addEventListener('click', e => {
+      e.preventDefault();
+      navigate(el.dataset.nav);
+    });
+  });
+
+  // ── MOBILE HAMBURGER ──
+  const hamburger = document.getElementById('mobile-menu');
+  const navLinksList = document.getElementById('nav-links');
+  hamburger?.addEventListener('click', () => {
+    hamburger.classList.toggle('active');
+    navLinksList.classList.toggle('open');
+  });
+  hamburger?.addEventListener('keydown', e => {
+    if (e.key === 'Enter' || e.key === ' ') hamburger.click();
+  });
+
+  // Close menu on backdrop click
+  document.addEventListener('click', e => {
+    if (navLinksList.classList.contains('open') &&
+        !navLinksList.contains(e.target) &&
+        !hamburger.contains(e.target)) {
+      closeMobileMenu();
+    }
+  });
+
+  // ── SEARCH TRIGGER ──
+  document.getElementById('nav-search-trigger')?.addEventListener('click', openSearchOverlay);
+  document.getElementById('search-close-btn')?.addEventListener('click', closeSearchOverlay);
+
+  // Overlay input – live results
+  let searchDebounce;
+  document.getElementById('search-overlay-input')?.addEventListener('input', e => {
+    clearTimeout(searchDebounce);
+    searchDebounce = setTimeout(() => renderSearchOverlayResults(e.target.value), 200);
+  });
+  document.getElementById('search-overlay-input')?.addEventListener('keydown', e => {
+    if (e.key === 'Enter') doSearch(e.target.value);
+    if (e.key === 'Escape') closeSearchOverlay();
+  });
+
+  // ── HERO SEARCH ──
+  document.getElementById('hero-search-btn')?.addEventListener('click', () => {
+    doSearch(document.getElementById('hero-search-input')?.value);
+  });
+  document.getElementById('hero-search-input')?.addEventListener('keydown', e => {
+    if (e.key === 'Enter') doSearch(e.target.value);
+  });
+
+  // ── TOP SEARCH TAGS ──
+  document.getElementById('top-search-tags')?.addEventListener('click', e => {
+    const tag = e.target.closest('.tag');
+    if (tag && tag.dataset.search) doSearch(tag.dataset.search);
+  });
+
+  // ── CLOSE SEARCH OVERLAY ON ESCAPE (global) ──
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape') closeSearchOverlay();
+  });
+
+  // ── INITIAL RENDER ──
+  renderHome();
+  document.getElementById('page-home').classList.add('active');
 });
