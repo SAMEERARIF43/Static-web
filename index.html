@@ -3,65 +3,42 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Anime Hub</title>
-
+    <title>Anime Hub | Premium Anime Streaming</title>
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Outfit:wght@400;600;700;800&display=swap" rel="stylesheet">
+    <!-- CSS -->
     <link rel="stylesheet" href="style.css">
-
 </head>
 <body>
-
-    <nav class="topnav">
-        <ul>
-            <li><a href="#">Home</a></li>
-            <li><a href="#">Movie</a></li>
-            <li><a href="#">TV Series</a></li>
-            <li><a href="#">Most Popular</a></li>
-            <li><a href="#">Top Airing</a></li>
-        </ul>
+    <nav class="topnav" id="navbar">
+        <div class="nav-container">
+            <a href="#" class="logo">Anime<span class="dot">Hub</span></a>
+            
+            <div class="menu-toggle" id="mobile-menu">
+                <span class="bar"></span>
+                <span class="bar"></span>
+                <span class="bar"></span>
+            </div>
+            <ul class="nav-links">
+                <li><a href="#" class="active">Home</a></li>
+                <li><a href="#">Movie</a></li>
+                <li><a href="#">TV Series</a></li>
+                <li><a href="#">Most Popular</a></li>
+                <li><a href="#">Top Airing</a></li>
+            </ul>
+        </div>
     </nav>
-
-    <div class="hero">
-
-        <div class="hero-left">
-
-            <h1 class="logo">Anime<span class="dot">Hub</span></h1>
-
-            <div class="search">
-                <input class="text" type="search" placeholder="Search anime...">
-                <button class="btn"><span>&#128269;</span></button>
-            </div>
-
-            <p class="top-search">
-                <strong>Top search:</strong>
-                One Piece,
-                Attack on Titan,
-                Fullmetal Alchemist: Brotherhood,
-                Death Note,
-                Naruto,
-                Hunter × Hunter (2011),
-                Bleach,
-                Steins;Gate,
-                Vinland Saga,
-                Code Geass,
-                Overflow (uncensored),
-                Hajime no ippo,
-                Black Clover,
-                Haikyuu!!,
-                JJK
-            </p>
-
-            <div class="cta-group">
-                <a href="#" class="cta-btn">Watch anime <span class="arrow">&#8594;</span></a>
-                <a href="#" class="cta-btn">Join Discord <span class="arrow">&#128172;</span></a>
-            </div>
-
-        </div>
-
-        <div class="hero-right">
-            <img src="anime.jpeg" alt="Featured anime characters">
-        </div>
-
-    </div>
-
-</body>
-</html>
+    <main class="hero">
+        <div class="hero-content">
+            <div class="hero-left">
+                <div class="badge">🔥 New Episodes Added Daily</div>
+                <h1 class="hero-title">Unlimited Anime.<br>Anywhere, <span class="highlight">Anytime.</span></h1>
+                <p class="hero-subtitle">Dive into the ultimate anime experience. Watch thousands of episodes in sub and dub on any device in full HD.</p>
+                <div class="search-container">
+                    <input class="search-input" type="search" placeholder="Search for anime, movies, series...">
+                    <button class="search-btn" aria-label="Search">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+                    </button>
+                </div>
