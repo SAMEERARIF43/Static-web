@@ -12,6 +12,7 @@
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
+
     <nav class="topnav" id="navbar">
         <div class="nav-container">
             <a href="#" class="logo">Anime<span class="dot">Hub</span></a>
@@ -21,6 +22,7 @@
                 <span class="bar"></span>
                 <span class="bar"></span>
             </div>
+
             <ul class="nav-links">
                 <li><a href="#" class="active">Home</a></li>
                 <li><a href="#">Movie</a></li>
@@ -30,15 +32,64 @@
             </ul>
         </div>
     </nav>
+
     <main class="hero">
         <div class="hero-content">
             <div class="hero-left">
                 <div class="badge">🔥 New Episodes Added Daily</div>
                 <h1 class="hero-title">Unlimited Anime.<br>Anywhere, <span class="highlight">Anytime.</span></h1>
                 <p class="hero-subtitle">Dive into the ultimate anime experience. Watch thousands of episodes in sub and dub on any device in full HD.</p>
+
                 <div class="search-container">
                     <input class="search-input" type="search" placeholder="Search for anime, movies, series...">
                     <button class="search-btn" aria-label="Search">
                         <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
                     </button>
                 </div>
+
+                <div class="top-search-container">
+                    <strong>Top Searches:</strong>
+                    <div class="tag-list">
+                        <a href="#" class="tag">One Piece</a>
+                        <a href="#" class="tag">Attack on Titan</a>
+                        <a href="#" class="tag">Jujutsu Kaisen</a>
+                        <a href="#" class="tag">Solo Leveling</a>
+                        <a href="#" class="tag">Naruto</a>
+                    </div>
+                </div>
+
+                <div class="cta-group">
+                    <a href="#" class="cta-btn primary-btn">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="currentColor" stroke="none"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
+                        Watch Now
+                    </a>
+                    <a href="#" class="cta-btn secondary-btn">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>
+                        Join Discord
+                    </a>
+                </div>
+            </div>
+
+            <div class="hero-right">
+                <div class="image-wrapper">
+                    <div class="glow-effect"></div>
+                    <img src="anime.jpg" alt="Featured anime characters" class="hero-image">
+                    
+                    <div class="floating-card rating-card">
+                        <span class="star">⭐</span> 4.9/5
+                    </div>
+                    <div class="floating-card hd-card">
+                        4K Ultra HD
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Ambient background elements -->
+        <div class="ambient-blob blob-1"></div>
+        <div class="ambient-blob blob-2"></div>
+    </main>
+
+    <script src="script.js"></script>
+</body>
+</html>
