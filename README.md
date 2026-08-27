@@ -1,36 +1,41 @@
-# Static-web
 # 🎌 Anime Website
 
-This repository is the starting point for my **Anime Website project**.
+This repository contains my **Anime Website project**, developed as an ongoing web development project.
 
-The goal is to build a website that will contain a wide collection of anime, from **older classics to the latest releases**, with information and features organized in one place.
+The goal is to create a modern and user-friendly platform where users can **discover, explore, and learn about anime**, ranging from classic series to the latest releases.
 
-## 🚀 Project Goal
+## 🚀 Project Goals
 
-I will be developing this project step by step. The website is planned to include:
+The website is being developed step by step and is planned to include:
 
-* 🎬 Old and classic anime
+* 🎬 Classic and popular anime
 * 🔥 Latest and currently airing anime
-* 📚 Anime information and details
-* 🔎 Anime search and discovery
-* 📅 Updates for new releases
-* 📂 Organized anime categories
-* 🖥️ A clean and user-friendly interface
+* 📖 Detailed anime information
+* 🔎 Search and discovery
+* 📅 Latest release updates
+* 🏷️ Genre and category organization
+* ⭐ Ratings and other useful information
+* 🖥️ Modern and responsive user interface
 
 ## 🛠️ Development
 
-This repository will be continuously updated as I work on the project.
+This repository will be continuously updated throughout the development process.
 
-I will use it to store the **source code, features, improvements, experiments, and future updates** related to the website.
+It will contain the project's:
+
+* 💻 Source code
+* ✨ New features
+* 🎨 UI/UX improvements
+* 🧪 Experiments and implementations
+* 🔧 Bug fixes and optimizations
+* 🚀 Future updates
 
 ## 📌 Status
 
-**🚧 Project in Development**
+**🚧 Currently in Development**
 
-This is an ongoing project, and new features will be added over time.
+The project is actively being developed, with new features and improvements planned for future updates.
 
----
+## 🎯 Vision
 
-### 🎯 Vision
-
-To create a complete and easy-to-use anime platform where users can explore anime from **the classics to the newest releases**, all in one place.
+The vision is to build a **complete, modern, and easy-to-use anime platform** where users can explore anime from **classic favorites to the newest releases**, with useful information and discovery features available in one place.
