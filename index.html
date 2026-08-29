@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Anime Hub | Premium Anime Streaming Platform</title>
   <meta name="description" content="Watch thousands of anime episodes in sub and dub on AnimeHub — the ultimate anime streaming and discovery platform.">
+  <link rel="icon" type="image/png" href="assets/favicon-64.png">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Outfit:wght@400;600;700;800;900&display=swap" rel="stylesheet">
@@ -96,14 +97,16 @@
             </div>
           </div>
 
+          <!-- Hero right is intentionally empty of a foreground image now:
+               the uploaded character collage lives in the hero background
+               (.hero-bg), so these floating cards sit directly over it. -->
           <div class="hero-right">
-            <div class="image-wrapper">
-              <div class="glow-effect"></div>
-              <img src="anime.jpg" alt="Featured anime characters" class="hero-image" onerror="this.src='https://placehold.co/500x500/0d1117/ff7200?text=AnimeHub'">
+            <div class="hero-floating-stack">
               <div class="floating-card rating-card">
                 <span class="star">⭐</span> 4.9 / 5
               </div>
               <div class="floating-card hd-card">4K Ultra HD</div>
+              <div class="floating-card count-card">🎬 12,000+ Episodes</div>
             </div>
           </div>
         </div>
