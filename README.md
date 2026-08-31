@@ -2,20 +2,36 @@
 
 This repository contains my **Anime Website project**, developed as an ongoing web development project.
 
-The goal is to create a modern and user-friendly platform where users can **discover, explore, and learn about anime**, ranging from classic series to the latest releases.
+The goal is to build a **full-fledged anime platform** where users can discover, explore, and **watch and enjoy anime** all in one place. The platform will cover everything from classic favorites to the latest and currently airing series.
 
 ## 🚀 Project Goals
 
-The website is being developed step by step and is planned to include:
+The website is being developed step by step with the goal of becoming a complete anime platform featuring:
 
-* 🎬 Classic and popular anime
+* 🎬 A large collection of anime
 * 🔥 Latest and currently airing anime
+* ▶️ Anime streaming and watching features
 * 📖 Detailed anime information
-* 🔎 Search and discovery
-* 📅 Latest release updates
+* 🔎 Search and anime discovery
+* 📅 Latest episode and release updates
 * 🏷️ Genre and category organization
-* ⭐ Ratings and other useful information
-* 🖥️ Modern and responsive user interface
+* ⭐ Ratings and useful anime information
+* 📚 Anime seasons and episode listings
+* 🖥️ Modern, responsive, and user-friendly interface
+* 👤 User-focused features for a better viewing experience
+
+## 🎥 Watch & Enjoy
+
+The main vision of this project is to create a platform where users can **find anime they love and enjoy watching it** without having to search across different platforms.
+
+Users will eventually be able to:
+
+* 🔍 Find anime by name, genre, or category
+* 📺 Browse available episodes
+* ▶️ Watch anime directly through the platform
+* 🆕 Discover newly released episodes
+* ❤️ Explore popular and recommended anime
+* 📖 View detailed information about each series
 
 ## 🛠️ Development
 
@@ -34,8 +50,12 @@ It will contain the project's:
 
 **🚧 Currently in Development**
 
-The project is actively being developed, with new features and improvements planned for future updates.
+The website is actively being developed. More features, anime content, and improvements will be added as the project progresses.
 
 ## 🎯 Vision
 
-The vision is to build a **complete, modern, and easy-to-use anime platform** where users can explore anime from **classic favorites to the newest releases**, with useful information and discovery features available in one place.
+The ultimate vision is to turn this project into a **complete, full-fledged anime website** where users can **discover, explore, and watch anime in one place**.
+
+From **classic favorites and popular series to the newest releases and currently airing anime**, the platform aims to provide an enjoyable and convenient experience for every anime fan.
+
+> 🎌 **Discover. Explore. Watch. Enjoy.**
