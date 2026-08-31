@@ -940,6 +940,7 @@ footer a{color:var(--primary)}
 }
 
 @media(max-width:375px){
+   
   .cta-group{flex-direction:column;width:100%}
   .cta-btn{justify-content:center}
 }
