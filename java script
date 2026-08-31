@@ -711,4 +711,5 @@ document.addEventListener('DOMContentLoaded', () => {
   // ── INITIAL RENDER ──
   renderHome();
   document.getElementById('page-home').classList.add('active');
-});
+}
+);
