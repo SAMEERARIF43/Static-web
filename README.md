@@ -55,6 +55,7 @@ The website is actively being developed. More features, anime content, and impro
 ## 🎯 Vision
 
 The ultimate vision is to turn this project into a **complete, full-fledged anime website** where users can **discover, explore, and watch anime in one place**.
+most likely i will add more things andd features to this website so that it should be user friendly and users should choose this web over other anime websites
 
 From **classic favorites and popular series to the newest releases and currently airing anime**, the platform aims to provide an enjoyable and convenient experience for every anime fan.
 
