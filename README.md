@@ -59,6 +59,11 @@ Most likely i will add more things andd features to this website so that it shou
 
 ONE PIECE , NARUTO AND BLEACH ARE THE REAL DEAL IN ANIME HISTORY . 
 
+FEATURES THAT I WANT TO ADD:
+1. NO SPAMMING IN DROPPING THE RATINGS OF ANY ANIME EP OR MOVIE.
+2. DOWNLOADING ANIME IN HD SHOULD BE EASY AND SHOULD BE IN EVERY LANGUAGE.
+3. NO ADDS OR REDIRECTS.
+
 From **classic favorites and popular series to the newest releases and currently airing anime**, the platform aims to provide an enjoyable and convenient experience for every anime fan.
 
 > 🎌 **Discover. Explore. Watch. Enjoy.**
