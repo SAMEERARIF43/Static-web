@@ -1,0 +1,26 @@
+{
+  "name": "static-web",
+  "version": "1.0.0",
+  "description": "This repository contains my **Anime Website project**, developed as an ongoing web development project.",
+  "main": "data.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/SAMEERARIF43/Static-web.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/SAMEERARIF43/Static-web/issues"
+  },
+  "homepage": "https://github.com/SAMEERARIF43/Static-web#readme",
+  "dependencies": {
+    "axios": "^1.20.0",
+    "cors": "^2.8.6",
+    "express": "^5.2.1"
+  }
+}
