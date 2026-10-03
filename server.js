@@ -32,7 +32,9 @@ const ANIME_DB = [
     rating: 8.6,
     episodes: 24,
     status: "Completed",
-    image: "https://cdn.myanimelist.net/images/anime/1171/109222.jpg",
+    image: "https://s4.anilist.co/file/anilistcdn/media/anime/cover/large/bx113415-LHBAeoZDIsnF.jpg",
+    poster: "https://s4.anilist.co/file/anilistcdn/media/anime/cover/large/bx113415-LHBAeoZDIsnF.jpg",
+    banner: "https://s4.anilist.co/file/anilistcdn/media/anime/banner/113415-jQBSkxWAAk83.jpg",
     description:
       "Yuji Itadori joins a secret organization of Jujutsu Sorcerers after becoming the host of a powerful curse."
   },
@@ -45,7 +47,9 @@ const ANIME_DB = [
     rating: 8.8,
     episodes: 25,
     status: "Completed",
-    image: "https://cdn.myanimelist.net/images/anime/1704/138033.jpg",
+    image: "https://s4.anilist.co/file/anilistcdn/media/anime/cover/large/bx151807-it355ZgzquUd.png",
+    poster: "https://s4.anilist.co/file/anilistcdn/media/anime/cover/large/bx151807-it355ZgzquUd.png",
+    banner: "https://s4.anilist.co/file/anilistcdn/media/anime/banner/151807-37yfQA3ym8PA.jpg",
     description:
       "Sung Jin-Woo, the weakest hunter, gains a mysterious ability that allows him to level up."
   },
@@ -58,7 +62,9 @@ const ANIME_DB = [
     rating: 9.0,
     episodes: 1100,
     status: "Airing",
-    image: "https://cdn.myanimelist.net/images/anime/1244/138851.jpg",
+    image: "https://s4.anilist.co/file/anilistcdn/media/anime/cover/large/bx21-ELSYx3yMPcKM.jpg",
+    poster: "https://s4.anilist.co/file/anilistcdn/media/anime/cover/large/bx21-ELSYx3yMPcKM.jpg",
+    banner: "https://s4.anilist.co/file/anilistcdn/media/anime/banner/21-wf37VakJmZqs.jpg",
     description:
       "Monkey D. Luffy and his crew travel across the Grand Line in search of the legendary One Piece."
   },
@@ -71,7 +77,9 @@ const ANIME_DB = [
     rating: 8.6,
     episodes: 55,
     status: "Airing",
-    image: "https://cdn.myanimelist.net/images/anime/1286/99889.jpg",
+    image: "https://s4.anilist.co/file/anilistcdn/media/anime/cover/large/bx101922-WBsBl0ClmgYL.jpg",
+    poster: "https://s4.anilist.co/file/anilistcdn/media/anime/cover/large/bx101922-WBsBl0ClmgYL.jpg",
+    banner: "https://s4.anilist.co/file/anilistcdn/media/anime/banner/101922-33MtJGsUSxga.jpg",
     description:
       "Tanjiro Kamado becomes a demon slayer after his family is attacked and his sister is turned into a demon."
   },
@@ -84,7 +92,9 @@ const ANIME_DB = [
     rating: 9.0,
     episodes: 89,
     status: "Completed",
-    image: "https://cdn.myanimelist.net/images/anime/10/47347.jpg",
+    image: "https://s4.anilist.co/file/anilistcdn/media/anime/cover/large/bx16498-buvcRTBx4NSm.jpg",
+    poster: "https://s4.anilist.co/file/anilistcdn/media/anime/cover/large/bx16498-buvcRTBx4NSm.jpg",
+    banner: "https://s4.anilist.co/file/anilistcdn/media/anime/banner/16498-8jpFCOcDmneX.jpg",
     description:
       "Humanity fights for survival against terrifying Titans that threaten to destroy civilization."
   },
@@ -97,7 +107,9 @@ const ANIME_DB = [
     rating: 8.3,
     episodes: 220,
     status: "Completed",
-    image: "https://cdn.myanimelist.net/images/anime/13/17405.jpg",
+    image: "https://s4.anilist.co/file/anilistcdn/media/anime/cover/large/bx20-dE6UHbFFg1A5.jpg",
+    poster: "https://s4.anilist.co/file/anilistcdn/media/anime/cover/large/bx20-dE6UHbFFg1A5.jpg",
+    banner: "https://s4.anilist.co/file/anilistcdn/media/anime/banner/20-HHxhPj5JD13a.jpg",
     description:
       "Naruto Uzumaki dreams of becoming the strongest ninja and earning the respect of his village."
   },
@@ -110,7 +122,9 @@ const ANIME_DB = [
     rating: 8.6,
     episodes: 37,
     status: "Completed",
-    image: "https://cdn.myanimelist.net/images/anime/1079/138100.jpg",
+    image: "https://s4.anilist.co/file/anilistcdn/media/anime/cover/large/bx1535-kUgkcrfOrkUM.jpg",
+    poster: "https://s4.anilist.co/file/anilistcdn/media/anime/cover/large/bx1535-kUgkcrfOrkUM.jpg",
+    banner: "https://s4.anilist.co/file/anilistcdn/media/anime/banner/1535.jpg",
     description:
       "A brilliant student discovers a mysterious notebook that can kill anyone whose name is written inside."
   },
@@ -123,7 +137,9 @@ const ANIME_DB = [
     rating: 9.1,
     episodes: 64,
     status: "Completed",
-    image: "https://cdn.myanimelist.net/images/anime/1208/94745.jpg",
+    image: "https://s4.anilist.co/file/anilistcdn/media/anime/cover/large/bx5114-nSWCgQlmOMtj.jpg",
+    poster: "https://s4.anilist.co/file/anilistcdn/media/anime/cover/large/bx5114-nSWCgQlmOMtj.jpg",
+    banner: "https://s4.anilist.co/file/anilistcdn/media/anime/banner/5114-q0V5URebphSG.jpg",
     description:
       "Two brothers use alchemy to search for the Philosopher's Stone after a failed human transmutation."
   },
@@ -136,7 +152,9 @@ const ANIME_DB = [
     rating: 8.2,
     episodes: 366,
     status: "Completed",
-    image: "https://cdn.myanimelist.net/images/anime/3/40451.jpg",
+    image: "https://s4.anilist.co/file/anilistcdn/media/anime/cover/large/bx269-d2GmRkJbMopq.png",
+    poster: "https://s4.anilist.co/file/anilistcdn/media/anime/cover/large/bx269-d2GmRkJbMopq.png",
+    banner: "https://s4.anilist.co/file/anilistcdn/media/anime/banner/269-08ar2HJOUAuL.jpg",
     description:
       "Ichigo Kurosaki becomes a Soul Reaper and battles supernatural enemies threatening the human world."
   },
@@ -149,7 +167,9 @@ const ANIME_DB = [
     rating: 8.8,
     episodes: 48,
     status: "Completed",
-    image: "https://cdn.myanimelist.net/images/anime/1500/103005.jpg",
+    image: "https://s4.anilist.co/file/anilistcdn/media/anime/cover/large/bx101348-2fhDFPCuMNiz.jpg",
+    poster: "https://s4.anilist.co/file/anilistcdn/media/anime/cover/large/bx101348-2fhDFPCuMNiz.jpg",
+    banner: "https://s4.anilist.co/file/anilistcdn/media/anime/banner/101348-pivKKffCAwAY.jpg",
     description:
       "Thorfinn grows up among Vikings while seeking revenge and searching for a land free from war."
   },
@@ -162,7 +182,9 @@ const ANIME_DB = [
     rating: 9.0,
     episodes: 24,
     status: "Completed",
-    image: "https://cdn.myanimelist.net/images/anime/1935/127974.jpg",
+    image: "https://s4.anilist.co/file/anilistcdn/media/anime/cover/large/bx9253-tIUXF2gfU8Sg.jpg",
+    poster: "https://s4.anilist.co/file/anilistcdn/media/anime/cover/large/bx9253-tIUXF2gfU8Sg.jpg",
+    banner: "https://s4.anilist.co/file/anilistcdn/media/anime/banner/n9253-JIhmKgBKsWUN.jpg",
     description:
       "A group of friends accidentally discover a method of sending messages through time."
   },
@@ -175,7 +197,9 @@ const ANIME_DB = [
     rating: 9.0,
     episodes: 148,
     status: "Completed",
-    image: "https://cdn.myanimelist.net/images/anime/1337/99013.jpg",
+    image: "https://s4.anilist.co/file/anilistcdn/media/anime/cover/large/bx11061-y5gsT1hoHuHw.png",
+    poster: "https://s4.anilist.co/file/anilistcdn/media/anime/cover/large/bx11061-y5gsT1hoHuHw.png",
+    banner: "https://s4.anilist.co/file/anilistcdn/media/anime/banner/11061-8WkkTZ6duKpq.jpg",
     description:
       "Gon Freecss becomes a Hunter and travels the world while searching for his missing father."
   }

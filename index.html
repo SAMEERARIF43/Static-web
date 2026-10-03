@@ -3,12 +3,12 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Anime Hub | Premium Anime Streaming Platform</title>
+  <title>Anime Hub | Premium Anime Streaming & Discovery Platform</title>
   <meta name="description" content="Watch thousands of anime episodes in sub and dub on AnimeHub — the ultimate anime streaming and discovery platform.">
   <link rel="icon" type="image/png" href="assets/favicon-64.png">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Outfit:wght@400;600;700;800;900&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Outfit:wght@400;600;700;800;900&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -44,10 +44,9 @@
       <div class="search-overlay-inner">
         <div class="search-bar-wrapper">
           <svg class="search-icon-inner" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-          <input class="search-overlay-input" id="search-overlay-input" type="search" placeholder="Search anime by title, genre, studio…" autocomplete="off">
+          <input class="search-overlay-input" id="search-overlay-input" type="search" placeholder="Search anime by title, genre, studio..." autocomplete="off">
           <button class="search-close-btn" id="search-close-btn" aria-label="Close search">✕</button>
         </div>
-        <div class="search-results" id="search-results"></div>
       </div>
     </div>
   </nav>
@@ -66,11 +65,11 @@
           <div class="hero-left">
             <div class="badge">🔥 New Episodes Added Daily</div>
             <h1 class="hero-title">Unlimited Anime.<br>Anywhere, <span class="highlight">Anytime.</span></h1>
-            <p class="hero-subtitle">Dive into the ultimate anime experience. Watch thousands of episodes in sub and dub on any device in full HD.</p>
+            <p class="hero-subtitle">Stream thousands of anime series and movies in full HD with fast streaming, subbed & dubbed titles, and live discovery powered by AniList.</p>
 
             <div class="search-container">
               <svg class="search-input-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-              <input class="search-input" id="hero-search-input" type="search" placeholder="Search for anime, movies, series…" autocomplete="off">
+              <input class="search-input" id="hero-search-input" type="search" placeholder="Search anime, movies, series..." autocomplete="off">
               <button class="search-btn" id="hero-search-btn" aria-label="Search">Search</button>
             </div>
 
@@ -81,14 +80,14 @@
                 <a href="#" class="tag" data-search="Attack on Titan">Attack on Titan</a>
                 <a href="#" class="tag" data-search="Jujutsu Kaisen">Jujutsu Kaisen</a>
                 <a href="#" class="tag" data-search="Solo Leveling">Solo Leveling</a>
-                <a href="#" class="tag" data-search="Naruto">Naruto</a>
+                <a href="#" class="tag" data-search="Demon Slayer">Demon Slayer</a>
               </div>
             </div>
 
             <div class="cta-group">
               <a href="#" class="cta-btn primary-btn" data-nav="popular">
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
-                Start Watching
+                Explore Catalog
               </a>
               <a href="#" class="cta-btn secondary-btn" data-nav="watchlist">
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>
@@ -97,16 +96,13 @@
             </div>
           </div>
 
-          <!-- Hero right is intentionally empty of a foreground image now:
-               the uploaded character collage lives in the hero background
-               (.hero-bg), so these floating cards sit directly over it. -->
           <div class="hero-right">
             <div class="hero-floating-stack">
               <div class="floating-card rating-card">
-                <span class="star">⭐</span> 4.9 / 5
+                <span class="star">★</span> 9.0 Top Rated
               </div>
               <div class="floating-card hd-card">4K Ultra HD</div>
-              <div class="floating-card count-card">🎬 12,000+ Episodes</div>
+              <div class="floating-card count-card">🎬 AniList Integration</div>
             </div>
           </div>
         </div>
@@ -119,6 +115,14 @@
         <div class="section-container">
           <div class="genre-filter-bar" id="genre-filter-bar" role="group" aria-label="Filter by genre">
             <button class="genre-btn active" data-genre="All">All</button>
+            <button class="genre-btn" data-genre="Action">Action</button>
+            <button class="genre-btn" data-genre="Adventure">Adventure</button>
+            <button class="genre-btn" data-genre="Fantasy">Fantasy</button>
+            <button class="genre-btn" data-genre="Supernatural">Supernatural</button>
+            <button class="genre-btn" data-genre="Drama">Drama</button>
+            <button class="genre-btn" data-genre="Comedy">Comedy</button>
+            <button class="genre-btn" data-genre="Sci-Fi">Sci-Fi</button>
+            <button class="genre-btn" data-genre="Shounen">Shounen</button>
           </div>
         </div>
       </section>
@@ -145,16 +149,6 @@
         </div>
       </section>
 
-      <!-- CONTINUE WATCHING (hidden if empty) -->
-      <section class="content-section" id="section-continue" style="display:none">
-        <div class="section-container">
-          <div class="section-header">
-            <h2 class="section-title">▶ Continue Watching</h2>
-          </div>
-          <div class="anime-grid continue-grid" id="continue-grid"></div>
-        </div>
-      </section>
-
     </div><!-- /page-home -->
 
     <!-- ===== PAGE: POPULAR ===== -->
@@ -164,6 +158,11 @@
           <h2 class="page-heading">Most Popular Anime</h2>
           <div class="genre-filter-bar" id="popular-genre-filter" role="group" aria-label="Filter by genre">
             <button class="genre-btn active" data-genre="All">All</button>
+            <button class="genre-btn" data-genre="Action">Action</button>
+            <button class="genre-btn" data-genre="Adventure">Adventure</button>
+            <button class="genre-btn" data-genre="Fantasy">Fantasy</button>
+            <button class="genre-btn" data-genre="Supernatural">Supernatural</button>
+            <button class="genre-btn" data-genre="Drama">Drama</button>
           </div>
           <div class="anime-grid large-grid" id="popular-page-grid"></div>
         </div>
@@ -176,7 +175,7 @@
         <div class="section-container">
           <h2 class="page-heading">Anime Movies</h2>
           <div class="anime-grid large-grid" id="movies-grid"></div>
-          <div class="empty-state" id="movies-empty">
+          <div class="empty-state" id="movies-empty" style="display:none">
             <div class="empty-icon">🎬</div>
             <h3>No Movies Found</h3>
             <p>Check back soon for new movie releases.</p>
@@ -192,6 +191,9 @@
           <h2 class="page-heading">TV Series</h2>
           <div class="genre-filter-bar" id="series-genre-filter" role="group" aria-label="Filter by genre">
             <button class="genre-btn active" data-genre="All">All</button>
+            <button class="genre-btn" data-genre="Action">Action</button>
+            <button class="genre-btn" data-genre="Adventure">Adventure</button>
+            <button class="genre-btn" data-genre="Shounen">Shounen</button>
           </div>
           <div class="anime-grid large-grid" id="series-grid"></div>
         </div>
@@ -207,7 +209,7 @@
           <div class="empty-state" id="watchlist-empty" style="display:none">
             <div class="empty-icon">📚</div>
             <h3>Your watchlist is empty</h3>
-            <p>Browse anime and click the bookmark icon to save titles here.</p>
+            <p>Browse anime and click the star icon on any card to save titles here.</p>
             <button class="cta-btn primary-btn" data-nav="home">Browse Anime</button>
           </div>
         </div>
@@ -222,8 +224,8 @@
           <div class="anime-grid large-grid" id="search-results-grid"></div>
           <div class="empty-state" id="search-empty" style="display:none">
             <div class="empty-icon">🔍</div>
-            <h3>No results found</h3>
-            <p>Try a different title, genre, or studio name.</p>
+            <h3>No anime found</h3>
+            <p>We couldn't find any anime matching your query. Try a different title or keyword.</p>
             <button class="cta-btn primary-btn" data-nav="home">Back to Home</button>
           </div>
         </div>
@@ -235,12 +237,15 @@
       <div id="detail-content"></div>
     </div>
 
-    <!-- ===== PAGE: WATCH ===== -->
-    <div class="page" id="page-watch">
-      <div class="watch-layout" id="watch-layout"></div>
-    </div>
-
   </div><!-- /app -->
+
+  <!-- ========== FOOTER ========== -->
+  <footer>
+    <div class="section-container">
+      <p style="margin-bottom: 8px;"><strong>Anime<span style="color: var(--primary);">Hub</span></strong> — Premium Anime Streaming & Discovery</p>
+      <p style="font-size: 13px; color: var(--text-dim);">Powered by AniList API & Local Anime DB • All images & metadata belong to their respective creators.</p>
+    </div>
+  </footer>
 
   <!-- ========== TOAST NOTIFICATION ========== -->
   <div class="toast" id="toast"></div>
