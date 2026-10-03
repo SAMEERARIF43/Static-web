@@ -508,6 +508,109 @@ app.post('/api/anime/search', async (req, res) => {
 
 
 // ============================================================
+// ANILIST API DETAILS
+// ============================================================
+
+app.get('/api/anime/:id', async (req, res) => {
+  const animeId = parseInt(req.params.id);
+
+  if (isNaN(animeId)) {
+    return res.status(400).json({ message: "Invalid Anime ID." });
+  }
+
+  const graphqlQuery = `
+    query ($id: Int) {
+      Media(id: $id, type: ANIME) {
+        id
+        title {
+          romaji
+          english
+          native
+        }
+        coverImage {
+          extraLarge
+          large
+        }
+        bannerImage
+        description
+        episodes
+        status
+        averageScore
+        genres
+        season
+        seasonYear
+        format
+        trailer {
+          id
+          site
+        }
+        recommendations(sort: RATING_DESC, perPage: 6) {
+          edges {
+            node {
+              mediaRecommendation {
+                id
+                title {
+                  romaji
+                  english
+                }
+                coverImage {
+                  large
+                }
+                averageScore
+                format
+                status
+              }
+            }
+          }
+        }
+      }
+    }
+  `;
+
+  try {
+    console.log(`🔎 Fetching AniList details for ID: ${animeId}`);
+
+    const response = await axios.post(
+      "https://graphql.anilist.co",
+      {
+        query: graphqlQuery,
+        variables: { id: animeId }
+      },
+      {
+        headers: { "Content-Type": "application/json" },
+        timeout: 15000
+      }
+    );
+
+    if (response.data.errors) {
+      console.error("❌ AniList GraphQL Error:", response.data.errors);
+      return res.status(500).json({
+        message: "AniList returned an error.",
+        errors: response.data.errors
+      });
+    }
+
+    const anime = response.data.data.Media;
+    console.log(`✅ AniList returned details for: ${anime.title.romaji || anime.title.english}`);
+
+    res.json(anime);
+
+  } catch (error) {
+    console.error("❌ AniList API Error");
+    if (error.response) {
+      console.error("Status:", error.response.status);
+    } else {
+      console.error("Message:", error.message);
+    }
+    res.status(500).json({
+      message: "Could not connect to AniList API.",
+      error: error.message
+    });
+  }
+});
+
+
+// ============================================================
 // START SERVER
 // ============================================================
 
