@@ -9,6 +9,61 @@ document.addEventListener('DOMContentLoaded', () => {
     localStorage.setItem('anime_hub_watchlist', JSON.stringify(watchlist));
   }
 
+  // Local Continue Watching state (persisted in localStorage)
+  let continueWatching = JSON.parse(localStorage.getItem('anime_hub_continue_watching') || '[]');
+
+  function saveContinueWatching() {
+    localStorage.setItem('anime_hub_continue_watching', JSON.stringify(continueWatching));
+  }
+
+  function updateContinueWatching(item) {
+    if (!item || item.id === undefined || item.id === null) return;
+    const existingIndex = continueWatching.findIndex(c => String(c.id) === String(item.id));
+    const updatedItem = {
+      id: item.id,
+      title: item.title || 'Unknown Anime',
+      poster: item.poster || 'https://placehold.co/300x450/0f172a/ff7200?text=No+Poster',
+      currentEpisode: Number(item.currentEpisode) || 1,
+      totalEpisodes: Number(item.totalEpisodes) || 1,
+      lastWatched: Date.now()
+    };
+
+    if (existingIndex >= 0) {
+      continueWatching[existingIndex] = updatedItem;
+    } else {
+      continueWatching.unshift(updatedItem);
+    }
+
+    continueWatching.sort((a, b) => (b.lastWatched || 0) - (a.lastWatched || 0));
+    saveContinueWatching();
+    renderContinueWatching();
+  }
+
+  function removeFromContinueWatching(animeId) {
+    continueWatching = continueWatching.filter(c => String(c.id) !== String(animeId));
+    saveContinueWatching();
+    renderContinueWatching();
+  }
+
+  function getContinueWatchingItem(animeId) {
+    return continueWatching.find(c => String(c.id) === String(animeId)) || null;
+  }
+
+  function renderContinueWatching() {
+    const section = document.getElementById('section-continue');
+    const grid = document.getElementById('continue-grid');
+    if (!section || !grid) return;
+
+    if (!Array.isArray(continueWatching) || continueWatching.length === 0) {
+      section.style.display = 'none';
+      grid.innerHTML = '';
+      return;
+    }
+
+    section.style.display = 'block';
+    grid.innerHTML = continueWatching.map(renderAnimeCard).join('');
+  }
+
   function showToast(message, type = 'success') {
     const toast = document.getElementById('toast');
     if (!toast) return;
@@ -50,8 +105,15 @@ document.addEventListener('DOMContentLoaded', () => {
     const status = anime.status || 'Unknown';
     const isCompleted = status.toLowerCase() === 'completed' || status.toLowerCase() === 'finished';
     const type = anime.type || anime.format || 'TV';
-    const episodes = anime.episodes ? `${anime.episodes} eps` : null;
+    const episodesText = anime.episodes ? `${anime.episodes} eps` : null;
     const isSaved = watchlist.some(w => String(w.id) === String(anime.id));
+
+    const isContinueItem = Boolean(anime.currentEpisode);
+    const badgeText = isContinueItem ? `Episode ${anime.currentEpisode}` : status;
+    const badgeClass = isContinueItem ? 'card-badge watching' : `card-badge ${isCompleted ? 'completed' : ''}`;
+    const metaText = isContinueItem
+      ? `${type}${anime.totalEpisodes ? ` • Ep ${anime.currentEpisode}/${anime.totalEpisodes}` : ` • Ep ${anime.currentEpisode}`}`
+      : `${type}${episodesText ? ` • ${episodesText}` : ''}`;
 
     return `
       <div class="anime-card" data-id="${anime.id}">
@@ -77,8 +139,8 @@ document.addEventListener('DOMContentLoaded', () => {
               ${isSaved ? '★' : '☆'}
             </button>
 
-            <span class="card-badge ${isCompleted ? 'completed' : ''}">
-              ${status}
+            <span class="${badgeClass}">
+              ${badgeText}
             </span>
           </div>
 
@@ -90,7 +152,7 @@ document.addEventListener('DOMContentLoaded', () => {
           </h3>
 
           <div class="card-meta">
-            <span class="card-type">${type}${episodes ? ` • ${episodes}` : ''}</span>
+            <span class="card-type">${metaText}</span>
             <div class="card-rating">
               <span class="star">★</span>
               <span>${rating > 0 ? rating.toFixed(1) : 'N/A'}</span>
@@ -139,6 +201,7 @@ document.addEventListener('DOMContentLoaded', () => {
   // ============================================================
 
   async function loadTrending() {
+    renderContinueWatching();
     renderSkeletonGrid('trending-grid', 5);
     try {
       const res = await fetch(`${baseURL}/trending`);
@@ -254,7 +317,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   // ============================================================
-  // LOAD ANIME DETAILS
+  // LOAD ANIME DETAILS & WATCH FLOW
   // ============================================================
 
   async function loadAnimeDetails(id) {
@@ -290,6 +353,10 @@ document.addEventListener('DOMContentLoaded', () => {
       const rating = anime.averageScore ? (anime.averageScore / 10).toFixed(1) : (anime.rating ? anime.rating.toFixed(1) : 'N/A');
       const banner = anime.bannerImage || anime.banner || 'https://placehold.co/1920x420/0b0e14/2d3748?text=Anime+Hub+Details';
       const poster = anime.coverImage?.extraLarge || anime.coverImage?.large || anime.poster || anime.image || 'https://placehold.co/300x450/0f172a/ff7200?text=No+Poster';
+      const totalEpisodes = Number(anime.episodes) || 12;
+
+      const savedProgress = getContinueWatchingItem(anime.id);
+      let activeEpisodeNum = savedProgress ? Number(savedProgress.currentEpisode) : null;
       
       let genresHtml = '';
       if (anime.genres && anime.genres.length > 0) {
@@ -354,7 +421,7 @@ document.addEventListener('DOMContentLoaded', () => {
               </div>
               <div class="detail-meta-row">
                 <span><b>Format:</b> ${anime.format || anime.type || 'TV'}</span>
-                <span><b>Episodes:</b> ${anime.episodes || '?'}</span>
+                <span><b>Episodes:</b> ${totalEpisodes}</span>
                 <span><b>Status:</b> ${anime.status || 'Unknown'}</span>
                 <span><b>Season:</b> ${anime.season || ''} ${anime.seasonYear || anime.year || ''}</span>
               </div>
@@ -362,6 +429,10 @@ document.addEventListener('DOMContentLoaded', () => {
                 ★ ${rating} / 10
               </div>
               <div class="detail-actions">
+                <button class="cta-btn primary-btn" id="detail-watch-action-btn">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+                  ${activeEpisodeNum ? `Continue Episode ${activeEpisodeNum}` : 'Watch Episode 1'}
+                </button>
                 <button class="cta-btn ${isAnimeSaved ? 'primary-btn' : 'secondary-btn'}" id="detail-watchlist-btn">
                   ${isAnimeSaved ? '✓ In Watchlist' : '+ Add to Watchlist'}
                 </button>
@@ -372,13 +443,175 @@ document.addEventListener('DOMContentLoaded', () => {
               </div>
             </div>
           </div>
+
+          <!-- Video Player Container -->
+          <div class="video-player-container" id="video-player-container" style="${activeEpisodeNum ? 'display: block;' : 'display: none;'}">
+            <div class="video-player-screen">
+              <img src="${banner}" class="video-player-bg" alt="${title} player background" onerror="this.onerror=null; this.src='https://placehold.co/1920x420/0b0e14/2d3748?text=Anime+Hub';">
+              <div class="video-player-overlay">
+                <div class="player-play-icon">▶</div>
+                <div class="video-player-title" id="player-title-label">${title}</div>
+                <div class="video-player-sub" id="player-subtitle-label">${activeEpisodeNum ? `Episode ${activeEpisodeNum} of ${totalEpisodes}` : ''}</div>
+              </div>
+            </div>
+            <div class="video-player-controls">
+              <button class="player-ctrl-btn" id="player-prev-btn" ${!activeEpisodeNum || activeEpisodeNum <= 1 ? 'disabled' : ''}>← Previous Ep</button>
+              <button class="player-ctrl-btn finish-btn" id="player-finish-btn">Finish Episode ✓</button>
+              <button class="player-ctrl-btn" id="player-next-btn">${activeEpisodeNum && activeEpisodeNum >= totalEpisodes ? 'Finish Anime ✓' : 'Next Ep →'}</button>
+            </div>
+          </div>
+
+          <!-- Episodes Section -->
+          <div class="episodes-section">
+            <h3 class="episodes-title">Episodes (${totalEpisodes})</h3>
+            <div class="episodes-grid" id="episodes-grid">
+              ${Array.from({ length: Math.min(totalEpisodes, 100) }, (_, i) => i + 1).map(ep => `
+                <button class="episode-btn ${ep === activeEpisodeNum ? 'active' : ''}" data-ep="${ep}">
+                  <span class="ep-num">Ep ${ep}</span>
+                  <span class="ep-status">${ep === activeEpisodeNum ? 'Watching' : 'Play'}</span>
+                </button>
+              `).join('')}
+            </div>
+          </div>
+
           ${recommendationsHtml}
         </div>
       `;
 
+      // Helper to update Episode Grid active states
+      function updateEpisodesGridUI(activeEp) {
+        document.querySelectorAll('.episode-btn').forEach(btn => {
+          const ep = Number(btn.dataset.ep);
+          if (ep === activeEp) {
+            btn.classList.add('active');
+            const statusEl = btn.querySelector('.ep-status');
+            if (statusEl) statusEl.textContent = 'Watching';
+          } else {
+            btn.classList.remove('active');
+            const statusEl = btn.querySelector('.ep-status');
+            if (statusEl) statusEl.textContent = 'Play';
+          }
+        });
+      }
+
+      // Function to start watching/playing an episode
+      function startPlayingEpisode(epNum) {
+        if (epNum > totalEpisodes) {
+          removeFromContinueWatching(anime.id);
+          showToast(`Completed ${title}! Removed from Continue Watching.`, 'success');
+          const playerBox = document.getElementById('video-player-container');
+          if (playerBox) playerBox.style.display = 'none';
+          activeEpisodeNum = null;
+          updateEpisodesGridUI(null);
+          const mainBtn = document.getElementById('detail-watch-action-btn');
+          if (mainBtn) {
+            mainBtn.innerHTML = `
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+              Watch Episode 1
+            `;
+          }
+          return;
+        }
+
+        activeEpisodeNum = epNum;
+        updateContinueWatching({
+          id: anime.id,
+          title: title,
+          poster: poster,
+          currentEpisode: epNum,
+          totalEpisodes: totalEpisodes
+        });
+
+        const playerContainer = document.getElementById('video-player-container');
+        if (playerContainer) {
+          playerContainer.style.display = 'block';
+          playerContainer.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+
+        const subLabel = document.getElementById('player-subtitle-label');
+        if (subLabel) subLabel.textContent = `Episode ${epNum} of ${totalEpisodes}`;
+
+        const prevBtn = document.getElementById('player-prev-btn');
+        if (prevBtn) prevBtn.disabled = epNum <= 1;
+
+        const nextBtn = document.getElementById('player-next-btn');
+        if (nextBtn) nextBtn.textContent = epNum >= totalEpisodes ? 'Finish Anime ✓' : 'Next Ep →';
+
+        const mainBtn = document.getElementById('detail-watch-action-btn');
+        if (mainBtn) {
+          mainBtn.innerHTML = `
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+            Continue Episode ${epNum}
+          `;
+        }
+
+        updateEpisodesGridUI(epNum);
+        showToast(`Watching Episode ${epNum}`, 'success');
+      }
+
       // Back button listener
       document.getElementById('detail-back-btn')?.addEventListener('click', () => {
         window.history.back();
+      });
+
+      // Watch button click
+      document.getElementById('detail-watch-action-btn')?.addEventListener('click', () => {
+        startPlayingEpisode(activeEpisodeNum || 1);
+      });
+
+      // Player Prev Ep button
+      document.getElementById('player-prev-btn')?.addEventListener('click', () => {
+        if (activeEpisodeNum && activeEpisodeNum > 1) {
+          startPlayingEpisode(activeEpisodeNum - 1);
+        }
+      });
+
+      // Player Next Ep button
+      document.getElementById('player-next-btn')?.addEventListener('click', () => {
+        if (activeEpisodeNum) {
+          if (activeEpisodeNum >= totalEpisodes) {
+            removeFromContinueWatching(anime.id);
+            showToast(`Completed ${title}! Removed from Continue Watching.`, 'success');
+            const playerBox = document.getElementById('video-player-container');
+            if (playerBox) playerBox.style.display = 'none';
+            activeEpisodeNum = null;
+            updateEpisodesGridUI(null);
+            const mainBtn = document.getElementById('detail-watch-action-btn');
+            if (mainBtn) {
+              mainBtn.innerHTML = `
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+                Watch Episode 1
+              `;
+            }
+          } else {
+            startPlayingEpisode(activeEpisodeNum + 1);
+          }
+        }
+      });
+
+      // Player Finish Episode button
+      document.getElementById('player-finish-btn')?.addEventListener('click', () => {
+        removeFromContinueWatching(anime.id);
+        showToast(`Completed ${title}! Removed from Continue Watching.`, 'success');
+        const playerBox = document.getElementById('video-player-container');
+        if (playerBox) playerBox.style.display = 'none';
+        activeEpisodeNum = null;
+        updateEpisodesGridUI(null);
+        const mainBtn = document.getElementById('detail-watch-action-btn');
+        if (mainBtn) {
+          mainBtn.innerHTML = `
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+            Watch Episode 1
+          `;
+        }
+      });
+
+      // Episode Grid button click
+      document.getElementById('episodes-grid')?.addEventListener('click', (e) => {
+        const btn = e.target.closest('.episode-btn');
+        if (btn && btn.dataset.ep) {
+          startPlayingEpisode(Number(btn.dataset.ep));
+        }
       });
 
       // Watchlist detail button listener
@@ -393,7 +626,7 @@ document.addEventListener('DOMContentLoaded', () => {
             rating: parseFloat(rating) || 0,
             type: anime.format || anime.type || 'TV',
             status: anime.status || 'Unknown',
-            episodes: anime.episodes || 0,
+            episodes: totalEpisodes,
             genres: anime.genres || []
           };
 
@@ -487,6 +720,7 @@ document.addEventListener('DOMContentLoaded', () => {
     window.scrollTo(0, 0);
 
     if (navName === 'home') {
+      renderContinueWatching();
       loadTrending();
       loadPopular();
     } else if (navName === 'popular') {
@@ -552,6 +786,7 @@ document.addEventListener('DOMContentLoaded', () => {
   // ============================================================
 
   async function initPage() {
+    renderContinueWatching();
     const urlParams = new URLSearchParams(window.location.search);
     const query = urlParams.get('q');
     const id = urlParams.get('id');
