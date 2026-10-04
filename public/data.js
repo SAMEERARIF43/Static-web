@@ -249,13 +249,3 @@ function getPopular() {
 function getRecommendations(excludeId, limit = 4) {
   return ANIME_DB.filter(a => a.id !== excludeId).slice(0, limit);
 }
-
-// Generate episode list for an anime
-function getEpisodes(anime) {
-  const count = Math.min(anime.episodes, 24); // Show max 24 for UI
-  return Array.from({ length: count }, (_, i) => ({
-    number: i + 1,
-    title: `Episode ${i + 1}`,
-    duration: "24 min",
-  }));
-}

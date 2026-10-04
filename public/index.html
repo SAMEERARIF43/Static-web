@@ -1,0 +1,425 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AnimeHub — Discover Anime & Movies Catalog</title>
+  <meta name="description" content="AnimeHub is a modern anime and movie discovery catalog. Explore ratings, genres, release schedules, manage your personal watchlist, and find official trailers and legal streaming options.">
+  <link rel="canonical" href="/">
+
+  <!-- Open Graph / Facebook -->
+  <meta property="og:site_name" content="AnimeHub">
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="AnimeHub — Discover Anime & Movies Catalog">
+  <meta property="og:description" content="AnimeHub is a modern anime and movie discovery catalog. Explore ratings, genres, release schedules, manage your personal watchlist, and find official trailers and legal streaming options.">
+  <meta property="og:url" content="/">
+  <meta property="og:image" content="/websites%20picture.png">
+
+  <!-- Twitter / X -->
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="AnimeHub — Discover Anime & Movies Catalog">
+  <meta name="twitter:description" content="AnimeHub is a modern anime and movie discovery catalog. Explore ratings, genres, release schedules, manage your personal watchlist, and find official trailers and legal streaming options.">
+  <meta name="twitter:image" content="/websites%20picture.png">
+
+  <!-- Structured Data / Schema.org -->
+  <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@graph": [
+        {
+          "@type": "WebSite",
+          "@id": "/#website",
+          "name": "AnimeHub",
+          "url": "/",
+          "description": "Anime and movie discovery catalog, ratings, genres, and legal viewing sources.",
+          "potentialAction": {
+            "@type": "SearchAction",
+            "target": {
+              "@type": "EntryPoint",
+              "urlTemplate": "/?page=search&q={search_term_string}"
+            },
+            "query-input": "required name=search_term_string"
+          }
+        },
+        {
+          "@type": "Organization",
+          "@id": "/#organization",
+          "name": "AnimeHub",
+          "url": "/",
+          "logo": "/websites%20picture.png",
+          "description": "An open discovery platform and catalog for anime movies and television series."
+        }
+      ]
+    }
+  </script>
+
+  <link rel="icon" type="image/png" href="assets/favicon-64.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Outfit:wght@400;600;700;800;900&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+  <!-- ========== NAVBAR ========== -->
+  <nav class="topnav" id="navbar">
+    <div class="nav-container">
+      <a href="#" class="logo" data-nav="home">Anime<span class="dot">Hub</span></a>
+
+      <button class="menu-toggle" id="mobile-menu" type="button" aria-label="Open navigation" aria-expanded="false" aria-controls="nav-links">
+        <span class="bar"></span>
+        <span class="bar"></span>
+        <span class="bar"></span>
+      </button>
+
+      <ul class="nav-links" id="nav-links">
+        <li><a href="#" data-nav="home" class="nav-link active">Home</a></li>
+        <li><a href="#" data-nav="movies" class="nav-link">Movies</a></li>
+        <li><a href="#" data-nav="series" class="nav-link">TV Series</a></li>
+        <li><a href="#" data-nav="popular" class="nav-link">Most Popular</a></li>
+        <li><a href="#" data-nav="watchlist" class="nav-link">My Watchlist</a></li>
+      </ul>
+
+      <div class="nav-actions">
+        <button class="nav-search-trigger" id="nav-search-trigger" aria-label="Search" aria-expanded="false" aria-controls="search-overlay">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+        </button>
+      </div>
+    </div>
+
+    <!-- Search Overlay (drops down from navbar) -->
+    <div class="search-overlay" id="search-overlay">
+      <div class="search-overlay-inner">
+        <div class="search-bar-wrapper">
+          <svg class="search-icon-inner" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+          <input class="search-overlay-input" id="search-overlay-input" type="search" placeholder="Search anime by title, genre, studio..." autocomplete="off" maxlength="100" aria-label="Search titles" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="nav-search-options">
+          <button class="search-close-btn" id="search-close-btn" aria-label="Close search">✕</button>
+          <div class="search-suggestions" id="nav-search-suggestions" hidden>
+            <ul id="nav-search-options" role="listbox" aria-label="Search suggestions"></ul>
+            <p id="nav-search-status" class="search-suggestion-status" aria-live="polite"></p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </nav>
+
+  <!-- ========== PAGES (SPA) ========== -->
+  <div id="app">
+
+    <!-- ===== PAGE: HOME ===== -->
+    <div class="page active" id="page-home">
+
+      <!-- HERO -->
+      <main class="hero">
+        <div class="hero-bg"></div>
+        <div class="hero-bg-overlay"></div>
+        <div class="hero-content">
+          <div class="hero-left">
+            <div class="badge">🎌 Discover your next favorite</div>
+            <h1 class="hero-title">Find your next anime.<br>Explore, <span class="highlight">save, enjoy.</span></h1>
+            <p class="hero-subtitle">Explore anime and movies with ratings, genres, and YouTube trailers. Find out where titles are legally available to watch.</p>
+
+            <div class="search-container">
+              <svg class="search-input-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+              <input class="search-input" id="hero-search-input" type="search" placeholder="Search anime, movies, series..." autocomplete="off" maxlength="100" aria-label="Search titles" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="hero-search-options">
+              <button class="search-btn" id="hero-search-btn" aria-label="Search">Search</button>
+              <div class="search-suggestions" id="hero-search-suggestions" hidden>
+                <ul id="hero-search-options" role="listbox" aria-label="Search suggestions"></ul>
+                <p id="hero-search-status" class="search-suggestion-status" aria-live="polite"></p>
+              </div>
+            </div>
+
+            <div class="top-search-container">
+              <strong>Top Searches:</strong>
+              <div class="tag-list" id="top-search-tags">
+                <button type="button" class="tag" data-search="One Piece">One Piece</button>
+                <button type="button" class="tag" data-search="Attack on Titan">Attack on Titan</button>
+                <button type="button" class="tag" data-search="Jujutsu Kaisen">Jujutsu Kaisen</button>
+                <button type="button" class="tag" data-search="Solo Leveling">Solo Leveling</button>
+                <button type="button" class="tag" data-search="Demon Slayer">Demon Slayer</button>
+              </div>
+            </div>
+
+            <div class="cta-group">
+              <a href="#" class="cta-btn primary-btn" data-nav="popular">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+                Explore Catalog
+              </a>
+              <a href="#" class="cta-btn secondary-btn" data-nav="watchlist">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>
+                My Watchlist
+              </a>
+            </div>
+          </div>
+
+          <div class="hero-right">
+            <div class="hero-floating-stack">
+              <div class="floating-card rating-card">
+                <span class="star">★</span> 9.0+ Ratings
+              </div>
+              <div class="floating-card hd-card">🎬 Official Trailers</div>
+              <div class="floating-card count-card">🔎 AniList Discovery</div>
+            </div>
+          </div>
+        </div>
+        <div class="ambient-blob blob-1"></div>
+        <div class="ambient-blob blob-2"></div>
+      </main>
+
+      <!-- GENRE FILTER -->
+      <section class="genre-section">
+        <div class="section-container">
+          <div class="genre-filter-bar" id="genre-filter-bar" role="group" aria-label="Filter by genre">
+            <button class="genre-btn active" data-genre="All">All</button>
+            <button class="genre-btn" data-genre="Action">Action</button>
+            <button class="genre-btn" data-genre="Adventure">Adventure</button>
+            <button class="genre-btn" data-genre="Fantasy">Fantasy</button>
+            <button class="genre-btn" data-genre="Supernatural">Supernatural</button>
+            <button class="genre-btn" data-genre="Drama">Drama</button>
+            <button class="genre-btn" data-genre="Comedy">Comedy</button>
+            <button class="genre-btn" data-genre="Sci-Fi">Sci-Fi</button>
+            <button class="genre-btn" data-genre="Shounen">Shounen</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- TRENDING -->
+      <section class="content-section" id="section-trending">
+        <div class="section-container">
+          <div class="section-header">
+            <h2 class="section-title">🔥 Trending Now</h2>
+            <a href="#" class="view-all" data-nav="popular">View All <span>→</span></a>
+          </div>
+          <div class="anime-grid" id="trending-grid"></div>
+        </div>
+      </section>
+
+      <!-- POPULAR -->
+      <section class="content-section" id="section-popular">
+        <div class="section-container">
+          <div class="section-header">
+            <h2 class="section-title">⭐ Most Popular</h2>
+            <a href="#" class="view-all" data-nav="popular">View All <span>→</span></a>
+          </div>
+          <div class="anime-grid" id="popular-grid"></div>
+        </div>
+      </section>
+
+    </div><!-- /page-home -->
+
+    <!-- ===== PAGE: POPULAR ===== -->
+    <div class="page" id="page-popular">
+      <div class="inner-page-container">
+        <div class="section-container">
+          <h2 class="page-heading">Most Popular Anime</h2>
+          <div class="genre-filter-bar" id="popular-genre-filter" role="group" aria-label="Filter by genre">
+            <button class="genre-btn active" data-genre="All">All</button>
+            <button class="genre-btn" data-genre="Action">Action</button>
+            <button class="genre-btn" data-genre="Adventure">Adventure</button>
+            <button class="genre-btn" data-genre="Fantasy">Fantasy</button>
+            <button class="genre-btn" data-genre="Supernatural">Supernatural</button>
+            <button class="genre-btn" data-genre="Drama">Drama</button>
+          </div>
+          <section class="catalog-filters" aria-labelledby="catalog-filters-title">
+            <h3 id="catalog-filters-title" class="filter-heading">Filter catalog</h3>
+            <form id="catalog-filter-form" class="catalog-filter-grid">
+              <label for="filter-genre">Genre
+                <select id="filter-genre" name="genre"></select>
+              </label>
+              <label for="filter-year">Release year
+                <select id="filter-year" name="year"></select>
+              </label>
+              <label for="filter-rating">Minimum rating
+                <select id="filter-rating" name="rating">
+                  <option value="">Any rating</option>
+                  <option value="7">7.0 and up</option>
+                  <option value="8">8.0 and up</option>
+                  <option value="9">9.0 and up</option>
+                </select>
+              </label>
+              <label for="filter-studio">Studio
+                <select id="filter-studio" name="studio"></select>
+              </label>
+              <label for="filter-language">Language
+                <select id="filter-language" name="language"></select>
+              </label>
+              <label for="filter-type">Type
+                <select id="filter-type" name="type"></select>
+              </label>
+              <label for="filter-sort">Sort by
+                <select id="filter-sort" name="sort">
+                  <option value="popularity">Most Popular</option>
+                  <option value="rating">Highest Rating</option>
+                  <option value="year">Newest Year</option>
+                  <option value="title">Title (A-Z)</option>
+                </select>
+              </label>
+              <div class="catalog-filter-actions">
+                <button class="cta-btn secondary-btn" type="reset">Clear filters</button>
+                <p id="catalog-result-count" role="status" aria-live="polite"></p>
+              </div>
+            </form>
+          </section>
+          <nav class="catalog-pagination" id="catalog-pagination" aria-label="Catalog pages" hidden>
+            <button type="button" class="cta-btn secondary-btn" id="catalog-previous-page">Previous</button>
+            <span id="catalog-page-indicator" aria-live="polite"></span>
+            <button type="button" class="cta-btn secondary-btn" id="catalog-next-page">Next</button>
+          </nav>
+          <div class="anime-grid large-grid" id="popular-page-grid"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===== PAGE: MOVIES ===== -->
+    <div class="page" id="page-movies">
+      <div class="inner-page-container">
+        <div class="section-container">
+          <h2 class="page-heading">Anime Movies</h2>
+          <div class="anime-grid large-grid" id="movies-grid"></div>
+          <div class="empty-state" id="movies-empty" style="display:none">
+            <div class="empty-icon">🎬</div>
+            <h3>No Movies Found</h3>
+            <p>Check back soon for new movie releases.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===== PAGE: SERIES ===== -->
+    <div class="page" id="page-series">
+      <div class="inner-page-container">
+        <div class="section-container">
+          <h2 class="page-heading">TV Series</h2>
+          <div class="genre-filter-bar" id="series-genre-filter" role="group" aria-label="Filter by genre">
+            <button class="genre-btn active" data-genre="All">All</button>
+            <button class="genre-btn" data-genre="Action">Action</button>
+            <button class="genre-btn" data-genre="Adventure">Adventure</button>
+            <button class="genre-btn" data-genre="Shounen">Shounen</button>
+          </div>
+          <div class="anime-grid large-grid" id="series-grid"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===== PAGE: WATCHLIST ===== -->
+    <div class="page" id="page-watchlist">
+      <div class="inner-page-container">
+        <div class="section-container">
+          <h2 class="page-heading">My Watchlist</h2>
+          <div class="anime-grid large-grid" id="watchlist-grid"></div>
+          <div class="empty-state" id="watchlist-empty" style="display:none">
+            <div class="empty-icon">📚</div>
+            <h3>Your watchlist is empty</h3>
+            <p>Browse anime and click the star icon on any card to save titles here.</p>
+            <button class="cta-btn primary-btn" data-nav="home">Browse Anime</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===== PAGE: SEARCH RESULTS ===== -->
+    <div class="page" id="page-search">
+      <div class="inner-page-container">
+        <div class="section-container">
+          <div class="section-header" style="flex-wrap: wrap; gap: 12px; margin-bottom: 20px;">
+            <h2 class="page-heading" style="margin-bottom: 0;">Search Results for "<span id="search-query-label"></span>"</h2>
+            <p id="search-result-count" class="search-result-count" role="status" aria-live="polite" style="color: var(--text-muted); font-size: 14px; font-weight: 500;"></p>
+          </div>
+
+          <!-- Search Filters & Sorting -->
+          <section class="catalog-filters search-filters-bar" id="search-filters-section" aria-labelledby="search-filters-title" style="display: none;">
+            <h3 id="search-filters-title" class="filter-heading sr-only">Filter and sort search results</h3>
+            <form id="search-filter-form" class="catalog-filter-grid">
+              <label for="search-filter-genre">Genre
+                <select id="search-filter-genre" name="genre">
+                  <option value="">All genres</option>
+                </select>
+              </label>
+              <label for="search-filter-type">Format
+                <select id="search-filter-type" name="type">
+                  <option value="">All formats</option>
+                </select>
+              </label>
+              <label for="search-filter-rating">Minimum rating
+                <select id="search-filter-rating" name="rating">
+                  <option value="">Any rating</option>
+                  <option value="7">7.0 and up</option>
+                  <option value="8">8.0 and up</option>
+                  <option value="9">9.0 and up</option>
+                </select>
+              </label>
+              <label for="search-sort-by">Sort by
+                <select id="search-sort-by" name="sort">
+                  <option value="relevance">Relevance</option>
+                  <option value="rating">Highest Rating</option>
+                  <option value="year">Newest Year</option>
+                  <option value="title">Title (A-Z)</option>
+                </select>
+              </label>
+              <div class="catalog-filter-actions">
+                <button class="cta-btn secondary-btn" id="search-filter-reset-btn" type="reset">Clear filters</button>
+              </div>
+            </form>
+          </section>
+
+          <div class="anime-grid large-grid" id="search-results-grid"></div>
+
+          <div class="empty-state" id="search-empty" style="display:none">
+            <div class="empty-icon">🔍</div>
+            <h3>No anime found</h3>
+            <p id="search-empty-message">We couldn't find any anime matching your query. Try searching for popular titles like <strong>One Piece</strong>, <strong>Jujutsu Kaisen</strong>, or <strong>Solo Leveling</strong>.</p>
+            <div class="tag-list" style="justify-content: center; margin: 16px 0;">
+              <button type="button" class="tag" data-search="One Piece">One Piece</button>
+              <button type="button" class="tag" data-search="Jujutsu Kaisen">Jujutsu Kaisen</button>
+              <button type="button" class="tag" data-search="Solo Leveling">Solo Leveling</button>
+              <button type="button" class="tag" data-search="Attack on Titan">Attack on Titan</button>
+            </div>
+            <button class="cta-btn primary-btn" data-nav="home">Back to Home</button>
+          </div>
+
+          <div class="empty-state" id="search-filter-empty" style="display:none">
+            <div class="empty-icon">⚡</div>
+            <h3>No matching titles with current filters</h3>
+            <p>None of the search results match the selected genre, format, or rating filters.</p>
+            <button class="cta-btn primary-btn" id="search-clear-filters-btn" type="button">Reset Filters</button>
+          </div>
+
+          <div class="empty-state" id="search-error" style="display:none">
+            <div class="empty-icon">⚠️</div>
+            <h3>Search temporarily unavailable</h3>
+            <p id="search-error-message">Could not retrieve search results. Please check your connection and try again.</p>
+            <button class="cta-btn primary-btn" id="search-retry-btn" type="button">Retry Search</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===== PAGE: ANIME DETAIL ===== -->
+    <div class="page" id="page-detail">
+      <div id="detail-content"></div>
+    </div>
+
+  </div><!-- /app -->
+
+  <!-- ========== FOOTER ========== -->
+  <footer>
+    <div class="section-container">
+      <p style="margin-bottom: 8px;"><strong>Anime<span style="color: var(--primary);">Hub</span></strong> — Anime &amp; Movie Discovery Catalog</p>
+      <p style="font-size: 13px; color: var(--text-dim); max-width: 700px; margin: 0 auto 16px;">AnimeHub is an anime discovery and indexing platform. We do not host, store, or stream copyrighted video content. All metadata and cover media are sourced via AniList API and belong to their respective copyright owners.</p>
+      <nav class="legal-links" aria-label="Legal and contact">
+        <a href="privacy.html">Privacy Policy</a>
+        <a href="terms.html">Terms of Service</a>
+        <a href="contact.html">Contact Us</a>
+        <a href="dmca.html">Copyright / DMCA</a>
+      </nav>
+    </div>
+  </footer>
+
+  <!-- ========== TOAST NOTIFICATION ========== -->
+  <div class="toast" id="toast"></div>
+
+  <!-- ========== SCRIPTS ========== -->
+  <script src="data.js"></script>
+  <script src="script.js"></script>
+</body>
+</html>

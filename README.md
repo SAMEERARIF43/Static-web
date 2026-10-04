@@ -1,69 +1,46 @@
-# 🎌 Anime Website
+# Anime Hub
 
-This repository contains my **Anime Website project**, developed as an ongoing web development project.
+Anime Hub is a discovery catalog for anime and movies. It displays third-party metadata, lets visitors keep a local watchlist, links to trailers on YouTube when metadata provides one, and points visitors to legal viewing availability. It does not host, stream, or provide downloads of copyrighted video.
 
-The goal is to build a **full-fledged anime platform** where users can discover, explore, and **watch and enjoy anime** all in one place. The platform will cover everything from classic favorites to the latest and currently airing series.
+## Run locally
 
-## 🚀 Project Goals
+Requirements: Node.js and npm.
 
-The website is being developed step by step with the goal of becoming a complete anime platform featuring:
+```powershell
+npm install
+npm start
+```
 
-* 🎬 A large collection of anime
-* 🔥 Latest and currently airing anime
-* ▶️ Anime streaming and watching features
-* 📖 Detailed anime information
-* 🔎 Search and anime discovery
-* 📅 Latest episode and release updates
-* 🏷️ Genre and category organization
-* ⭐ Ratings and useful anime information
-* 📚 Anime seasons and episode listings
-* 🖥️ Modern, responsive, and user-friendly interface
-* 👤 User-focused features for a better viewing experience
+Open <http://localhost:3000>. `npm test` starts the server and runs the search API assertions.
 
-## 🎥 Watch & Enjoy
+## Configuration
 
-The main vision of this project is to create a platform where users can **find anime they love and enjoy watching it** without having to search across different platforms.
+The server reads configuration from environment variables; it does not load `.env` files automatically. Use `.env.example` as a reference when configuring your shell or hosting provider.
 
-Users will eventually be able to:
+| Variable | Purpose |
+| --- | --- |
+| `PORT` | HTTP port (defaults to `3000`) |
+| `CORS_ORIGINS` | Comma-separated list of allowed browser origins; defaults to localhost on the selected port |
+| `SITE_URL` | Public site origin used when generating the sitemap and robots file |
+| `CONTACT_EMAIL` | Monitored address shown on the contact and privacy pages |
+| `DMCA_EMAIL` | Monitored copyright-notice address shown on the copyright page |
 
-* 🔍 Find anime by name, genre, or category
-* 📺 Browse available episodes
-* ▶️ Watch anime directly through the platform
-* 🆕 Discover newly released episodes
-* ❤️ Explore popular and recommended anime
-* 📖 View detailed information about each series
+Before public launch, set `NODE_ENV=production`, set `SITE_URL` to the real HTTPS origin, and configure working contact and copyright addresses. Set `CORS_ORIGINS` to include the exact deployed origin. The server refuses to start in production if those values are missing or invalid. Use HTTPS at the hosting platform or reverse proxy.
 
-## 🛠️ Development
+## Data and privacy notes
 
-This repository will be continuously updated throughout the development process.
+- Watchlists are stored locally in the visitor's browser.
+- Search terms are sent to this server and forwarded to AniList for catalog results.
+- The Popular page loads up to 50 non-adult anime entries from AniList, adds curated local titles outside that page, caches the merged catalog in memory for 10 minutes, and falls back to the local catalog if AniList is unavailable.
+- The Popular page displays 24 titles per page; filters apply to the complete loaded catalog, and the selected page is shareable through the URL.
+- Title details include available AniList metadata, staff and Japanese voice-actor credits, related titles, recommendations, and official YouTube trailer links; Anime Hub does not host or stream video.
+- Fonts are loaded from Google Fonts.
+- Analytics, advertisements, and video playback are not included.
 
-It will contain the project's:
+Review the privacy, terms, contact, and copyright pages against the actual deployment and applicable law before launch. The legal pages are starting drafts, not legal advice. In particular, a DMCA page does not itself register a designated agent or establish statutory safe-harbor eligibility.
 
-* 💻 Source code
-* ✨ New features
-* 🎨 UI/UX improvements
-* 🧪 Experiments and implementations
-* 🔧 Bug fixes and optimizations
-* 🚀 Future updates
+## Project layout
 
-## 📌 Status
-
-**🚧 Currently in Development**
-
-The website is actively being developed. More features, anime content, and improvements will be added as the project progresses.
-
-## 🎯 Vision
-
-The ultimate vision is to turn this project into a **complete, full-fledged anime website** where users can **discover, explore, and watch anime in one place**.
-Most likely i will add more things andd features to this website so that it should be user friendly and users should choose this web over other anime websites.
-
-ONE PIECE , NARUTO AND BLEACH ARE THE REAL DEAL IN ANIME HISTORY . 
-
-FEATURES THAT I WANT TO ADD:
-1. NO SPAMMING IN DROPPING THE RATINGS OF ANY ANIME EP OR MOVIE.
-2. DOWNLOADING ANIME IN HD SHOULD BE EASY AND SHOULD BE IN EVERY LANGUAGE.
-3. NO ADDS OR REDIRECTS.
-
-From **classic favorites and popular series to the newest releases and currently airing anime**, the platform aims to provide an enjoyable and convenient experience for every anime fan.
-
-> 🎌 **Discover. Explore. Watch. Enjoy.**
+- `public/` — static catalog UI and legal pages
+- `server.js` — Express API, metadata proxy, and sitemap/robots endpoints
+- `test-search.js` — API search assertions

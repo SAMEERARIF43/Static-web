@@ -6,17 +6,122 @@ const express = require('express');
 const cors = require('cors');
 const path = require('path');
 const axios = require('axios');
+const { mapLocalAnimeToAniList, searchAnimeLocal, deduplicateMediaList } = require('./search-utils');
+const { mergeAniListCatalog } = require('./catalog-utils');
 
 const app = express();
-const PORT = 3000;
+const PORT = process.env.PORT || 3000;
+const configuredSiteUrl = new URL(process.env.SITE_URL || `http://localhost:${PORT}`);
+if (
+  !['http:', 'https:'].includes(configuredSiteUrl.protocol) ||
+  configuredSiteUrl.origin === 'null' ||
+  configuredSiteUrl.username ||
+  configuredSiteUrl.password
+) {
+  throw new Error('SITE_URL must be an HTTP or HTTPS site origin.');
+}
+const SITE_URL = configuredSiteUrl.origin;
 
 // ============================================================
 // MIDDLEWARE
 // ============================================================
 
-app.use(cors());
-app.use(express.json());
-app.use(express.static(path.join(__dirname)));
+// Restricted CORS — only allow the app's own origin (or configured origins)
+const ALLOWED_ORIGINS = process.env.CORS_ORIGINS
+  ? process.env.CORS_ORIGINS.split(',').map(o => o.trim())
+  : [`http://localhost:${PORT}`];
+
+if (process.env.NODE_ENV === 'production') {
+  if (configuredSiteUrl.protocol !== 'https:' || !process.env.SITE_URL) {
+    throw new Error('Production requires SITE_URL set to the public HTTPS origin.');
+  }
+  if (!ALLOWED_ORIGINS.includes(SITE_URL)) {
+    throw new Error('Production CORS_ORIGINS must include SITE_URL.');
+  }
+  for (const variable of ['CONTACT_EMAIL', 'DMCA_EMAIL']) {
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(process.env[variable] || '')) {
+      throw new Error(`Production requires a valid monitored ${variable}.`);
+    }
+  }
+}
+
+app.use(cors({
+  origin: function (origin, callback) {
+    // Allow requests with no origin (same-origin, Postman, server-side)
+    if (!origin || ALLOWED_ORIGINS.includes(origin)) {
+      callback(null, true);
+    } else {
+      callback(new Error('Not allowed by CORS'));
+    }
+  }
+}));
+
+app.use((req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
+  next();
+});
+
+app.use(express.json({ limit: '16kb' }));
+
+// Serve ONLY the public/ directory — not the project root
+app.use(express.static(path.join(__dirname, 'public')));
+
+app.get('/robots.txt', (req, res) => {
+  res.type('text/plain').send(`User-agent: *\nAllow: /\nSitemap: ${SITE_URL}/sitemap.xml\n`);
+});
+
+app.get('/sitemap.xml', (req, res) => {
+  const pages = [
+    { path: '', changefreq: 'daily', priority: '1.0' },
+    { path: 'privacy.html', changefreq: 'monthly', priority: '0.3' },
+    { path: 'terms.html', changefreq: 'monthly', priority: '0.3' },
+    { path: 'contact.html', changefreq: 'monthly', priority: '0.5' },
+    { path: 'dmca.html', changefreq: 'monthly', priority: '0.3' }
+  ];
+  const urls = pages.map(p => {
+    const loc = p.path ? `${SITE_URL}/${p.path}` : `${SITE_URL}/`;
+    return `<url><loc>${loc}</loc><changefreq>${p.changefreq}</changefreq><priority>${p.priority}</priority></url>`;
+  }).join('');
+  res.type('application/xml').send(
+    `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${urls}\n</urlset>`
+  );
+});
+
+app.get('/api/site-config', (req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  res.json({
+    contactEmail: process.env.CONTACT_EMAIL || '',
+    dmcaEmail: process.env.DMCA_EMAIL || ''
+  });
+});
+
+
+// ============================================================
+// HELPERS — Sanitize HTML from AniList descriptions
+// ============================================================
+
+/**
+ * Strip all HTML tags except <br> and escape remaining content
+ * to prevent XSS when forwarding AniList data to the client.
+ */
+function sanitizeDescription(html) {
+  if (!html || typeof html !== 'string') return '';
+  // Preserve <br> tags, strip all other HTML
+  return html
+    .replace(/<br\s*\/?>/gi, '\n')    // Convert <br> to newlines
+    .replace(/<[^>]*>/g, '')           // Remove all other tags
+    .replace(/\n/g, '<br>');           // Restore <br> tags
+}
+
+/**
+ * Safely extract a nested property, returning fallback if missing.
+ */
+function safe(obj, path, fallback = null) {
+  return path.split('.').reduce((acc, key) => (acc && acc[key] != null ? acc[key] : fallback), obj);
+}
 
 
 // ============================================================
@@ -26,11 +131,15 @@ app.use(express.static(path.join(__dirname)));
 const ANIME_DB = [
   {
     id: 1,
+    anilistId: 113415,
     title: "Jujutsu Kaisen",
     genre: ["Action", "Supernatural", "Shounen"],
     year: 2020,
     rating: 8.6,
     episodes: 24,
+    type: "TV",
+    studio: "MAPPA",
+    language: "Japanese",
     status: "Completed",
     image: "https://s4.anilist.co/file/anilistcdn/media/anime/cover/large/bx113415-LHBAeoZDIsnF.jpg",
     poster: "https://s4.anilist.co/file/anilistcdn/media/anime/cover/large/bx113415-LHBAeoZDIsnF.jpg",
@@ -41,11 +150,15 @@ const ANIME_DB = [
 
   {
     id: 2,
+    anilistId: 151807,
     title: "Solo Leveling",
     genre: ["Action", "Adventure", "Fantasy"],
     year: 2024,
     rating: 8.8,
     episodes: 25,
+    type: "TV",
+    studio: "A-1 Pictures",
+    language: "Japanese",
     status: "Completed",
     image: "https://s4.anilist.co/file/anilistcdn/media/anime/cover/large/bx151807-it355ZgzquUd.png",
     poster: "https://s4.anilist.co/file/anilistcdn/media/anime/cover/large/bx151807-it355ZgzquUd.png",
@@ -56,11 +169,15 @@ const ANIME_DB = [
 
   {
     id: 3,
+    anilistId: 21,
     title: "One Piece",
     genre: ["Action", "Adventure", "Fantasy", "Shounen"],
     year: 1999,
     rating: 9.0,
     episodes: 1100,
+    type: "TV",
+    studio: "Toei Animation",
+    language: "Japanese",
     status: "Airing",
     image: "https://s4.anilist.co/file/anilistcdn/media/anime/cover/large/bx21-ELSYx3yMPcKM.jpg",
     poster: "https://s4.anilist.co/file/anilistcdn/media/anime/cover/large/bx21-ELSYx3yMPcKM.jpg",
@@ -71,11 +188,15 @@ const ANIME_DB = [
 
   {
     id: 4,
+    anilistId: 101922,
     title: "Demon Slayer",
     genre: ["Action", "Supernatural", "Shounen"],
     year: 2019,
     rating: 8.6,
     episodes: 55,
+    type: "TV",
+    studio: "ufotable",
+    language: "Japanese",
     status: "Airing",
     image: "https://s4.anilist.co/file/anilistcdn/media/anime/cover/large/bx101922-WBsBl0ClmgYL.jpg",
     poster: "https://s4.anilist.co/file/anilistcdn/media/anime/cover/large/bx101922-WBsBl0ClmgYL.jpg",
@@ -86,11 +207,15 @@ const ANIME_DB = [
 
   {
     id: 5,
+    anilistId: 16498,
     title: "Attack on Titan",
     genre: ["Action", "Drama", "Fantasy"],
     year: 2013,
     rating: 9.0,
     episodes: 89,
+    type: "TV",
+    studio: "MAPPA",
+    language: "Japanese",
     status: "Completed",
     image: "https://s4.anilist.co/file/anilistcdn/media/anime/cover/large/bx16498-buvcRTBx4NSm.jpg",
     poster: "https://s4.anilist.co/file/anilistcdn/media/anime/cover/large/bx16498-buvcRTBx4NSm.jpg",
@@ -101,11 +226,15 @@ const ANIME_DB = [
 
   {
     id: 6,
+    anilistId: 20,
     title: "Naruto",
     genre: ["Action", "Adventure", "Shounen"],
     year: 2002,
     rating: 8.3,
     episodes: 220,
+    type: "TV",
+    studio: "Studio Pierrot",
+    language: "Japanese",
     status: "Completed",
     image: "https://s4.anilist.co/file/anilistcdn/media/anime/cover/large/bx20-dE6UHbFFg1A5.jpg",
     poster: "https://s4.anilist.co/file/anilistcdn/media/anime/cover/large/bx20-dE6UHbFFg1A5.jpg",
@@ -116,11 +245,15 @@ const ANIME_DB = [
 
   {
     id: 7,
+    anilistId: 1535,
     title: "Death Note",
     genre: ["Mystery", "Psychological", "Supernatural"],
     year: 2006,
     rating: 8.6,
     episodes: 37,
+    type: "TV",
+    studio: "Madhouse",
+    language: "Japanese",
     status: "Completed",
     image: "https://s4.anilist.co/file/anilistcdn/media/anime/cover/large/bx1535-kUgkcrfOrkUM.jpg",
     poster: "https://s4.anilist.co/file/anilistcdn/media/anime/cover/large/bx1535-kUgkcrfOrkUM.jpg",
@@ -131,11 +264,15 @@ const ANIME_DB = [
 
   {
     id: 8,
+    anilistId: 5114,
     title: "Fullmetal Alchemist: Brotherhood",
     genre: ["Action", "Adventure", "Fantasy"],
     year: 2009,
     rating: 9.1,
     episodes: 64,
+    type: "TV",
+    studio: "Bones",
+    language: "Japanese",
     status: "Completed",
     image: "https://s4.anilist.co/file/anilistcdn/media/anime/cover/large/bx5114-nSWCgQlmOMtj.jpg",
     poster: "https://s4.anilist.co/file/anilistcdn/media/anime/cover/large/bx5114-nSWCgQlmOMtj.jpg",
@@ -146,11 +283,15 @@ const ANIME_DB = [
 
   {
     id: 9,
+    anilistId: 269,
     title: "Bleach",
     genre: ["Action", "Adventure", "Supernatural"],
     year: 2004,
     rating: 8.2,
     episodes: 366,
+    type: "TV",
+    studio: "Studio Pierrot",
+    language: "Japanese",
     status: "Completed",
     image: "https://s4.anilist.co/file/anilistcdn/media/anime/cover/large/bx269-d2GmRkJbMopq.png",
     poster: "https://s4.anilist.co/file/anilistcdn/media/anime/cover/large/bx269-d2GmRkJbMopq.png",
@@ -161,11 +302,15 @@ const ANIME_DB = [
 
   {
     id: 10,
+    anilistId: 101348,
     title: "Vinland Saga",
     genre: ["Action", "Adventure", "Drama"],
     year: 2019,
     rating: 8.8,
     episodes: 48,
+    type: "TV",
+    studio: "MAPPA",
+    language: "Japanese",
     status: "Completed",
     image: "https://s4.anilist.co/file/anilistcdn/media/anime/cover/large/bx101348-2fhDFPCuMNiz.jpg",
     poster: "https://s4.anilist.co/file/anilistcdn/media/anime/cover/large/bx101348-2fhDFPCuMNiz.jpg",
@@ -176,11 +321,15 @@ const ANIME_DB = [
 
   {
     id: 11,
+    anilistId: 9253,
     title: "Steins;Gate",
     genre: ["Sci-Fi", "Thriller", "Psychological"],
     year: 2011,
     rating: 9.0,
     episodes: 24,
+    type: "TV",
+    studio: "White Fox",
+    language: "Japanese",
     status: "Completed",
     image: "https://s4.anilist.co/file/anilistcdn/media/anime/cover/large/bx9253-tIUXF2gfU8Sg.jpg",
     poster: "https://s4.anilist.co/file/anilistcdn/media/anime/cover/large/bx9253-tIUXF2gfU8Sg.jpg",
@@ -191,11 +340,15 @@ const ANIME_DB = [
 
   {
     id: 12,
+    anilistId: 11061,
     title: "Hunter x Hunter",
     genre: ["Action", "Adventure", "Fantasy"],
     year: 2011,
     rating: 9.0,
     episodes: 148,
+    type: "TV",
+    studio: "Madhouse",
+    language: "Japanese",
     status: "Completed",
     image: "https://s4.anilist.co/file/anilistcdn/media/anime/cover/large/bx11061-y5gsT1hoHuHw.png",
     poster: "https://s4.anilist.co/file/anilistcdn/media/anime/cover/large/bx11061-y5gsT1hoHuHw.png",
@@ -227,6 +380,93 @@ function getAnimeById(id) {
   );
 }
 
+const popularCatalogCache = {
+  data: null,
+  expiresAt: 0,
+  pending: null
+};
+const POPULAR_CATALOG_CACHE_TTL_MS = 10 * 60 * 1000;
+
+async function getPopularCatalog() {
+  if (popularCatalogCache.data && Date.now() < popularCatalogCache.expiresAt) {
+    return popularCatalogCache.data;
+  }
+  if (popularCatalogCache.pending) return popularCatalogCache.pending;
+
+  const staleCatalog = popularCatalogCache.data;
+  popularCatalogCache.pending = (async () => {
+    try {
+      const graphqlQuery = `
+        query {
+          Page(page: 1, perPage: 50) {
+            media(type: ANIME, sort: POPULARITY_DESC, isAdult: false) {
+              id
+              title {
+                romaji
+                english
+                native
+              }
+              coverImage {
+                large
+                extraLarge
+              }
+              bannerImage
+              description
+              episodes
+              status
+              averageScore
+              genres
+              seasonYear
+              startDate {
+                year
+              }
+              format
+              countryOfOrigin
+              studios(isMain: true) {
+                nodes {
+                  name
+                }
+              }
+            }
+          }
+        }
+      `;
+      const response = await axios.post(
+        'https://graphql.anilist.co',
+        { query: graphqlQuery },
+        {
+          headers: { 'Content-Type': 'application/json' },
+          timeout: 10000
+        }
+      );
+      if (response.data.errors) {
+        throw new Error(response.data.errors.map(error => error.message).join('; '));
+      }
+
+      const media = safe(response, 'data.data.Page.media', null);
+      if (!Array.isArray(media) || media.length === 0) {
+        throw new Error('AniList returned no popular catalog entries.');
+      }
+
+      const sanitizedMedia = media.map(anime => ({
+        ...anime,
+        description: sanitizeDescription(anime.description)
+      }));
+      const catalog = mergeAniListCatalog(ANIME_DB, sanitizedMedia);
+      popularCatalogCache.data = catalog;
+      popularCatalogCache.expiresAt = Date.now() + POPULAR_CATALOG_CACHE_TTL_MS;
+      return catalog;
+    } catch (error) {
+      console.warn(`AniList popular catalog unavailable; using ${staleCatalog ? 'cached' : 'local'} catalog: ${error.message}`);
+      return staleCatalog || ANIME_DB;
+    } finally {
+      popularCatalogCache.pending = null;
+    }
+  })();
+
+  return popularCatalogCache.pending;
+}
+
 
 // ============================================================
 // TRENDING
@@ -245,13 +485,9 @@ app.get('/api/trending', (req, res) => {
 // POPULAR
 // ============================================================
 
-app.get('/api/popular', (req, res) => {
-
-  const popular = [...ANIME_DB]
-    .sort((a, b) => b.rating - a.rating);
-
+app.get('/api/popular', async (req, res) => {
+  const popular = await getPopularCatalog();
   res.json(popular);
-
 });
 
 
@@ -261,11 +497,11 @@ app.get('/api/popular', (req, res) => {
 
 app.get('/api/search', async (req, res) => {
 
-  const query = (req.query.q || '').trim();
+  const query = typeof req.query.q === 'string' ? req.query.q.trim() : '';
 
-  if (!query) {
+  if (!query || query.length > 100) {
     return res.status(400).json({
-      message: "Please enter an anime name."
+      message: "Enter an anime name of 1 to 100 characters."
     });
   }
 
@@ -292,6 +528,12 @@ app.get('/api/search', async (req, res) => {
             season
             seasonYear
             format
+            countryOfOrigin
+            studios(isMain: true) {
+              nodes {
+                name
+              }
+            }
           }
         }
       }
@@ -318,9 +560,14 @@ app.get('/api/search', async (req, res) => {
       console.error("❌ AniList GraphQL Error:", response.data.errors);
       // Fall through to local DB
     } else {
-      const anime = response.data.data.Page.media;
-      console.log(`✅ AniList returned ${anime.length} results for: ${query}`);
-      res.json(anime);
+      const mediaList = safe(response, 'data.data.Page.media', []);
+      // Deduplicate and sanitize descriptions before sending to client
+      const sanitized = deduplicateMediaList(mediaList).map(anime => ({
+        ...anime,
+        description: sanitizeDescription(anime.description)
+      }));
+      console.log(`AniList returned ${sanitized.length} search results.`);
+      res.json(sanitized);
       return;
     }
   } catch (error) {
@@ -329,8 +576,8 @@ app.get('/api/search', async (req, res) => {
   }
 
   // Fall back to local database
-  const results = searchAnimeLocal(query);
-  res.json(results);
+  const results = searchAnimeLocal(ANIME_DB, query).map(mapLocalAnimeToAniList);
+  res.json(deduplicateMediaList(results));
 
 });
 
@@ -338,18 +585,6 @@ app.get('/api/search', async (req, res) => {
 // ============================================================
 // LOCAL SEARCH HELPER
 // ============================================================
-
-function searchAnimeLocal(query) {
-
-  const q = query.toLowerCase().trim();
-
-  return ANIME_DB.filter(anime =>
-    anime.title.toLowerCase().includes(q) ||
-    anime.genres.some(g => g.toLowerCase().includes(q))
-  );
-
-}
-
 
 // ============================================================
 // GENRE SEARCH
@@ -392,39 +627,6 @@ app.get('/api/detail/:id', (req, res) => {
 
 
 // ============================================================
-// EPISODES
-// ============================================================
-
-app.get('/api/episodes/:id', (req, res) => {
-
-  const anime = getAnimeById(req.params.id);
-
-  if (!anime) {
-
-    return res.status(404).json({
-      message: "Anime not found."
-    });
-
-  }
-
-  const episodes = [];
-
-  for (let i = 1; i <= anime.episodes; i++) {
-
-    episodes.push({
-      episode: i,
-      title: `Episode ${i}`,
-      duration: "24 min"
-    });
-
-  }
-
-  res.json(episodes);
-
-});
-
-
-// ============================================================
 // GENRES
 // ============================================================
 
@@ -451,12 +653,12 @@ app.get('/api/genres', (req, res) => {
 
 app.post('/api/anime/search', async (req, res) => {
 
-  const query = (req.body.query || '').trim();
+  const query = typeof req.body?.query === 'string' ? req.body.query.trim() : '';
 
-  if (!query) {
+  if (!query || query.length > 100) {
 
     return res.status(400).json({
-      message: "Please enter an anime name."
+      message: "Enter an anime name of 1 to 100 characters."
     });
 
   }
@@ -509,7 +711,7 @@ app.post('/api/anime/search', async (req, res) => {
 
   try {
 
-    console.log(`🔎 Searching AniList for: ${query}`);
+    console.log("Searching AniList.");
 
     const response = await axios.post(
       "https://graphql.anilist.co",
@@ -543,25 +745,26 @@ app.post('/api/anime/search', async (req, res) => {
 
       return res.status(500).json({
 
-        message: "AniList returned an error.",
-
-        errors: response.data.errors
+        message: "AniList returned an error."
 
       });
 
     }
 
 
-    const anime =
-      response.data.data.Page.media;
-
+    const mediaList = safe(response, 'data.data.Page.media', []);
+    // Deduplicate and sanitize descriptions before sending to client
+    const sanitized = deduplicateMediaList(mediaList).map(anime => ({
+      ...anime,
+      description: sanitizeDescription(anime.description)
+    }));
 
     console.log(
-      `✅ AniList returned ${anime.length} results`
+      `✅ AniList returned ${sanitized.length} results`
     );
 
 
-    res.json(anime);
+    res.json(sanitized);
 
 
   } catch (error) {
@@ -574,11 +777,6 @@ app.post('/api/anime/search', async (req, res) => {
       console.error(
         "Status:",
         error.response.status
-      );
-
-      console.error(
-        "Response:",
-        error.response.data
       );
 
     } else {
@@ -594,10 +792,7 @@ app.post('/api/anime/search', async (req, res) => {
     res.status(500).json({
 
       message:
-        "Could not connect to AniList API.",
-
-      error:
-        error.message
+        "Could not connect to AniList API."
 
     });
 
@@ -639,9 +834,67 @@ app.get('/api/anime/:id', async (req, res) => {
         season
         seasonYear
         format
+        startDate {
+          year
+          month
+          day
+        }
+        duration
+        source
+        countryOfOrigin
+        studios(isMain: true) {
+          nodes {
+            name
+          }
+        }
+        staff(page: 1, perPage: 6, sort: [RELEVANCE]) {
+          edges {
+            role
+            node {
+              name {
+                full
+              }
+            }
+          }
+        }
+        characters(page: 1, perPage: 6, sort: [ROLE]) {
+          edges {
+            role
+            node {
+              name {
+                full
+              }
+            }
+            voiceActors(language: JAPANESE, sort: [RELEVANCE]) {
+              name {
+                full
+              }
+              languageV2
+            }
+          }
+        }
         trailer {
           id
           site
+        }
+        relations {
+          edges {
+            relationType
+            node {
+              id
+              type
+              title {
+                romaji
+                english
+              }
+              coverImage {
+                large
+              }
+              averageScore
+              format
+              status
+            }
+          }
         }
         recommendations(sort: RATING_DESC, perPage: 6) {
           edges {
@@ -684,13 +937,20 @@ app.get('/api/anime/:id', async (req, res) => {
     if (response.data.errors) {
       console.error("❌ AniList GraphQL Error:", response.data.errors);
       return res.status(500).json({
-        message: "AniList returned an error.",
-        errors: response.data.errors
+        message: "AniList returned an error."
       });
     }
 
-    const anime = response.data.data.Media;
-    console.log(`✅ AniList returned details for: ${anime.title.romaji || anime.title.english}`);
+    const anime = safe(response, 'data.data.Media', null);
+    if (!anime) {
+      return res.status(404).json({ message: "Anime not found on AniList." });
+    }
+
+    // Sanitize description before sending to client
+    anime.description = sanitizeDescription(anime.description);
+
+    const titleDisplay = safe(anime, 'title.romaji', '') || safe(anime, 'title.english', 'Unknown');
+    console.log(`✅ AniList returned details for: ${titleDisplay}`);
 
     res.json(anime);
 
@@ -702,10 +962,29 @@ app.get('/api/anime/:id', async (req, res) => {
       console.error("Message:", error.message);
     }
     res.status(500).json({
-      message: "Could not connect to AniList API.",
-      error: error.message
+      message: "Could not connect to AniList API."
     });
   }
+});
+
+app.use((error, req, res, next) => {
+  if (res.headersSent) return next(error);
+  const status = error.message === 'Not allowed by CORS'
+    ? 403
+    : [400, 413].includes(error.status)
+      ? error.status
+      : 500;
+
+  console.error(`Request failed (${status}): ${error.message}`);
+  res.status(status).json({
+    message: status === 413
+      ? 'Request body is too large.'
+      : status === 400
+        ? 'Invalid request.'
+        : status === 403
+          ? 'This origin is not allowed.'
+          : 'An internal server error occurred.'
+  });
 });
 
 
@@ -729,6 +1008,10 @@ app.listen(PORT, () => {
 
   console.log(
     `🔎 Anime search API: POST /api/anime/search`
+  );
+
+  console.log(
+    `📁 Serving frontend from: ./public/`
   );
 
   console.log("======================================");
