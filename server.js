@@ -256,10 +256,10 @@ app.get('/api/popular', (req, res) => {
 
 
 // ============================================================
-// LOCAL SEARCH
+// SEARCH (AniList first, local fallback)
 // ============================================================
 
-app.get('/api/search', (req, res) => {
+app.get('/api/search', async (req, res) => {
 
   const query = (req.query.q || '').trim();
 
@@ -269,11 +269,86 @@ app.get('/api/search', (req, res) => {
     });
   }
 
-  const results = searchAnime(query);
+  // Try AniList GraphQL first
+  try {
+    const graphqlQuery = `
+      query ($search: String) {
+        Page(perPage: 10) {
+          media(search: $search, type: ANIME, sort: SEARCH_MATCH) {
+            id
+            title {
+              romaji
+              english
+              native
+            }
+            coverImage {
+              large
+            }
+            description
+            episodes
+            status
+            averageScore
+            genres
+            season
+            seasonYear
+            format
+          }
+        }
+      }
+    `;
 
+    const response = await axios.post(
+      "https://graphql.anilist.co",
+      {
+        query: graphqlQuery,
+        variables: {
+          search: query
+        }
+      },
+      {
+        headers: {
+          "Content-Type": "application/json"
+        },
+        timeout: 15000
+      }
+    );
+
+    // Check for GraphQL errors
+    if (response.data.errors) {
+      console.error("❌ AniList GraphQL Error:", response.data.errors);
+      // Fall through to local DB
+    } else {
+      const anime = response.data.data.Page.media;
+      console.log(`✅ AniList returned ${anime.length} results for: ${query}`);
+      res.json(anime);
+      return;
+    }
+  } catch (error) {
+    console.log("❌ AniList failed, using local database fallback");
+    // AniList failed - will fall through to local DB
+  }
+
+  // Fall back to local database
+  const results = searchAnimeLocal(query);
   res.json(results);
 
 });
+
+
+// ============================================================
+// LOCAL SEARCH HELPER
+// ============================================================
+
+function searchAnimeLocal(query) {
+
+  const q = query.toLowerCase().trim();
+
+  return ANIME_DB.filter(anime =>
+    anime.title.toLowerCase().includes(q) ||
+    anime.genres.some(g => g.toLowerCase().includes(q))
+  );
+
+}
 
 
 // ============================================================

@@ -252,11 +252,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     try {
-      const res = await fetch(`${baseURL}/anime/search`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ query: query })
-      });
+      const res = await fetch(`${baseURL}/api/search?q=${encodeURIComponent(query)}`);
 
       if (!res.ok) {
         throw new Error(`Search request failed: ${res.status}`);
@@ -304,7 +300,7 @@ document.addEventListener('DOMContentLoaded', () => {
       }
 
     } catch (err) {
-      console.error('Error searching AniList:', err);
+      console.error('Error searching anime:', err);
       if (searchResultsGrid) {
         searchResultsGrid.innerHTML = `
           <div style="grid-column: 1 / -1; text-align: center; padding: 40px;">
