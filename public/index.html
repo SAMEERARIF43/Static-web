@@ -13,13 +13,13 @@
   <meta property="og:title" content="AnimeHub — Discover Anime & Movies Catalog">
   <meta property="og:description" content="AnimeHub is a modern anime and movie discovery catalog. Explore ratings, genres, release schedules, manage your personal watchlist, and find official trailers and legal streaming options.">
   <meta property="og:url" content="/">
-  <meta property="og:image" content="/websites%20picture.png">
+  <meta property="og:image" content="/social-preview.jpg">
 
   <!-- Twitter / X -->
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="AnimeHub — Discover Anime & Movies Catalog">
   <meta name="twitter:description" content="AnimeHub is a modern anime and movie discovery catalog. Explore ratings, genres, release schedules, manage your personal watchlist, and find official trailers and legal streaming options.">
-  <meta name="twitter:image" content="/websites%20picture.png">
+  <meta name="twitter:image" content="/social-preview.jpg">
 
   <!-- Structured Data / Schema.org -->
   <script type="application/ld+json">
@@ -46,14 +46,15 @@
           "@id": "/#organization",
           "name": "AnimeHub",
           "url": "/",
-          "logo": "/websites%20picture.png",
+          "logo": "/social-preview.jpg",
           "description": "An open discovery platform and catalog for anime movies and television series."
         }
       ]
     }
   </script>
 
-  <link rel="icon" type="image/png" href="assets/favicon-64.png">
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
+  <link rel="alternate icon" type="image/png" href="assets/favicon-64.png">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Outfit:wght@400;600;700;800;900&display=swap" rel="stylesheet">
@@ -73,6 +74,9 @@
       </button>
 
       <ul class="nav-links" id="nav-links">
+        <li><a href="#" data-nav="profile" class="nav-link" id="nav-profile" hidden>Profile</a></li>
+        <li><a href="#" id="nav-login" class="nav-link">Log In</a></li>
+        <li><a href="#" id="nav-logout" class="nav-link" hidden>Log Out</a></li>
         <li><a href="#" data-nav="home" class="nav-link active">Home</a></li>
         <li><a href="#" data-nav="movies" class="nav-link">Movies</a></li>
         <li><a href="#" data-nav="series" class="nav-link">TV Series</a></li>
@@ -399,6 +403,23 @@
       <div id="detail-content"></div>
     </div>
 
+    <!-- ===== PAGE: PROFILE ===== -->
+    <div class="page" id="page-profile">
+      <div class="section-container" style="padding-top: 120px; min-height: 60vh;">
+        <h1 style="font-family: var(--font-display); font-size: 2rem; margin-bottom: 24px;">Your Profile</h1>
+        <div class="detail-info-card" style="max-width: 600px;">
+          <p style="margin-bottom: 12px;"><strong>Email:</strong> <span id="profile-email" style="color: var(--text-muted);">Not logged in</span></p>
+          <p id="profile-verified-status" style="margin-bottom: 20px; font-size: 14px; color: var(--text-dim);"></p>
+        </div>
+        <div style="margin-top: 32px; padding-top: 24px; border-top: 1px solid var(--border);">
+          <h2 style="font-size: 1.2rem; margin-bottom: 12px; color: var(--danger);">Danger Zone</h2>
+          <p style="font-size: 14px; color: var(--text-muted); margin-bottom: 16px; max-width: 520px;">Deleting your account will permanently remove your profile and cloud watchlist data. This action cannot be undone.</p>
+          <button type="button" id="profile-delete-btn" class="cta-btn profile-delete-btn">Delete My Account</button>
+          <p id="profile-delete-note" style="font-size: 12px; color: var(--text-dim); margin-top: 10px; max-width: 520px;"></p>
+        </div>
+      </div>
+    </div>
+
   </div><!-- /app -->
 
   <!-- ========== FOOTER ========== -->
@@ -419,7 +440,36 @@
   <div class="toast" id="toast"></div>
 
   <!-- ========== SCRIPTS ========== -->
-  <script src="data.js"></script>
   <script src="script.js"></script>
+
+  <!-- Auth Modal -->
+  <div id="auth-modal" class="auth-modal-backdrop" hidden role="dialog" aria-modal="true" aria-labelledby="auth-title">
+    <div class="auth-modal-card">
+      <h2 id="auth-title">Log In</h2>
+      <form id="auth-form">
+        <div class="auth-modal-field">
+          <label for="auth-email">Email Address</label>
+          <input type="email" id="auth-email" placeholder="you@example.com" autocomplete="email" required>
+        </div>
+        <div class="auth-modal-field" id="auth-password-wrapper">
+          <label for="auth-password">Password</label>
+          <input type="password" id="auth-password" placeholder="••••••••" autocomplete="current-password">
+        </div>
+        <div class="auth-modal-actions">
+          <button type="submit" id="auth-submit-btn" class="cta-btn primary-btn">Submit</button>
+          <button type="button" id="auth-cancel-btn" class="cta-btn secondary-btn">Cancel</button>
+        </div>
+        <p id="auth-error" class="auth-modal-error" aria-live="polite" aria-atomic="true"></p>
+        <div class="auth-modal-footer">
+          <a href="#" id="auth-switch-mode">Need an account? Sign Up</a> |
+          <a href="#" id="auth-forgot-link">Forgot password?</a>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="auth-ui.js"></script>
+
 </body>
 </html>

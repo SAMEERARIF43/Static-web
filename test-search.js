@@ -5,12 +5,16 @@ const path = require('path');
 const { mapLocalAnimeToAniList, searchAnimeLocal } = require('./search-utils');
 const { mapAniListMediaToCatalogItem, mergeAniListCatalog } = require('./catalog-utils');
 
-const PORT = process.env.PORT || 3000;
-const baseURL = `http://localhost:${PORT}`;
+const TEST_PORT = process.env.TEST_PORT || 3001;
+const baseURL = `http://localhost:${TEST_PORT}`;
+const verifiedUserId = '01234567-89ab-cdef-0123-456789abcdef';
+const authRequests = [];
 
-function request(pathname, headers = {}) {
+function request(pathname, headers = {}, method = 'GET', body = null) {
   return new Promise((resolve, reject) => {
-    http.get(`${baseURL}${pathname}`, { headers }, (res) => {
+    const requestHeaders = { ...headers };
+    if (body !== null) requestHeaders['Content-Length'] = Buffer.byteLength(body);
+    const req = http.request(`${baseURL}${pathname}`, { headers: requestHeaders, method }, (res) => {
       let data = '';
       res.on('data', chunk => data += chunk);
       res.on('end', () => {
@@ -23,7 +27,9 @@ function request(pathname, headers = {}) {
           reject(new Error(`Request returned invalid JSON: ${data}`));
         }
       });
-    }).on('error', reject);
+    });
+    req.on('error', reject);
+    req.end(body);
   });
 }
 
@@ -62,9 +68,36 @@ function waitForServer(server) {
 }
 
 async function run() {
+  const authServer = http.createServer((req, res) => {
+    authRequests.push({ method: req.method, url: req.url, headers: req.headers });
+    res.setHeader('Content-Type', 'application/json');
+    if (req.method === 'GET' && req.url === '/auth/v1/user') {
+      res.end(JSON.stringify({ id: verifiedUserId }));
+      return;
+    }
+    if (req.method === 'DELETE' && req.url === `/auth/v1/admin/users/${verifiedUserId}`) {
+      res.end(JSON.stringify({ id: verifiedUserId }));
+      return;
+    }
+    res.statusCode = 404;
+    res.end(JSON.stringify({ message: 'Not found' }));
+  });
+  await new Promise((resolve, reject) => {
+    authServer.once('error', reject);
+    authServer.listen(0, '127.0.0.1', resolve);
+  });
+  const authUrl = `http://127.0.0.1:${authServer.address().port}`;
   const server = spawn(process.execPath, [path.join(__dirname, 'server.js')], {
     cwd: __dirname,
-    stdio: ['ignore', 'pipe', 'inherit']
+    stdio: ['ignore', 'pipe', 'inherit'],
+    env: {
+      ...process.env,
+      PORT: String(TEST_PORT),
+      CORS_ORIGINS: `http://localhost:${TEST_PORT}`,
+      SUPABASE_URL: authUrl,
+      SUPABASE_ANON_KEY: 'test-public-anon-key',
+      SUPABASE_SERVICE_ROLE_KEY: 'test-server-only-service-role-key'
+    }
   });
 
   try {
@@ -94,6 +127,9 @@ async function run() {
 
     const oversized = await search('x'.repeat(101));
     assert.strictEqual(oversized.statusCode, 400, 'Oversized search should return HTTP 400');
+
+    const retiredPostSearch = await request('/api/anime/search', {}, 'POST', JSON.stringify({ query: 'Naruto' }));
+    assert.strictEqual(retiredPostSearch.statusCode, 404, 'The unused POST search route should not be exposed');
 
     const robots = await request('/robots.txt');
     assert.strictEqual(robots.statusCode, 200, 'robots.txt should be available');
@@ -138,6 +174,43 @@ async function run() {
     assert(!Object.hasOwn(siteConfig.body, 'supabaseUrl'), 'Site configuration should not expose Supabase settings');
     assert(!Object.hasOwn(siteConfig.body, 'supabaseAnonKey'), 'Site configuration should not expose Supabase keys');
 
+    const authConfig = await request('/api/config');
+    assert.strictEqual(authConfig.statusCode, 200, 'Public Supabase configuration should load');
+    assert.deepStrictEqual(
+      Object.keys(authConfig.body).sort(),
+      ['SUPABASE_ANON_KEY', 'SUPABASE_URL'],
+      '/api/config should expose only public Supabase configuration'
+    );
+    assert.strictEqual(authConfig.headers['cache-control'], 'no-store');
+
+    const unauthenticatedDeletion = await request('/api/account', {}, 'DELETE');
+    assert.strictEqual(unauthenticatedDeletion.statusCode, 401, 'Account deletion must require authentication');
+    assert.strictEqual(authRequests.length, 0, 'Unauthenticated deletion must not contact Supabase');
+
+    const authenticatedDeletion = await request(
+      '/api/account',
+      { Authorization: 'Bearer test-access-token', 'Content-Type': 'application/json' },
+      'DELETE',
+      JSON.stringify({ user_id: 'fedcba98-7654-3210-fedc-ba9876543210' })
+    );
+    assert.strictEqual(
+      authenticatedDeletion.statusCode,
+      200,
+      `Authenticated account deletion should succeed: ${JSON.stringify(authenticatedDeletion.body)}; auth requests: ${authRequests.length}`
+    );
+    assert.strictEqual(authRequests.length, 2, 'Deletion must verify the token then call the Admin API');
+    assert.strictEqual(authRequests[0].url, '/auth/v1/user', 'The access token should be verified through Supabase Auth');
+    assert.strictEqual(authRequests[0].headers.authorization, 'Bearer test-access-token');
+    assert.strictEqual(authRequests[0].headers.apikey, 'test-public-anon-key');
+    assert.strictEqual(
+      authRequests[1].url,
+      `/auth/v1/admin/users/${verifiedUserId}`,
+      'The Admin API target must come from the verified user, not the supplied user_id'
+    );
+    assert.strictEqual(authRequests[1].headers.apikey, 'test-server-only-service-role-key');
+    assert.strictEqual(authRequests[1].headers.authorization, 'Bearer test-server-only-service-role-key');
+    assert(!JSON.stringify(authenticatedDeletion.body).includes('service-role'));
+
     const localWatchlistScript = await request('/script.js');
     assert(localWatchlistScript.body.includes("localStorage.getItem('anime_hub_watchlist')"), 'Watchlist should remain browser-local');
     assert(!localWatchlistScript.body.includes("localStorage.removeItem('anime_hub_continue_watching')"), 'Existing continue-watching data should not be cleared');
@@ -146,6 +219,16 @@ async function run() {
 
     const forbiddenOrigin = await request('/api/site-config', { Origin: 'https://not-allowed.example' });
     assert.strictEqual(forbiddenOrigin.statusCode, 403, 'Unconfigured cross-origin requests should be rejected');
+    console.log('Expected CORS rejection: unconfigured origin returned HTTP 403.');
+
+    const allowedOrigin = await request('/api/site-config', { Origin: `http://localhost:${TEST_PORT}` });
+    assert.strictEqual(allowedOrigin.statusCode, 200, 'Configured same-site cross-origin requests should succeed');
+    assert.strictEqual(
+      allowedOrigin.headers['access-control-allow-origin'],
+      `http://localhost:${TEST_PORT}`,
+      'Configured origins should receive the matching CORS allow-origin header'
+    );
+    console.log('Allowed CORS origin: configured origin returned HTTP 200.');
 
     const trending = await request('/api/trending');
     assert.strictEqual(trending.statusCode, 200, 'Trending catalog should load');
@@ -211,8 +294,116 @@ async function run() {
     assert.strictEqual(mergedCatalog.length, 2, 'Merging should preserve unique AniList entries');
     assert.strictEqual(
       mergedCatalog[1].title,
-      localTitle.title,
-      'Curated local metadata should override its matching AniList entry'
+      'AniList version',
+      'Live AniList titles should win over the local copy'
+    );
+
+    // ---- Merge policy: live AniList wins for volatile factual metadata ----
+    const staleLocalTitle = {
+      id: 77,
+      anilistId: 4242,
+      title: 'Stale Local Title',
+      genre: ['Action'],
+      year: 1999,
+      rating: 5.5,
+      episodes: 999,
+      type: 'TV',
+      studio: 'Stale Studio',
+      language: 'Japanese',
+      status: 'Hiatus',
+      poster: 'https://example.com/local-poster.jpg',
+      image: 'https://example.com/local-poster.jpg',
+      banner: 'https://example.com/local-banner.jpg',
+      description: 'Stale local description.',
+      editorialBadge: 'Staff pick'
+    };
+    const liveMedia = {
+      id: 4242,
+      title: { english: 'Live Title', romaji: 'Live Title', native: null },
+      coverImage: { large: 'https://example.com/live.jpg' },
+      bannerImage: 'https://example.com/live-banner.jpg',
+      description: 'Live description.',
+      episodes: 12,
+      status: 'RELEASING',
+      averageScore: 88,
+      genres: ['Action', 'Drama'],
+      seasonYear: 2024,
+      startDate: { year: 2024 },
+      format: 'TV',
+      countryOfOrigin: 'JP',
+      studios: { nodes: [{ name: 'Live Studio' }] }
+    };
+    const liveEntry = mergeAniListCatalog([staleLocalTitle], [liveMedia])[0];
+    assert.strictEqual(liveEntry.episodes, 12, 'AniList episode count should override the stale local value');
+    assert.strictEqual(liveEntry.studio, 'Live Studio', 'AniList studio should override the stale local value');
+    assert.strictEqual(liveEntry.status, 'Airing', 'AniList airing status should override the stale local value');
+    assert.strictEqual(liveEntry.title, 'Live Title', 'AniList title should override the stale local title');
+    assert.strictEqual(liveEntry.year, 2024, 'AniList season year should override the stale local year');
+    assert.strictEqual(liveEntry.rating, 8.8, 'AniList score should override the stale local rating');
+    assert.deepStrictEqual(liveEntry.genre, ['Action', 'Drama'], 'AniList genres should override local genres');
+    assert.strictEqual(liveEntry.poster, 'https://example.com/live.jpg', 'AniList artwork should replace local artwork');
+    assert.strictEqual(liveEntry.description, 'Live description.', 'AniList description should replace the local copy');
+    assert.strictEqual(liveEntry.anilistId, 4242, 'The AniList detail ID must come from AniList');
+    assert.strictEqual(liveEntry.id, 77, 'The local catalog key should stay stable for matched entries');
+    assert.strictEqual(
+      liveEntry.editorialBadge,
+      'Staff pick',
+      'Local-only curation fields must survive the merge untouched'
+    );
+
+    // ---- Merge policy: missing AniList fields fall back to local values ----
+    const sparseMedia = {
+      id: 4243,
+      title: { english: null, romaji: 'Sparse AniList Title', native: null },
+      coverImage: {},
+      description: '',
+      episodes: null,
+      status: null,
+      averageScore: null,
+      genres: [],
+      seasonYear: null,
+      startDate: {},
+      format: null,
+      countryOfOrigin: 'ZZ',
+      studios: { nodes: [] }
+    };
+    const localFallbackTitle = {
+      id: 78,
+      anilistId: 4243,
+      title: 'Local Fallback Title',
+      genre: ['Sci-Fi'],
+      year: 2011,
+      rating: 9.1,
+      episodes: 24,
+      type: 'TV',
+      studio: 'Local Studio',
+      language: 'Japanese',
+      status: 'Completed',
+      poster: 'https://example.com/fallback.jpg',
+      description: 'Local fallback description.'
+    };
+    const fallbackEntry = mergeAniListCatalog([localFallbackTitle], [sparseMedia])[0];
+    assert.strictEqual(fallbackEntry.title, 'Sparse AniList Title', 'A usable AniList title should still win');
+    assert.strictEqual(fallbackEntry.episodes, 24, 'Local episodes should survive when AniList has none');
+    assert.strictEqual(fallbackEntry.studio, 'Local Studio', 'Local studio should survive when AniList has none');
+    assert.strictEqual(fallbackEntry.status, 'Completed', 'Local status should survive when AniList has none');
+    assert.strictEqual(fallbackEntry.year, 2011, 'Local year should survive when AniList has none');
+    assert.strictEqual(fallbackEntry.rating, 9.1, 'Local rating should survive when AniList has none');
+    assert.strictEqual(fallbackEntry.type, 'TV', 'Local format should survive when AniList has none');
+    assert.strictEqual(fallbackEntry.language, 'Japanese', 'Local language should survive unknown AniList origin');
+    assert.strictEqual(fallbackEntry.poster, 'https://example.com/fallback.jpg', 'Local poster should survive empty AniList art');
+    assert.strictEqual(
+      fallbackEntry.description,
+      'Local fallback description.',
+      'Local description should survive an empty AniList description'
+    );
+
+    // ---- Merge policy: a wholly local catalog is returned unchanged ----
+    const offlineCatalog = mergeAniListCatalog([localFallbackTitle], []);
+    assert.deepStrictEqual(
+      offlineCatalog,
+      [{ ...localFallbackTitle, anilistId: 4243 }],
+      'An unavailable AniList must leave the local catalog untouched'
     );
 
     assert.deepStrictEqual(
@@ -232,6 +423,7 @@ async function run() {
     console.log('All search tests passed.');
   } finally {
     server.kill();
+    await new Promise(resolve => authServer.close(resolve));
   }
 }
 

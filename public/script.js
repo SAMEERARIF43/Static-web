@@ -7,7 +7,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const DEFAULT_SEO = {
     title: 'AnimeHub — Discover Anime & Movies Catalog',
     description: 'AnimeHub is a modern anime and movie discovery catalog. Explore ratings, genres, release schedules, manage your personal watchlist, and find official trailers and legal streaming options.',
-    image: '/websites%20picture.png',
+    image: '/social-preview.jpg',
     url: '/'
   };
 
@@ -92,8 +92,30 @@ document.addEventListener('DOMContentLoaded', () => {
   // Local Watchlist state (persisted in localStorage)
   let watchlist = JSON.parse(localStorage.getItem('anime_hub_watchlist') || '[]');
 
+  function getWatchlistAuthState() {
+    return window.getAnimeHubAuthState?.() || { ready: false, session: null };
+  }
+
   function saveWatchlist() {
+    if (getWatchlistAuthState().session) return;
     localStorage.setItem('anime_hub_watchlist', JSON.stringify(watchlist));
+  }
+
+  async function toggleWatchlistItem(item) {
+    const id = String(item.id);
+    const index = watchlist.findIndex(saved => String(saved.id) === id);
+    const adding = index < 0;
+
+    if (getWatchlistAuthState().session) {
+      if (!window.animeHubCloudWatchlist) throw new Error('Cloud watchlist is unavailable.');
+      if (adding) await window.animeHubCloudWatchlist.add(item);
+      else await window.animeHubCloudWatchlist.remove(item.id);
+    }
+
+    if (adding) watchlist.push(item);
+    else watchlist.splice(index, 1);
+    saveWatchlist();
+    return adding;
   }
 
   window.addEventListener('animehub:toast', event => {
@@ -443,6 +465,10 @@ document.addEventListener('DOMContentLoaded', () => {
       }
     }
   }
+
+  document.getElementById('search-retry-btn')?.addEventListener('click', () => {
+    if (lastSearchQuery) performSearch(lastSearchQuery);
+  });
 
   // ============================================================
   // SEARCH ANIME (AniList with local DB fallback & caching)
@@ -806,7 +832,7 @@ document.addEventListener('DOMContentLoaded', () => {
       // Watchlist detail button listener
       const detailWatchlistBtn = document.getElementById('detail-watchlist-btn');
       if (detailWatchlistBtn) {
-        detailWatchlistBtn.addEventListener('click', () => {
+        detailWatchlistBtn.addEventListener('click', async () => {
           const watchlistAnime = {
             id: anime.id,
             title: rawTitle,
@@ -819,21 +845,22 @@ document.addEventListener('DOMContentLoaded', () => {
             genres: anime.genres || []
           };
 
-          const idx = watchlist.findIndex(w => String(w.id) === String(anime.id));
-          if (idx >= 0) {
-            watchlist.splice(idx, 1);
-            saveWatchlist();
-            detailWatchlistBtn.className = 'cta-btn secondary-btn';
-            detailWatchlistBtn.innerText = '+ Add to Watchlist';
-            detailWatchlistBtn.setAttribute('aria-pressed', 'false');
-            showToast('Removed from Watchlist', 'error');
-          } else {
-            watchlist.push(watchlistAnime);
-            saveWatchlist();
-            detailWatchlistBtn.className = 'cta-btn primary-btn';
-            detailWatchlistBtn.innerText = '✓ In Watchlist';
-            detailWatchlistBtn.setAttribute('aria-pressed', 'true');
-            showToast('Added to Watchlist!', 'success');
+          try {
+            const adding = await toggleWatchlistItem(watchlistAnime);
+            if (adding) {
+              detailWatchlistBtn.className = 'cta-btn primary-btn';
+              detailWatchlistBtn.innerText = '✓ In Watchlist';
+              detailWatchlistBtn.setAttribute('aria-pressed', 'true');
+              showToast('Added to Watchlist!', 'success');
+            } else {
+              detailWatchlistBtn.className = 'cta-btn secondary-btn';
+              detailWatchlistBtn.innerText = '+ Add to Watchlist';
+              detailWatchlistBtn.setAttribute('aria-pressed', 'false');
+              showToast('Removed from Watchlist', 'error');
+            }
+          } catch (error) {
+            console.error('Could not update watchlist:', error);
+            showToast('Could not update your watchlist. Please try again.', 'error');
           }
         });
       }
@@ -900,7 +927,18 @@ document.addEventListener('DOMContentLoaded', () => {
   // NAVIGATION & ROUTING
   // ============================================================
 
-  function navigateToPage(navName, updateHistory = true) {
+  async function navigateToPage(navName, updateHistory = true) {
+    if (navName === 'profile') {
+      if (!getWatchlistAuthState().ready) {
+        await window.animeHubAuthReady;
+      }
+      if (!getWatchlistAuthState().session) {
+        if (!updateHistory) window.history.replaceState({}, '', '/');
+        window.openAuthModal?.('login');
+        return;
+      }
+    }
+
     document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
     document.querySelectorAll('.nav-link').forEach(l => l.classList.remove('active'));
 
@@ -949,8 +987,17 @@ document.addEventListener('DOMContentLoaded', () => {
         url: '/?page=watchlist'
       });
       loadWatchlist();
+    } else if (navName === 'profile') {
+      updatePageSeo({
+        title: 'My Profile — AnimeHub',
+        description: 'Manage your AnimeHub account and profile settings.',
+        url: '/?page=profile'
+      });
     }
   }
+
+  // Expose navigateToPage globally so auth-ui.js can call it
+  window.navigateToPage = navigateToPage;
 
   async function loadMovies() {
     renderSkeletonGrid('movies-grid', 6);
@@ -985,7 +1032,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
-  function loadWatchlist() {
+  function renderWatchlist() {
     const grid = document.getElementById('watchlist-grid');
     const emptyState = document.getElementById('watchlist-empty');
 
@@ -998,6 +1045,35 @@ document.addEventListener('DOMContentLoaded', () => {
       renderAnimeGrid(watchlist, 'watchlist-grid');
     }
   }
+
+  async function loadWatchlist() {
+    const authState = getWatchlistAuthState();
+    if (authState.ready && authState.session && window.animeHubCloudWatchlist) {
+      renderSkeletonGrid('watchlist-grid', 6);
+      try {
+        watchlist = await window.animeHubCloudWatchlist.list();
+      } catch (error) {
+        console.error('Could not load cloud watchlist:', error);
+        showToast('Could not load your cloud watchlist. Please try again.', 'error');
+        return;
+      }
+    }
+    renderWatchlist();
+  }
+
+  window.addEventListener('animehub:auth-state', async event => {
+    try {
+      watchlist = event.detail?.authenticated
+        ? await window.animeHubCloudWatchlist.list()
+        : JSON.parse(localStorage.getItem('anime_hub_watchlist') || '[]');
+      if (document.getElementById('page-watchlist')?.classList.contains('active')) {
+        renderWatchlist();
+      }
+    } catch (error) {
+      console.error('Could not refresh watchlist after authentication changed:', error);
+      showToast('Could not refresh your watchlist.', 'error');
+    }
+  });
 
   // ============================================================
   // INITIALIZE PAGE
@@ -1026,7 +1102,7 @@ document.addEventListener('DOMContentLoaded', () => {
         url: `/?q=${encodeURIComponent(query)}`
       });
       await performSearch(query);
-    } else if (['home', 'popular', 'movies', 'series', 'watchlist'].includes(page)) {
+    } else if (['home', 'popular', 'movies', 'series', 'watchlist', 'profile'].includes(page)) {
       navigateToPage(page, false);
     } else {
       if (page) window.history.replaceState({}, '', '/');
@@ -1325,7 +1401,7 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   // Global Anime Card Click & Watchlist Toggle
-  document.addEventListener('click', (e) => {
+  document.addEventListener('click', async (e) => {
     // Watchlist Bookmark Button
     const bookmarkBtn = e.target.closest('.card-watchlist-btn');
     if (bookmarkBtn) {
@@ -1335,26 +1411,25 @@ document.addEventListener('DOMContentLoaded', () => {
       const id = bookmarkBtn.dataset.bookmarkId || card?.dataset.id;
       if (!id) return;
 
-      const idx = watchlist.findIndex(w => String(w.id) === String(id));
-      if (idx >= 0) {
-        watchlist.splice(idx, 1);
-        bookmarkBtn.classList.remove('saved');
-        bookmarkBtn.innerText = '☆';
-        showToast('Removed from Watchlist', 'error');
-      } else {
-        const title = card.querySelector('.card-title')?.innerText || 'Anime';
-        const poster = card.querySelector('.card-image')?.src || '';
-        watchlist.push({ id, title, poster });
-        bookmarkBtn.classList.add('saved');
-        bookmarkBtn.innerText = '★';
-        showToast('Added to Watchlist!', 'success');
+      const title = card.querySelector('.card-title')?.innerText || 'Anime';
+      const poster = card.querySelector('.card-image')?.src || '';
+      try {
+        const adding = await toggleWatchlistItem({ id, title, poster, image: poster });
+        bookmarkBtn.classList.toggle('saved', adding);
+        bookmarkBtn.innerText = adding ? '★' : '☆';
+        bookmarkBtn.setAttribute('aria-label', adding ? 'Remove from Watchlist' : 'Add to Watchlist');
+        bookmarkBtn.title = adding ? 'Remove from Watchlist' : 'Add to Watchlist';
+        showToast(adding ? 'Added to Watchlist!' : 'Removed from Watchlist', adding ? 'success' : 'error');
+      } catch (error) {
+        console.error('Could not update watchlist:', error);
+        showToast('Could not update your watchlist. Please try again.', 'error');
+        return;
       }
-      saveWatchlist();
 
       // If currently viewing Watchlist page, refresh grid
       const activePage = document.querySelector('.page.active');
       if (activePage && activePage.id === 'page-watchlist') {
-        loadWatchlist();
+        await loadWatchlist();
       }
       return;
     }

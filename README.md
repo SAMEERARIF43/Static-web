@@ -24,12 +24,15 @@ The server reads configuration from environment variables; it does not load `.en
 | `SITE_URL` | Public site origin used when generating the sitemap and robots file |
 | `CONTACT_EMAIL` | Monitored address shown on the contact and privacy pages |
 | `DMCA_EMAIL` | Monitored copyright-notice address shown on the copyright page |
+| `SUPABASE_URL` | Supabase project URL, used by server and browser |
+| `SUPABASE_ANON_KEY` | Public Supabase anon/publishable key, returned to the browser |
+| `SUPABASE_SERVICE_ROLE_KEY` | Server-only Admin API credential for account deletion; never expose it to browser code |
 
 Before public launch, set `NODE_ENV=production`, set `SITE_URL` to the real HTTPS origin, and configure working contact and copyright addresses. Set `CORS_ORIGINS` to include the exact deployed origin. The server refuses to start in production if those values are missing or invalid. Use HTTPS at the hosting platform or reverse proxy.
 
 ## Data and privacy notes
 
-- Watchlists are stored locally in the visitor's browser.
+- Guest watchlists are stored in the visitor's browser; signed-in watchlists are stored in Supabase, with an optional verified migration from local storage.
 - Search terms are sent to this server and forwarded to AniList for catalog results.
 - The Popular page loads up to 50 non-adult anime entries from AniList, adds curated local titles outside that page, caches the merged catalog in memory for 10 minutes, and falls back to the local catalog if AniList is unavailable.
 - The Popular page displays 24 titles per page; filters apply to the complete loaded catalog, and the selected page is shareable through the URL.
@@ -39,8 +42,10 @@ Before public launch, set `NODE_ENV=production`, set `SITE_URL` to the real HTTP
 
 Review the privacy, terms, contact, and copyright pages against the actual deployment and applicable law before launch. The legal pages are starting drafts, not legal advice. In particular, a DMCA page does not itself register a designated agent or establish statutory safe-harbor eligibility.
 
+For authenticated account deletion, apply `supabase-schema.sql` to the Supabase project and configure `SUPABASE_URL`, `SUPABASE_ANON_KEY`, and `SUPABASE_SERVICE_ROLE_KEY` in the server hosting environment. `DELETE /api/account` verifies the caller's bearer token with Supabase Auth and deletes only the user identified by that verified token through the Supabase Admin API. The service-role key must remain server-side. Deploy the updated server and configure those environment variables before advertising deletion as operational; the profile button cannot complete deletion when they are missing.
+
 ## Project layout
 
 - `public/` — static catalog UI and legal pages
 - `server.js` — Express API, metadata proxy, and sitemap/robots endpoints
-- `test-search.js` — API search assertions
+- `test-search.js` — API and account-deletion assertions

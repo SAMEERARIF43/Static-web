@@ -56,6 +56,13 @@ app.use(cors({
   }
 }));
 
+app.use((err, req, res, next) => {
+  if (err && err.message === 'Not allowed by CORS') {
+    return res.status(403).json({ message: 'Not allowed by CORS' });
+  }
+  next(err);
+});
+
 app.use((req, res, next) => {
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('X-Frame-Options', 'DENY');
@@ -96,6 +103,86 @@ app.get('/api/site-config', (req, res) => {
     contactEmail: process.env.CONTACT_EMAIL || '',
     dmcaEmail: process.env.DMCA_EMAIL || ''
   });
+});
+
+app.get('/api/config', (req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  res.json({
+    SUPABASE_URL: process.env.SUPABASE_URL || '',
+    SUPABASE_ANON_KEY: process.env.SUPABASE_ANON_KEY || ''
+  });
+});
+
+app.delete('/api/account', async (req, res) => {
+  const authorization = req.get('authorization') || '';
+  const match = authorization.match(/^Bearer\s+(\S+)$/i);
+  if (!match || match[1].length > 8192) {
+    return res.status(401).json({ message: 'A valid login session is required.' });
+  }
+
+  const supabaseUrlValue = process.env.SUPABASE_URL;
+  const anonKey = process.env.SUPABASE_ANON_KEY;
+  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!supabaseUrlValue || !anonKey || !serviceRoleKey) {
+    return res.status(503).json({ message: 'Account deletion is not configured on this server.' });
+  }
+
+  let supabaseUrl;
+  try {
+    supabaseUrl = new URL(supabaseUrlValue);
+  } catch {
+    console.error('Account deletion is unavailable because SUPABASE_URL is invalid.');
+    return res.status(503).json({ message: 'Account deletion is not configured on this server.' });
+  }
+  if (
+    !['https:', 'http:'].includes(supabaseUrl.protocol) ||
+    (supabaseUrl.protocol === 'http:' && !['localhost', '127.0.0.1'].includes(supabaseUrl.hostname)) ||
+    supabaseUrl.username ||
+    supabaseUrl.password
+  ) {
+    console.error('Account deletion is unavailable because SUPABASE_URL is not a secure origin.');
+    return res.status(503).json({ message: 'Account deletion is not configured on this server.' });
+  }
+
+  const baseUrl = supabaseUrl.origin;
+  const accessToken = match[1];
+  let authenticatedUser;
+  try {
+    const verification = await axios.get(`${baseUrl}/auth/v1/user`, {
+      headers: {
+        apikey: anonKey,
+        Authorization: `Bearer ${accessToken}`
+      },
+      timeout: 10000
+    });
+    authenticatedUser = verification.data;
+  } catch (error) {
+    if ([401, 403].includes(error.response?.status)) {
+      return res.status(401).json({ message: 'Your login session is invalid or expired.' });
+    }
+    console.error(`Supabase session verification failed${error.response?.status ? ` (${error.response.status})` : ''}.`);
+    return res.status(502).json({ message: 'Could not verify the account session.' });
+  }
+
+  const userId = authenticatedUser?.id;
+  if (typeof userId !== 'string' || !/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(userId)) {
+    console.error('Supabase session verification returned an invalid user identity.');
+    return res.status(502).json({ message: 'Could not verify the account session.' });
+  }
+
+  try {
+    await axios.delete(`${baseUrl}/auth/v1/admin/users/${encodeURIComponent(userId)}`, {
+      headers: {
+        apikey: serviceRoleKey,
+        Authorization: `Bearer ${serviceRoleKey}`
+      },
+      timeout: 15000
+    });
+    return res.status(200).json({ message: 'Your account has been deleted.' });
+  } catch (error) {
+    console.error(`Supabase account deletion failed${error.response?.status ? ` (${error.response.status})` : ''}.`);
+    return res.status(502).json({ message: 'Account deletion could not be completed. Please try again later.' });
+  }
 });
 
 
@@ -214,7 +301,7 @@ const ANIME_DB = [
     rating: 9.0,
     episodes: 89,
     type: "TV",
-    studio: "MAPPA",
+    studio: "WIT STUDIO",
     language: "Japanese",
     status: "Completed",
     image: "https://s4.anilist.co/file/anilistcdn/media/anime/cover/large/bx16498-buvcRTBx4NSm.jpg",
@@ -309,7 +396,7 @@ const ANIME_DB = [
     rating: 8.8,
     episodes: 48,
     type: "TV",
-    studio: "MAPPA",
+    studio: "WIT STUDIO",
     language: "Japanese",
     status: "Completed",
     image: "https://s4.anilist.co/file/anilistcdn/media/anime/cover/large/bx101348-2fhDFPCuMNiz.jpg",
@@ -362,15 +449,6 @@ const ANIME_DB = [
 // ============================================================
 // HELPER FUNCTIONS
 // ============================================================
-
-function searchAnime(query) {
-
-  const q = query.toLowerCase().trim();
-
-  return ANIME_DB.filter(anime =>
-    anime.title.toLowerCase().includes(q)
-  );
-}
 
 
 function getAnimeById(id) {
@@ -648,160 +726,6 @@ app.get('/api/genres', (req, res) => {
 
 
 // ============================================================
-// ANILIST API SEARCH
-// ============================================================
-
-app.post('/api/anime/search', async (req, res) => {
-
-  const query = typeof req.body?.query === 'string' ? req.body.query.trim() : '';
-
-  if (!query || query.length > 100) {
-
-    return res.status(400).json({
-      message: "Enter an anime name of 1 to 100 characters."
-    });
-
-  }
-
-  const graphqlQuery = `
-    query ($search: String) {
-
-      Page(perPage: 10) {
-
-        media(
-          search: $search,
-          type: ANIME,
-          sort: SEARCH_MATCH
-        ) {
-
-          id
-
-          title {
-            romaji
-            english
-            native
-          }
-
-          coverImage {
-            large
-          }
-
-          description
-
-          episodes
-
-          status
-
-          averageScore
-
-          genres
-
-          season
-
-          seasonYear
-
-          format
-
-        }
-
-      }
-
-    }
-  `;
-
-  try {
-
-    console.log("Searching AniList.");
-
-    const response = await axios.post(
-      "https://graphql.anilist.co",
-
-      {
-        query: graphqlQuery,
-
-        variables: {
-          search: query
-        }
-      },
-
-      {
-        headers: {
-          "Content-Type": "application/json"
-        },
-
-        timeout: 15000
-      }
-    );
-
-
-    // Check for GraphQL errors
-
-    if (response.data.errors) {
-
-      console.error(
-        "❌ AniList GraphQL Error:",
-        response.data.errors
-      );
-
-      return res.status(500).json({
-
-        message: "AniList returned an error."
-
-      });
-
-    }
-
-
-    const mediaList = safe(response, 'data.data.Page.media', []);
-    // Deduplicate and sanitize descriptions before sending to client
-    const sanitized = deduplicateMediaList(mediaList).map(anime => ({
-      ...anime,
-      description: sanitizeDescription(anime.description)
-    }));
-
-    console.log(
-      `✅ AniList returned ${sanitized.length} results`
-    );
-
-
-    res.json(sanitized);
-
-
-  } catch (error) {
-
-    console.error("❌ AniList API Error");
-
-
-    if (error.response) {
-
-      console.error(
-        "Status:",
-        error.response.status
-      );
-
-    } else {
-
-      console.error(
-        "Message:",
-        error.message
-      );
-
-    }
-
-
-    res.status(500).json({
-
-      message:
-        "Could not connect to AniList API."
-
-    });
-
-  }
-
-});
-
-
-// ============================================================
 // ANILIST API DETAILS
 // ============================================================
 
@@ -1004,10 +928,6 @@ app.listen(PORT, () => {
 
   console.log(
     `🚀 Server: http://localhost:${PORT}`
-  );
-
-  console.log(
-    `🔎 Anime search API: POST /api/anime/search`
   );
 
   console.log(
