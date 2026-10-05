@@ -4,11 +4,14 @@ document.addEventListener('DOMContentLoaded', () => {
   const baseURL = '/api';
 
   // Default SEO Metadata
+  const siteOrigin = new URL(
+    document.querySelector('meta[property="og:url"]')?.content || window.location.origin
+  ).origin;
   const DEFAULT_SEO = {
     title: 'AnimeHub — Discover Anime & Movies Catalog',
     description: 'AnimeHub is a modern anime and movie discovery catalog. Explore ratings, genres, release schedules, manage your personal watchlist, and find official trailers and legal streaming options.',
-    image: '/social-preview.jpg',
-    url: '/'
+    image: `${siteOrigin}/social-preview.jpg`,
+    url: `${siteOrigin}/`
   };
 
   /**
@@ -21,6 +24,8 @@ document.addEventListener('DOMContentLoaded', () => {
     const desc = description || DEFAULT_SEO.description;
     const img = image || DEFAULT_SEO.image;
     const pageUrl = url || window.location.pathname + window.location.search;
+    const absolutePageUrl = new URL(pageUrl, siteOrigin).href;
+    const absoluteImageUrl = new URL(img, siteOrigin).href;
 
     const metaDesc = document.querySelector('meta[name="description"]');
     if (metaDesc) metaDesc.setAttribute('content', desc);
@@ -32,10 +37,13 @@ document.addEventListener('DOMContentLoaded', () => {
     if (ogDesc) ogDesc.setAttribute('content', desc);
 
     const ogUrl = document.querySelector('meta[property="og:url"]');
-    if (ogUrl) ogUrl.setAttribute('content', pageUrl);
+    if (ogUrl) ogUrl.setAttribute('content', absolutePageUrl);
 
     const ogImg = document.querySelector('meta[property="og:image"]');
-    if (ogImg) ogImg.setAttribute('content', img);
+    if (ogImg) ogImg.setAttribute('content', absoluteImageUrl);
+
+    const canonical = document.querySelector('link[rel="canonical"]');
+    if (canonical) canonical.setAttribute('href', absolutePageUrl);
 
     const twTitle = document.querySelector('meta[name="twitter:title"]');
     if (twTitle) twTitle.setAttribute('content', document.title);
@@ -44,7 +52,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (twDesc) twDesc.setAttribute('content', desc);
 
     const twImg = document.querySelector('meta[name="twitter:image"]');
-    if (twImg) twImg.setAttribute('content', img);
+    if (twImg) twImg.setAttribute('content', absoluteImageUrl);
 
     // Update dynamic detail schema
     let dynamicSchemaEl = document.getElementById('dynamic-page-schema');
@@ -66,7 +74,9 @@ document.addEventListener('DOMContentLoaded', () => {
     if (!str) return '';
     const div = document.createElement('div');
     div.appendChild(document.createTextNode(str));
-    return div.innerHTML;
+    return div.innerHTML
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
   }
 
   function getAnimeTitle(anime) {
@@ -90,7 +100,18 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   // Local Watchlist state (persisted in localStorage)
-  let watchlist = JSON.parse(localStorage.getItem('anime_hub_watchlist') || '[]');
+  function loadLocalWatchlist() {
+    try {
+      const parsed = JSON.parse(localStorage.getItem('anime_hub_watchlist') || '[]');
+      if (Array.isArray(parsed)) return parsed;
+      console.error('Saved local watchlist must be an array.');
+    } catch (error) {
+      console.error('Could not load the saved local watchlist:', error);
+    }
+    return [];
+  }
+
+  let watchlist = loadLocalWatchlist();
 
   function getWatchlistAuthState() {
     return window.getAnimeHubAuthState?.() || { ready: false, session: null };
@@ -393,6 +414,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const searchCache = new Map();
   let currentSearchResults = [];
   let lastSearchQuery = '';
+  let searchRequestId = 0;
 
   function populateSearchFilters(items) {
     const genreSelect = document.getElementById('search-filter-genre');
@@ -477,6 +499,7 @@ document.addEventListener('DOMContentLoaded', () => {
   async function performSearch(query) {
     const rawQuery = typeof query === 'string' ? query : '';
     const normalizedQuery = rawQuery.trim();
+    const requestId = ++searchRequestId;
     lastSearchQuery = normalizedQuery;
 
     const searchResultsGrid = document.getElementById('search-results-grid');
@@ -518,11 +541,13 @@ document.addEventListener('DOMContentLoaded', () => {
 
     try {
       const res = await fetch(`${baseURL}/search?q=${encodeURIComponent(normalizedQuery)}`);
+      if (requestId !== searchRequestId) return;
       if (!res.ok) {
         throw new Error(`Search request failed: ${res.status}`);
       }
 
       const data = await res.json();
+      if (requestId !== searchRequestId) return;
 
       const animeResults = (Array.isArray(data) ? data : []).map(anime => {
         const title = getAnimeTitle(anime);
@@ -564,6 +589,7 @@ document.addEventListener('DOMContentLoaded', () => {
       applySearchFilters();
 
     } catch (err) {
+      if (requestId !== searchRequestId) return;
       console.error('Error searching anime:', err);
       currentSearchResults = [];
       if (searchResultsGrid) searchResultsGrid.style.display = 'none';
@@ -583,7 +609,7 @@ document.addEventListener('DOMContentLoaded', () => {
   // LOAD ANIME DETAILS & WATCH FLOW
   // ============================================================
 
-  async function loadAnimeDetails(id) {
+  async function loadAnimeDetails(id, updateHistory = true) {
     if (!id) return;
 
     const detailContent = document.getElementById('detail-content');
@@ -594,7 +620,7 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('page-detail').classList.add('active');
     
     // Update URL
-    window.history.pushState({}, '', `?id=${id}`);
+    if (updateHistory) window.history.pushState({}, '', `?id=${id}`);
 
     // Loading state
     detailContent.innerHTML = `
@@ -671,7 +697,7 @@ document.addEventListener('DOMContentLoaded', () => {
         'description': plainDescription.slice(0, 300),
         'image': poster,
         'genre': anime.genres || [],
-        'url': `/?id=${anime.id}`
+        'url': new URL(`/?id=${anime.id}`, siteOrigin).href
       };
 
       if (rating && parseFloat(rating) > 0) {
@@ -1004,7 +1030,15 @@ document.addEventListener('DOMContentLoaded', () => {
     try {
       const res = await fetch(`${baseURL}/popular`);
       const data = await res.json();
-      const movies = data.filter(a => a.type === 'Movie' || a.genre.includes('Movie'));
+      const movies = data.filter(anime => {
+        const type = String(anime.type || anime.format || '').toUpperCase();
+        const genres = Array.isArray(anime.genre)
+          ? anime.genre
+          : Array.isArray(anime.genres)
+            ? anime.genres
+            : [];
+        return type === 'MOVIE' || genres.includes('Movie');
+      });
       const emptyState = document.getElementById('movies-empty');
       const grid = document.getElementById('movies-grid');
       
@@ -1065,7 +1099,7 @@ document.addEventListener('DOMContentLoaded', () => {
     try {
       watchlist = event.detail?.authenticated
         ? await window.animeHubCloudWatchlist.list()
-        : JSON.parse(localStorage.getItem('anime_hub_watchlist') || '[]');
+        : loadLocalWatchlist();
       if (document.getElementById('page-watchlist')?.classList.contains('active')) {
         renderWatchlist();
       }
@@ -1090,7 +1124,7 @@ document.addEventListener('DOMContentLoaded', () => {
       : 1;
 
     if (id) {
-      await loadAnimeDetails(id);
+      await loadAnimeDetails(id, false);
     } else if (query) {
       document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
       document.getElementById('page-search').classList.add('active');

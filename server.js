@@ -1,9 +1,10 @@
 // ============================================================
 // ANIME HUB SERVER
 // ============================================================
-
+require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
+const fs = require('fs');
 const path = require('path');
 const axios = require('axios');
 const { mapLocalAnimeToAniList, searchAnimeLocal, deduplicateMediaList } = require('./search-utils');
@@ -32,8 +33,34 @@ const ALLOWED_ORIGINS = process.env.CORS_ORIGINS
   : [`http://localhost:${PORT}`];
 
 if (process.env.NODE_ENV === 'production') {
-  if (configuredSiteUrl.protocol !== 'https:' || !process.env.SITE_URL) {
+  const isLocalhost = hostname =>
+    hostname === 'localhost' ||
+    hostname.endsWith('.localhost') ||
+    hostname === '::1' ||
+    hostname === '[::1]' ||
+    hostname.startsWith('127.');
+  if (
+    !process.env.SITE_URL ||
+    configuredSiteUrl.protocol !== 'https:' ||
+    isLocalhost(configuredSiteUrl.hostname)
+  ) {
     throw new Error('Production requires SITE_URL set to the public HTTPS origin.');
+  }
+  if (!process.env.CORS_ORIGINS) {
+    throw new Error('Production requires CORS_ORIGINS to be explicitly configured.');
+  }
+  const invalidCorsOrigin = ALLOWED_ORIGINS.some(origin => {
+    try {
+      const url = new URL(origin);
+      return url.protocol !== 'https:' ||
+        url.origin !== origin ||
+        isLocalhost(url.hostname);
+    } catch {
+      return true;
+    }
+  });
+  if (invalidCorsOrigin) {
+    throw new Error('Production CORS_ORIGINS must contain only valid public HTTPS origins.');
   }
   if (!ALLOWED_ORIGINS.includes(SITE_URL)) {
     throw new Error('Production CORS_ORIGINS must include SITE_URL.');
@@ -73,6 +100,11 @@ app.use((req, res, next) => {
 
 app.use(express.json({ limit: '16kb' }));
 
+const indexHtml = fs.readFileSync(path.join(__dirname, 'public', 'index.html'), 'utf8');
+app.get(['/', '/index.html'], (req, res) => {
+  res.type('html').send(indexHtml.replaceAll('__SITE_URL__', SITE_URL));
+});
+
 // Serve ONLY the public/ directory — not the project root
 app.use(express.static(path.join(__dirname, 'public')));
 
@@ -100,6 +132,7 @@ app.get('/sitemap.xml', (req, res) => {
 app.get('/api/site-config', (req, res) => {
   res.setHeader('Cache-Control', 'no-store');
   res.json({
+    siteUrl: SITE_URL,
     contactEmail: process.env.CONTACT_EMAIL || '',
     dmcaEmail: process.env.DMCA_EMAIL || ''
   });

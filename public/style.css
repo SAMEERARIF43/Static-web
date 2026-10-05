@@ -123,10 +123,6 @@
   padding: 0;
   box-sizing: border-box;
 }
-.catalog-filter-grid {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-}
-
 html {
   scroll-behavior: smooth;
 }
@@ -1454,6 +1450,9 @@ footer {
    RESPONSIVE BREAKPOINTS
    ============================================================ */
 @media (max-width: 1024px) {
+  .catalog-filter-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
   .hero-content {
     grid-template-columns: 1fr;
     gap: 40px;

@@ -5,21 +5,21 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>AnimeHub — Discover Anime & Movies Catalog</title>
   <meta name="description" content="AnimeHub is a modern anime and movie discovery catalog. Explore ratings, genres, release schedules, manage your personal watchlist, and find official trailers and legal streaming options.">
-  <link rel="canonical" href="/">
+  <link rel="canonical" href="__SITE_URL__/">
 
   <!-- Open Graph / Facebook -->
   <meta property="og:site_name" content="AnimeHub">
   <meta property="og:type" content="website">
   <meta property="og:title" content="AnimeHub — Discover Anime & Movies Catalog">
   <meta property="og:description" content="AnimeHub is a modern anime and movie discovery catalog. Explore ratings, genres, release schedules, manage your personal watchlist, and find official trailers and legal streaming options.">
-  <meta property="og:url" content="/">
-  <meta property="og:image" content="/social-preview.jpg">
+  <meta property="og:url" content="__SITE_URL__/">
+  <meta property="og:image" content="__SITE_URL__/social-preview.jpg">
 
   <!-- Twitter / X -->
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="AnimeHub — Discover Anime & Movies Catalog">
   <meta name="twitter:description" content="AnimeHub is a modern anime and movie discovery catalog. Explore ratings, genres, release schedules, manage your personal watchlist, and find official trailers and legal streaming options.">
-  <meta name="twitter:image" content="/social-preview.jpg">
+  <meta name="twitter:image" content="__SITE_URL__/social-preview.jpg">
 
   <!-- Structured Data / Schema.org -->
   <script type="application/ld+json">
@@ -28,25 +28,25 @@
       "@graph": [
         {
           "@type": "WebSite",
-          "@id": "/#website",
+          "@id": "__SITE_URL__/#website",
           "name": "AnimeHub",
-          "url": "/",
+          "url": "__SITE_URL__/",
           "description": "Anime and movie discovery catalog, ratings, genres, and legal viewing sources.",
           "potentialAction": {
             "@type": "SearchAction",
             "target": {
               "@type": "EntryPoint",
-              "urlTemplate": "/?page=search&q={search_term_string}"
+              "urlTemplate": "__SITE_URL__/?page=search&q={search_term_string}"
             },
             "query-input": "required name=search_term_string"
           }
         },
         {
           "@type": "Organization",
-          "@id": "/#organization",
+          "@id": "__SITE_URL__/#organization",
           "name": "AnimeHub",
-          "url": "/",
-          "logo": "/social-preview.jpg",
+          "url": "__SITE_URL__/",
+          "logo": "__SITE_URL__/social-preview.jpg",
           "description": "An open discovery platform and catalog for anime movies and television series."
         }
       ]
@@ -468,7 +468,7 @@
     </div>
   </div>
 
-  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.49.1/dist/umd/supabase.min.js" integrity="sha384-YieCqqg9gQufX7+5HcFvCEg/n3KUEdl8/Jb+A6J0npf1mB740VayvwKjTrtCeUoy" crossorigin="anonymous"></script>
   <script src="auth-ui.js"></script>
 
 </body>

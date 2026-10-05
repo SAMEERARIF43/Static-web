@@ -124,6 +124,9 @@ function mergeAniListCatalog(localCatalog, mediaList) {
   const seen = new Set();
 
   for (const media of mediaList) {
+    const mediaId = Number(media?.id);
+    if (!Number.isInteger(mediaId) || mediaId < 1) continue;
+
     const item = mapAniListMediaToCatalogItem(media);
     if (seen.has(item.anilistId)) continue;
     seen.add(item.anilistId);

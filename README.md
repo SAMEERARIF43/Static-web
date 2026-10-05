@@ -15,7 +15,7 @@ Open <http://localhost:3000>. `npm test` starts the server and runs the search A
 
 ## Configuration
 
-The server reads configuration from environment variables; it does not load `.env` files automatically. Use `.env.example` as a reference when configuring your shell or hosting provider.
+The server loads a `.env` file from the project root automatically when one is present (via `dotenv`); otherwise it reads configuration from the process environment. Use `.env.example` as a reference when configuring your `.env` file, shell, or hosting provider. Values already set in the environment take precedence over `.env`.
 
 | Variable | Purpose |
 | --- | --- |
@@ -48,4 +48,5 @@ For authenticated account deletion, apply `supabase-schema.sql` to the Supabase 
 
 - `public/` — static catalog UI and legal pages
 - `server.js` — Express API, metadata proxy, and sitemap/robots endpoints
-- `test-search.js` — API and account-deletion assertions
+- `test-search.js` — search/SEO/CORS API assertions, catalog merge unit tests, and the unauthenticated account-deletion guard (the authenticated deletion path is currently untested — see `docs/TESTING.md`)
+- `docs/` — product and technical documentation (start with `docs/ARCHITECTURE.md`)

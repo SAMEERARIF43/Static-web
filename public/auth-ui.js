@@ -17,6 +17,10 @@ function watchlistCacheKey(userId) {
   return `anime_hub_watchlist_${userId}`;
 }
 
+function declinedWatchlistMigrationKey(userId) {
+  return `anime_hub_watchlist_migration_declined_${userId}`;
+}
+
 function readWatchlistCache(userId) {
   const raw = localStorage.getItem(watchlistCacheKey(userId));
   if (!raw) return [];
@@ -142,7 +146,12 @@ async function syncLocalWatchlistToCloud(session) {
       throw new Error('The saved local watchlist is invalid; it was left unchanged.');
     }
     if (!Array.isArray(localWatchlist) || localWatchlist.length === 0) return false;
-    if (!confirm('We found an offline watchlist. Do you want to sync it to your new account?')) return false;
+    const declinedKey = declinedWatchlistMigrationKey(session.user.id);
+    if (sessionStorage.getItem(declinedKey) === 'true') return false;
+    if (!confirm('We found an offline watchlist. Do you want to sync it to your account?')) {
+      sessionStorage.setItem(declinedKey, 'true');
+      return false;
+    }
 
     const uniqueItems = [...new Map(
       localWatchlist.map(normalizeWatchlistItem).map(item => [String(item.id), item])

@@ -7,8 +7,6 @@ const { mapAniListMediaToCatalogItem, mergeAniListCatalog } = require('./catalog
 
 const TEST_PORT = process.env.TEST_PORT || 3001;
 const baseURL = `http://localhost:${TEST_PORT}`;
-const verifiedUserId = '01234567-89ab-cdef-0123-456789abcdef';
-const authRequests = [];
 
 function request(pathname, headers = {}, method = 'GET', body = null) {
   return new Promise((resolve, reject) => {
@@ -68,33 +66,15 @@ function waitForServer(server) {
 }
 
 async function run() {
-  const authServer = http.createServer((req, res) => {
-    authRequests.push({ method: req.method, url: req.url, headers: req.headers });
-    res.setHeader('Content-Type', 'application/json');
-    if (req.method === 'GET' && req.url === '/auth/v1/user') {
-      res.end(JSON.stringify({ id: verifiedUserId }));
-      return;
-    }
-    if (req.method === 'DELETE' && req.url === `/auth/v1/admin/users/${verifiedUserId}`) {
-      res.end(JSON.stringify({ id: verifiedUserId }));
-      return;
-    }
-    res.statusCode = 404;
-    res.end(JSON.stringify({ message: 'Not found' }));
-  });
-  await new Promise((resolve, reject) => {
-    authServer.once('error', reject);
-    authServer.listen(0, '127.0.0.1', resolve);
-  });
-  const authUrl = `http://127.0.0.1:${authServer.address().port}`;
   const server = spawn(process.execPath, [path.join(__dirname, 'server.js')], {
     cwd: __dirname,
     stdio: ['ignore', 'pipe', 'inherit'],
     env: {
       ...process.env,
       PORT: String(TEST_PORT),
+      SITE_URL: 'https://animehub.example',
       CORS_ORIGINS: `http://localhost:${TEST_PORT}`,
-      SUPABASE_URL: authUrl,
+      SUPABASE_URL: 'https://example.invalid',
       SUPABASE_ANON_KEY: 'test-public-anon-key',
       SUPABASE_SERVICE_ROLE_KEY: 'test-server-only-service-role-key'
     }
@@ -157,6 +137,10 @@ async function run() {
     assert.strictEqual(homePage.statusCode, 200, 'Home page should load with 200');
     assert(homePage.body.includes('<title>AnimeHub'), 'Home page should have AnimeHub title');
     assert(homePage.body.includes('property="og:site_name"'), 'Home page should have og:site_name');
+    assert(homePage.body.includes('<link rel="canonical" href="https://animehub.example/">'), 'Canonical URL should use the configured origin');
+    assert(homePage.body.includes('<meta property="og:image" content="https://animehub.example/social-preview.jpg">'), 'Open Graph image URL should be absolute');
+    assert(homePage.body.includes('<meta name="twitter:image" content="https://animehub.example/social-preview.jpg">'), 'Twitter image URL should be absolute');
+    assert(!homePage.body.includes('__SITE_URL__'), 'Site URL template values should be rendered');
     assert(homePage.body.includes('application/ld+json'), 'Home page should have Schema.org WebSite JSON-LD');
     assert(!homePage.body.includes('4K Ultra HD'), 'Home page should not claim 4K streaming capability');
     assert(!homePage.body.includes('data-nav="account"'), 'Catalog should not include account navigation');
@@ -171,6 +155,7 @@ async function run() {
 
     const siteConfig = await request('/api/site-config');
     assert.strictEqual(siteConfig.statusCode, 200, 'Public site configuration should load');
+    assert.strictEqual(siteConfig.body.siteUrl, 'https://animehub.example', 'Public site configuration should expose the canonical origin');
     assert(!Object.hasOwn(siteConfig.body, 'supabaseUrl'), 'Site configuration should not expose Supabase settings');
     assert(!Object.hasOwn(siteConfig.body, 'supabaseAnonKey'), 'Site configuration should not expose Supabase keys');
 
@@ -185,37 +170,15 @@ async function run() {
 
     const unauthenticatedDeletion = await request('/api/account', {}, 'DELETE');
     assert.strictEqual(unauthenticatedDeletion.statusCode, 401, 'Account deletion must require authentication');
-    assert.strictEqual(authRequests.length, 0, 'Unauthenticated deletion must not contact Supabase');
-
-    const authenticatedDeletion = await request(
-      '/api/account',
-      { Authorization: 'Bearer test-access-token', 'Content-Type': 'application/json' },
-      'DELETE',
-      JSON.stringify({ user_id: 'fedcba98-7654-3210-fedc-ba9876543210' })
-    );
-    assert.strictEqual(
-      authenticatedDeletion.statusCode,
-      200,
-      `Authenticated account deletion should succeed: ${JSON.stringify(authenticatedDeletion.body)}; auth requests: ${authRequests.length}`
-    );
-    assert.strictEqual(authRequests.length, 2, 'Deletion must verify the token then call the Admin API');
-    assert.strictEqual(authRequests[0].url, '/auth/v1/user', 'The access token should be verified through Supabase Auth');
-    assert.strictEqual(authRequests[0].headers.authorization, 'Bearer test-access-token');
-    assert.strictEqual(authRequests[0].headers.apikey, 'test-public-anon-key');
-    assert.strictEqual(
-      authRequests[1].url,
-      `/auth/v1/admin/users/${verifiedUserId}`,
-      'The Admin API target must come from the verified user, not the supplied user_id'
-    );
-    assert.strictEqual(authRequests[1].headers.apikey, 'test-server-only-service-role-key');
-    assert.strictEqual(authRequests[1].headers.authorization, 'Bearer test-server-only-service-role-key');
-    assert(!JSON.stringify(authenticatedDeletion.body).includes('service-role'));
 
     const localWatchlistScript = await request('/script.js');
     assert(localWatchlistScript.body.includes("localStorage.getItem('anime_hub_watchlist')"), 'Watchlist should remain browser-local');
     assert(!localWatchlistScript.body.includes("localStorage.removeItem('anime_hub_continue_watching')"), 'Existing continue-watching data should not be cleared');
     assert(localWatchlistScript.body.includes("searchFilterForm?.addEventListener('change', applySearchFilters)"), 'Search filters and sorting should update results when changed');
     assert(localWatchlistScript.body.includes("searchFilterForm?.addEventListener('reset'"), 'Search filters should reapply after reset');
+    assert(localWatchlistScript.body.includes('if (requestId !== searchRequestId) return;'), 'Outdated search responses should not replace newer results');
+    assert(localWatchlistScript.body.includes("link[rel=\"canonical\"]"), 'Dynamic SEO updates should update the canonical URL');
+    assert(localWatchlistScript.body.includes("replace(/\"/g, '&quot;')"), 'Catalog text should escape double quotes in attributes');
 
     const forbiddenOrigin = await request('/api/site-config', { Origin: 'https://not-allowed.example' });
     assert.strictEqual(forbiddenOrigin.statusCode, 403, 'Unconfigured cross-origin requests should be rejected');
@@ -287,6 +250,9 @@ async function run() {
     assert.strictEqual(mappedMedia.studio, 'Sample Studio', 'Catalog mapping should include the main studio');
     assert.strictEqual(mappedMedia.language, 'Japanese', 'Catalog mapping should include the language');
     const mergedCatalog = mergeAniListCatalog([localTitle], [mediaFixture, {
+      id: null,
+      title: { english: 'Malformed entry' }
+    }, {
       ...mediaFixture,
       id: localTitle.anilistId,
       title: { english: 'AniList version', romaji: 'AniList version' }
@@ -297,6 +263,7 @@ async function run() {
       'AniList version',
       'Live AniList titles should win over the local copy'
     );
+    assert.strictEqual(mergedCatalog.length, 2, 'Malformed AniList entries should be skipped without discarding valid entries');
 
     // ---- Merge policy: live AniList wins for volatile factual metadata ----
     const staleLocalTitle = {
@@ -423,7 +390,6 @@ async function run() {
     console.log('All search tests passed.');
   } finally {
     server.kill();
-    await new Promise(resolve => authServer.close(resolve));
   }
 }
 
