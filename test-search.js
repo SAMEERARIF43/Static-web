@@ -7,6 +7,8 @@ const { mapAniListMediaToCatalogItem, mergeAniListCatalog } = require('./catalog
 
 const TEST_PORT = process.env.TEST_PORT || 3001;
 const baseURL = `http://localhost:${TEST_PORT}`;
+const verifiedUserId = '01234567-89ab-cdef-0123-456789abcdef';
+const authRequests = [];
 
 function request(pathname, headers = {}, method = 'GET', body = null) {
   return new Promise((resolve, reject) => {
@@ -66,15 +68,35 @@ function waitForServer(server) {
 }
 
 async function run() {
+  const authServer = http.createServer((req, res) => {
+    authRequests.push({ method: req.method, url: req.url, headers: req.headers });
+    res.setHeader('Content-Type', 'application/json');
+    if (req.method === 'GET' && req.url === '/auth/v1/user') {
+      res.end(JSON.stringify({ id: verifiedUserId }));
+      return;
+    }
+    if (req.method === 'DELETE' && req.url === `/auth/v1/admin/users/${verifiedUserId}`) {
+      res.end(JSON.stringify({ id: verifiedUserId }));
+      return;
+    }
+    res.statusCode = 404;
+    res.end(JSON.stringify({ message: 'Not found' }));
+  });
+  await new Promise((resolve, reject) => {
+    authServer.once('error', reject);
+    authServer.listen(0, '127.0.0.1', resolve);
+  });
+  const authUrl = `http://127.0.0.1:${authServer.address().port}`;
   const server = spawn(process.execPath, [path.join(__dirname, 'server.js')], {
     cwd: __dirname,
     stdio: ['ignore', 'pipe', 'inherit'],
     env: {
       ...process.env,
+      NODE_ENV: 'test',
       PORT: String(TEST_PORT),
       SITE_URL: 'https://animehub.example',
       CORS_ORIGINS: `http://localhost:${TEST_PORT}`,
-      SUPABASE_URL: 'https://example.invalid',
+      SUPABASE_URL: authUrl,
       SUPABASE_ANON_KEY: 'test-public-anon-key',
       SUPABASE_SERVICE_ROLE_KEY: 'test-server-only-service-role-key'
     }
@@ -170,6 +192,31 @@ async function run() {
 
     const unauthenticatedDeletion = await request('/api/account', {}, 'DELETE');
     assert.strictEqual(unauthenticatedDeletion.statusCode, 401, 'Account deletion must require authentication');
+    assert.strictEqual(authRequests.length, 0, 'Unauthenticated deletion must not contact Supabase');
+
+    const authenticatedDeletion = await request(
+      '/api/account',
+      { Authorization: 'Bearer test-access-token', 'Content-Type': 'application/json' },
+      'DELETE',
+      JSON.stringify({ user_id: 'fedcba98-7654-3210-fedc-ba9876543210' })
+    );
+    assert.strictEqual(
+      authenticatedDeletion.statusCode,
+      200,
+      `Authenticated account deletion should succeed: ${JSON.stringify(authenticatedDeletion.body)}; auth requests: ${authRequests.length}`
+    );
+    assert.strictEqual(authRequests.length, 2, 'Deletion must verify the token then call the Admin API');
+    assert.strictEqual(authRequests[0].url, '/auth/v1/user', 'The access token should be verified through Supabase Auth');
+    assert.strictEqual(authRequests[0].headers.authorization, 'Bearer test-access-token');
+    assert.strictEqual(authRequests[0].headers.apikey, 'test-public-anon-key');
+    assert.strictEqual(
+      authRequests[1].url,
+      `/auth/v1/admin/users/${verifiedUserId}`,
+      'The Admin API target must come from the verified user, not the supplied user_id'
+    );
+    assert.strictEqual(authRequests[1].headers.apikey, 'test-server-only-service-role-key');
+    assert.strictEqual(authRequests[1].headers.authorization, 'Bearer test-server-only-service-role-key');
+    assert(!JSON.stringify(authenticatedDeletion.body).includes('service-role'));
 
     const localWatchlistScript = await request('/script.js');
     assert(localWatchlistScript.body.includes("localStorage.getItem('anime_hub_watchlist')"), 'Watchlist should remain browser-local');
@@ -390,6 +437,7 @@ async function run() {
     console.log('All search tests passed.');
   } finally {
     server.kill();
+    await new Promise(resolve => authServer.close(resolve));
   }
 }
 
