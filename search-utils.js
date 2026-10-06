@@ -60,6 +60,107 @@ function searchAnimeLocal(animeDb, query) {
   });
 }
 
+function normalizeSearchText(value) {
+  return typeof value === 'string'
+    ? value.normalize('NFKC').toLowerCase().trim().replace(/\s+/g, ' ')
+    : '';
+}
+
+function titleVariants(anime) {
+  const title = anime?.title;
+  if (typeof title === 'string') return [title];
+  return [title?.english, title?.romaji, title?.native].filter(value => typeof value === 'string');
+}
+
+function differsByOneCharacter(first, second) {
+  if (Math.abs(first.length - second.length) > 1) return false;
+
+  let firstIndex = 0;
+  let secondIndex = 0;
+  let differences = 0;
+
+  while (firstIndex < first.length && secondIndex < second.length) {
+    if (first[firstIndex] === second[secondIndex]) {
+      firstIndex += 1;
+      secondIndex += 1;
+      continue;
+    }
+
+    differences += 1;
+    if (differences > 1) return false;
+
+    if (
+      firstIndex + 1 < first.length &&
+      secondIndex + 1 < second.length &&
+      first[firstIndex] === second[secondIndex + 1] &&
+      first[firstIndex + 1] === second[secondIndex]
+    ) {
+      firstIndex += 2;
+      secondIndex += 2;
+    } else if (first.length > second.length) {
+      firstIndex += 1;
+    } else if (first.length < second.length) {
+      secondIndex += 1;
+    } else {
+      firstIndex += 1;
+      secondIndex += 1;
+    }
+  }
+
+  return differences + Number(firstIndex < first.length || secondIndex < second.length) <= 1;
+}
+
+function suggestionMatchRank(anime, query) {
+  const normalizedQuery = normalizeSearchText(query);
+  const titles = titleVariants(anime).map(normalizeSearchText).filter(Boolean);
+  if (!normalizedQuery || !titles.length) return 0;
+  if (titles.some(title => title === normalizedQuery)) return 4;
+  if (titles.some(title => title.startsWith(normalizedQuery))) return 3;
+
+  const queryTokens = normalizedQuery.split(' ');
+  const titleTokens = titles.map(title => title.split(' '));
+  const fuzzyTokenMatch = titleTokens.some(tokens =>
+    queryTokens.every(queryToken =>
+      tokens.some(titleToken => titleToken === queryToken || differsByOneCharacter(titleToken, queryToken))
+    ) &&
+    queryTokens.some(queryToken =>
+      tokens.some(titleToken => titleToken !== queryToken && differsByOneCharacter(titleToken, queryToken))
+    )
+  );
+  if (fuzzyTokenMatch || titles.some(title => differsByOneCharacter(title, normalizedQuery))) return 2;
+
+  if (titles.some(title => title.includes(normalizedQuery))) return 1;
+  if (titleTokens.some(tokens => queryTokens.every(queryToken => tokens.some(token => token.includes(queryToken))))) return 1;
+  return 0;
+}
+
+function rankAnimeSuggestions(animeList, query) {
+  return (Array.isArray(animeList) ? animeList : [])
+    .map((anime, index) => ({ anime, index, rank: suggestionMatchRank(anime, query) }))
+    .sort((first, second) => second.rank - first.rank || first.index - second.index)
+    .map(({ anime }) => anime);
+}
+
+function searchAnimeLocalFuzzy(animeDb, query) {
+  const normalizedQuery = normalizeSearchText(query);
+  if (!normalizedQuery || normalizedQuery.length < 2) return [];
+
+  const queryTokens = normalizedQuery.split(' ');
+  return (Array.isArray(animeDb) ? animeDb : []).filter(anime => {
+    const titleTokens = titleVariants(anime).map(normalizeSearchText).flatMap(title => title.split(' '));
+    let hasTypo = false;
+    const allTokensMatch = queryTokens.every(queryToken =>
+      titleTokens.some(titleToken => {
+        if (titleToken === queryToken) return true;
+        const isTypoMatch = differsByOneCharacter(titleToken, queryToken);
+        hasTypo ||= isTypoMatch;
+        return isTypoMatch;
+      })
+    );
+    return allTokensMatch && hasTypo;
+  });
+}
+
 function deduplicateMediaList(list) {
   if (!Array.isArray(list)) return [];
   const seen = new Set();
@@ -85,6 +186,7 @@ function mapLocalAnimeToAniList(anime) {
       large: poster,
       extraLarge: poster
     },
+    bannerImage: anime.banner || null,
     description: anime.description || '',
     episodes: anime.episodes || null,
     status: anime.status || 'UNKNOWN',
@@ -100,4 +202,11 @@ function mapLocalAnimeToAniList(anime) {
   };
 }
 
-module.exports = { mapLocalAnimeToAniList, searchAnimeLocal, deduplicateMediaList };
+module.exports = {
+  mapLocalAnimeToAniList,
+  rankAnimeSuggestions,
+  searchAnimeLocal,
+  searchAnimeLocalFuzzy,
+  suggestionMatchRank,
+  deduplicateMediaList
+};

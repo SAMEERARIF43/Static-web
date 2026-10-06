@@ -56,22 +56,22 @@ Approved and implemented in one pass (owner greenlit 2026-10-06). `npm test` and
 
 | ID | Task | Evidence |
 | --- | --- | --- |
-| P5.1 | Add rate limiting to the public AniList proxy endpoints | No limiter anywhere (`SECURITY.md` gap 2) |
+| P5.1 | **DONE 2026-10-07** — rate limiting on the public AniList proxy endpoints | `server.js`: `express-rate-limit` 120/min per client IP on `/api` (only `/api/site-config` and `/api/config` exempt), 60/min on `/api/search` and `/api/anime/:id`, 5 per 15 min on `/api/account`; 429 responses carry the security headers. Verified by `test-security.js` |
 | P5.2 | Add server-side caching for `/api/search` and `/api/anime/:id` | Only `/api/popular` is cached |
 | P5.3 | Add user-visible failure states + retry for Popular/Movies/Series/genre paths | `ERROR_HANDLING.md` §3 silent failures |
-| P5.4 | Consider a CSP (requires refactoring the generated inline `onerror` attributes first) | `SECURITY.md` gap 1 |
+| P5.4 | **DONE 2026-10-07** — Content-Security-Policy (+ HSTS in production) | The generated inline `onerror=` attributes were replaced by a mutation-observer image fallback in `public/script.js`, so `script-src` is `'self' https://cdn.jsdelivr.net` with no `unsafe-inline`. Verified in a browser (Home, detail, search: no console errors, no CSP violations) and by `test-security.js` |
 | P5.5 | Version the API or publish an OpenAPI document | No versioning today |
-| P5.6 | Add a health endpoint | None exists |
+| P5.6 | **DONE** — health endpoint | `GET /api/health` → `{ "status": "ok" }` with `Cache-Control: no-store`; unauthenticated and free of external service checks (`docs/ENVIRONMENT.md`) |
 
 ## Phase 6 — Testing
 
 | ID | Task | Evidence |
 | --- | --- | --- |
 | P6.1 | **DONE 2026-10-05** — restored the authenticated account-deletion assertions (mock Supabase auth server, token verification, Admin API target = verified user, service-role header checks) | `TESTING.md` §3; an instrumented run shows 8 deletion-related assertions executing |
-| P6.2 | **DONE 2026-10-06** — added coverage for `/api/movies`, `/api/series`, `/api/genre/:genre` (incl. `?type=`, curated-only, unknown and adult genres), `/api/genres`, the retired `/api/detail/:id` and `/api/anime/1`, plus the canonical-ID invariant across every catalog endpoint. Still open: `/api/anime/:id` 400/404/500/network failure | `TESTING.md` §2, §4 |
+| P6.2 | **DONE 2026-10-06** — added coverage for `/api/movies`, `/api/series`, `/api/genre/:genre` (incl. `?type=`, curated-only, unknown and adult genres), `/api/genres`, the retired `/api/detail/:id` and `/api/anime/1`, plus the canonical-ID invariant across every catalog endpoint. The `/api/anime/:id` 400/404/500 and AniList-outage paths are now covered by `test-security.js` (2026-10-07) | `TESTING.md` §2, §4 |
 | P6.3 | Introduce a mocked AniList (fixtures) so search/popular tests are deterministic | Live-API flakiness |
 | P6.4 | Replace brittle `script.js` substring assertions with behavioural tests where practical | Source-matching brittleness |
-| P6.5 | Add failure-path tests (AniList down, 400/413/500 payloads, unknown routes) | `TESTING.md` §4 |
+| P6.5 | Add failure-path tests (AniList down, 400/413/500 payloads, unknown routes) | **PARTIAL 2026-10-07** — `test-security.js` covers the AniList outage + fallback contract, unknown routes (404 JSON), 400 validation, 429 rate limits and every account-deletion failure code; 413/500 error-middleware payloads are still untested |
 | P6.6 | Decide whether CI should run on the active branches, not only `main`/`master` | `.github/workflows/ci.yml` |
 
 ## Phase 7 — Admin (only if P3.4 approves)

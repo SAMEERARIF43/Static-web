@@ -21,16 +21,18 @@
 | GET | `/api/popular` | Merged popular catalog | AniList `POPULARITY_DESC` + curated | none | 10-min in-memory |
 | GET | `/api/movies` | Anime films (live) | AniList `format_in: [MOVIE]` + curated | none | 10-min in-memory |
 | GET | `/api/series` | TV series (live) | AniList `format_in: [TV, TV_SHORT]` + curated | none | 10-min in-memory |
-| GET | `/api/search?q=` | Title search (10 results) | AniList → curated fallback | none | ⚫ ⚪ |
+| GET | `/api/search?q=` | Title search (10 results); 1-100 characters, empty or control-character query → **400** | AniList → curated fallback | none | ⚫ ⚪ |
 | GET | `/api/genre/:genre` | Genre filter (optional `?type=series\|movies`) | AniList genre query → curated fallback | none | 10-min in-memory (≤30 genres) |
 | GET | `/api/detail/:id` | **Retired** — permanent redirect to `/api/anime/:id` | — | none | n/a | 🟡 |
 | GET | `/api/genres` | Genre list (adult genres excluded) | AniList `GenreCollection` + curated | none | 10-min in-memory | 🟡 |
-| GET | `/api/anime/:id` | Detail by **AniList** id (staff, characters, relations, recommendations, trailer) | AniList | none | ⚫ ⚪ |
+| GET | `/api/anime/:id` | Detail by **AniList** id (staff, characters, relations, recommendations, trailer); a curated entry answers (HTTP **200**) when AniList is down, labelled `X-Catalog-Source: curated` instead of `anilist` | AniList → curated fallback | none | ⚫ ⚪ |
 | POST | `/api/anime/search` | **Retired** — returns 404 | — | — | — | — |
 
 Global middleware: CORS allowlist (`CORS_ORIGINS`; foreign origins → **403**; in production the list is validated at boot — see `docs/ENVIRONMENT.md` §3), security headers including CSP, `express.json({ limit: '16kb' })`, rate limits, and a JSON error handler.
 
 Rate limits are process-local fixed windows: `/api` allows 120 requests per minute per client IP, except `/api/site-config` and `/api/config`; `/api/search` and `/api/anime/:id` additionally allow 60 per minute; `/api/account` allows 5 per 15 minutes. Set `TRUST_PROXY` to the actual proxy hop count in production so the limiter sees client IPs; counters are not shared across server instances.
+
+Those security headers apply to **every** response, including the JSON 404 for unknown routes (`{ "message": "Not found." }`), the CORS **403** and the rate-limit **429**; `Strict-Transport-Security` is added only when `NODE_ENV=production`. A throttled client receives `429 { "message": "Too many requests. Please slow down." }`.
 
 ## 1. Endpoint details
 
@@ -153,4 +155,4 @@ Needed for features currently absent (see `docs/FEATURES.md`, `docs/WATCH_SYSTEM
 - **No server-side caching** for `/api/search` and `/api/anime/:id` (the four catalog lists and genre queries are cached for 10 minutes).
 - **Every list endpoint is capped** at 20–50 items and there is no pagination or `offset` support.
 - **No API versioning** and no machine-readable schema (OpenAPI) — a candidate for a future `docs/` addition.
-- **No request logging**; only ad-hoc `console.log`/`console.error`/`console.warn`.
+- **Request correlation is minimal:** every response carries an `X-Request-ID` and the shared error handler logs it, but there is no structured request logging — only ad-hoc `console.log`/`console.error`/`console.warn`.

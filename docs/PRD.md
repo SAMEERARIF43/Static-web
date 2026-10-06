@@ -56,7 +56,7 @@ Every legal page and the site footer repeat this non-hosting statement. **AnimeH
 - **Episodes are only a count.** No episode list, numbering, air dates, or per-episode data of any kind.
 - **No Favorites, Watch History, Continue Watching, or Admin** (see `docs/FEATURES.md`).
 - **No user-visible failure states** for the Popular, Movies, Series, and genre paths (failures only reach the console).
-- **No API rate limiting** on the public AniList proxy endpoints.
+- ~~**No API rate limiting** on the public AniList proxy endpoints.~~ → **Fixed 2026-10-07 (Phase 2):** per-IP limits on `/api` (120/min), `/api/search` and `/api/anime/:id` (60/min) and `/api/account` (5 per 15 min), with `TRUST_PROXY` for correct client IPs behind a proxy. Limits are process-local.
 
 ## 6. Current legal positioning (CURRENT)
 

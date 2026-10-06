@@ -101,16 +101,16 @@
 1. ~~**Split catalog sources.**~~ **FIXED 2026-10-06 (Phase 1).** Every catalog list — trending, popular, movies, series, genre, genres — is now served from live AniList plus the curated overlay, and the endpoint used no longer changes the answer.
 2. ~~**Duplicate ID spaces.**~~ **FIXED 2026-10-06 (Phase 1).** `ANIME_DB` no longer holds a local id; every catalog item leaves with `id === anilistId`, and `/api/detail/:id` is a 308 redirect to `/api/anime/:id`.
 3. **Single-process server.** One Node process, in-memory cache only, no shared cache, no horizontal-scale story; restarting clears the catalog cache.
-4. **No rate limiting** on any endpoint, including the public AniList-backed proxy.
+4. ~~**No rate limiting** on any endpoint, including the public AniList-backed proxy.~~ **FIXED 2026-10-07 (Phase 2).** Per-IP limits on `/api` (120/min), `/api/search` and `/api/anime/:id` (60/min) and `/api/account` (5 per 15 min); counters are in-process, so they reset on restart and are not shared across instances — set `TRUST_PROXY` for correct client IPs.
 5. **No API versioning** (`/api/*` unversioned) and no documented error schema beyond `{ message }`.
 6. **Two data owners for watchlist display data** (browser cache + Supabase) that must be reconciled by the hydration/migration logic — correct today, but the most complex part of the app.
-7. **No observability** — no structured logging, metrics, or health endpoint.
+7. **Observability is partial** — there is a health endpoint (`/api/health`) and every response carries an `X-Request-ID` that the error handler logs, but there is still no structured logging or metrics.
 
 ## 10. PLANNED (not built)
 
 - Unify catalog sourcing and IDs before any watch-progress feature (see `docs/TASKS.md` Phase 1, `docs/ANIME_DATA.md` §ID spaces).
 - Episode-aware data model and watch system (see `docs/WATCH_SYSTEM.md`).
-- Rate limiting, caching for `/api/search` and `/api/anime/:id`, CSP (see `docs/TASKS.md` Phase 5).
+- ~~Rate limiting, CSP~~ **DONE 2026-10-07 (Phase 2)**; still planned: server-side caching for `/api/search` and `/api/anime/:id` (see `docs/TASKS.md` Phase 5).
 
 ## 11. NOT FOUND / NEEDS CONFIRMATION
 

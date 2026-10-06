@@ -6,9 +6,17 @@ const express = require('express');
 const cors = require('cors');
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 const axios = require('axios');
 const rateLimit = require('express-rate-limit');
-const { mapLocalAnimeToAniList, searchAnimeLocal, deduplicateMediaList } = require('./search-utils');
+const {
+  mapLocalAnimeToAniList,
+  rankAnimeSuggestions,
+  searchAnimeLocal,
+  searchAnimeLocalFuzzy,
+  suggestionMatchRank,
+  deduplicateMediaList
+} = require('./search-utils');
 const { mergeAniListCatalog, withCanonicalId } = require('./catalog-utils');
 
 const app = express();
@@ -59,6 +67,10 @@ function resolveAnilistGraphqlUrl(value) {
 }
 
 const ANILIST_GRAPHQL_URL = resolveAnilistGraphqlUrl(process.env.ANILIST_GRAPHQL_URL);
+const SUGGESTION_CACHE_TTL_MS = 60 * 1000;
+const SUGGESTION_CACHE_LIMIT = 100;
+const suggestionCache = new Map();
+const pendingSuggestionRequests = new Map();
 
 /**
  * Shape a curated entry like an AniList detail response, so the detail page
@@ -184,26 +196,10 @@ if (process.env.NODE_ENV === 'production') {
   }
 }
 
-app.use(cors({
-  origin: function (origin, callback) {
-    // Allow requests with no origin (same-origin, Postman, server-side)
-    if (!origin || ALLOWED_ORIGINS.includes(origin)) {
-      callback(null, true);
-    } else {
-      callback(new Error('Not allowed by CORS'));
-    }
-  }
-}));
-
-app.use((err, req, res, next) => {
-  if (err && err.message === 'Not allowed by CORS') {
-    return res.status(403).json({ message: 'Not allowed by CORS' });
-  }
-  next(err);
-});
-
+// Security headers are set before every other middleware so that error
+// responses - CORS rejections, 404s, 429 rate-limit replies - carry them too.
 app.use((req, res, next) => {
-res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('X-Frame-Options', 'DENY');
   res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
   res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
@@ -225,7 +221,7 @@ res.setHeader('X-Content-Type-Options', 'nosniff');
     "upgrade-insecure-requests"
   ].join('; '));
   // X-Request-ID for request tracing in production logs
-  const requestId = require('crypto').randomUUID();
+  const requestId = crypto.randomUUID();
   req.id = requestId;
   res.setHeader('X-Request-ID', requestId);
   // The site is HTTPS-only in production; HSTS keeps it that way for
@@ -234,6 +230,24 @@ res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
   }
   next();
+});
+
+app.use(cors({
+  origin: function (origin, callback) {
+    // Allow requests with no origin (same-origin, Postman, server-side)
+    if (!origin || ALLOWED_ORIGINS.includes(origin)) {
+      callback(null, true);
+    } else {
+      callback(new Error('Not allowed by CORS'));
+    }
+  }
+}));
+
+app.use((err, req, res, next) => {
+  if (err && err.message === 'Not allowed by CORS') {
+    return res.status(403).json({ message: 'Not allowed by CORS' });
+  }
+  next(err);
 });
 
 // ============================================================
@@ -1032,6 +1046,137 @@ app.get('/api/popular', async (req, res) => {
 // SEARCH (AniList first, local fallback)
 // ============================================================
 
+function mapMediaToSuggestion(media) {
+  const id = media.id || media.anilistId;
+  const poster = media.coverImage?.extraLarge || media.coverImage?.large || media.poster || media.image || null;
+  return {
+    id,
+    anilistId: id,
+    title: media.title,
+    coverImage: { large: poster },
+    bannerImage: media.bannerImage || media.banner || null,
+    format: media.format || media.type || null,
+    season: media.season || null,
+    seasonYear: media.seasonYear || media.year || null,
+    averageScore: media.averageScore || (media.rating ? Math.round(media.rating * 10) : null)
+  };
+}
+
+async function fetchAniListSuggestions(query) {
+  const graphqlQuery = `
+    query ($search: String) {
+      Page(perPage: 10) {
+        media(search: $search, type: ANIME, sort: SEARCH_MATCH) {
+          id
+          title {
+            romaji
+            english
+            native
+          }
+          coverImage {
+            large
+          }
+          bannerImage
+          averageScore
+          season
+          seasonYear
+          format
+        }
+      }
+    }
+  `;
+  const response = await axios.post(
+    ANILIST_GRAPHQL_URL,
+    { query: graphqlQuery, variables: { search: query } },
+    {
+      headers: { 'Content-Type': 'application/json' },
+      timeout: 10000
+    }
+  );
+
+  if (response.data.errors) {
+    throw new Error(response.data.errors.map(error => error.message).join('; '));
+  }
+
+  const media = safe(response, 'data.data.Page.media', []);
+  if (!Array.isArray(media)) {
+    throw new Error('AniList returned an invalid suggestions response.');
+  }
+
+  let results = rankAnimeSuggestions(deduplicateMediaList(media), query);
+  if (query.length <= 3 || !results.some(anime => suggestionMatchRank(anime, query) >= 2)) {
+    const localMatches = query.length <= 3
+      ? ANIME_DB.map(mapLocalAnimeToAniList)
+        .filter(anime => suggestionMatchRank(anime, query) >= 2)
+      : searchAnimeLocalFuzzy(ANIME_DB, query).map(mapLocalAnimeToAniList);
+    results = rankAnimeSuggestions(deduplicateMediaList([...localMatches, ...results]), query);
+  }
+
+  return results.slice(0, 10).map(mapMediaToSuggestion);
+}
+
+function getLocalSuggestions(query) {
+  const exactAndPartialMatches = searchAnimeLocal(ANIME_DB, query);
+  const typoMatches = searchAnimeLocalFuzzy(ANIME_DB, query);
+  const candidates = deduplicateMediaList(
+    [...exactAndPartialMatches, ...typoMatches].map(mapLocalAnimeToAniList)
+  );
+  return rankAnimeSuggestions(candidates, query)
+    .filter(anime => suggestionMatchRank(anime, query) > 0)
+    .slice(0, 10)
+    .map(mapMediaToSuggestion);
+}
+
+app.get('/api/search/suggestions', async (req, res) => {
+  const query = typeof req.query.q === 'string'
+    ? req.query.q.trim().replace(/\s+/g, ' ')
+    : '';
+
+  if (query.length < 2 || query.length > 100) {
+    return res.status(400).json({
+      message: 'Enter an anime name of 2 to 100 characters.'
+    });
+  }
+
+  const cacheKey = query.toLowerCase();
+  const cached = suggestionCache.get(cacheKey);
+  if (cached && Date.now() < cached.expiresAt) {
+    suggestionCache.delete(cacheKey);
+    suggestionCache.set(cacheKey, cached);
+    return res.json(cached.results);
+  }
+  if (cached) suggestionCache.delete(cacheKey);
+
+  let pending = pendingSuggestionRequests.get(cacheKey);
+  if (!pending) {
+    pending = fetchAniListSuggestions(query);
+    pendingSuggestionRequests.set(cacheKey, pending);
+  }
+
+  try {
+    const results = await pending;
+    if (pendingSuggestionRequests.get(cacheKey) === pending) {
+      pendingSuggestionRequests.delete(cacheKey);
+    }
+    if (suggestionCache.size >= SUGGESTION_CACHE_LIMIT) {
+      suggestionCache.delete(suggestionCache.keys().next().value);
+    }
+    suggestionCache.set(cacheKey, {
+      expiresAt: Date.now() + SUGGESTION_CACHE_TTL_MS,
+      results
+    });
+    res.json(results);
+  } catch (error) {
+    if (pendingSuggestionRequests.get(cacheKey) === pending) {
+      pendingSuggestionRequests.delete(cacheKey);
+    }
+    console.warn(`AniList suggestions unavailable; using local catalog fallback: ${error.message}`);
+    const localResults = getLocalSuggestions(query);
+    if (localResults.length) return res.json(localResults);
+    res.status(502).json({ message: 'Suggestions are temporarily unavailable.' });
+  }
+});
+
 app.get('/api/search', async (req, res) => {
 
   const query = typeof req.query.q === 'string' ? req.query.q.trim() : '';
@@ -1042,12 +1187,16 @@ app.get('/api/search', async (req, res) => {
     });
   }
 
-  // Sensible input validation: only reject truly dangerous patterns
-  // GraphQL uses parameterized variables ($search: String), so no injection risk.
-  // Allow letters, numbers, spaces, and common anime title punctuation.
-  if (query.length < 1) {
+  // Reject control characters: a legitimate title never contains them, and
+  // parameterized GraphQL variables ($search: String) mean rejected input
+  // can never be interpreted as a query. Printable Unicode is untouched.
+  const hasControlCharacter = [...query].some(character => {
+    const codePoint = character.codePointAt(0);
+    return codePoint < 0x20 || codePoint === 0x7F;
+  });
+  if (hasControlCharacter) {
     return res.status(400).json({
-      message: "Search query cannot be empty."
+      message: "Search query contains characters that are not allowed."
     });
   }
 
@@ -1311,6 +1460,8 @@ app.get('/api/anime/:id', async (req, res) => {
               coverImage {
                 large
               }
+              bannerImage
+              seasonYear
               averageScore
               format
               status
@@ -1329,6 +1480,8 @@ app.get('/api/anime/:id', async (req, res) => {
                 coverImage {
                   large
                 }
+                bannerImage
+                seasonYear
                 averageScore
                 format
                 status
@@ -1360,6 +1513,7 @@ app.get('/api/anime/:id', async (req, res) => {
       const curated = buildCuratedAnimeDetail(animeId);
       if (curated) {
         console.warn(`AniList returned errors; serving curated details for ID ${animeId}.`);
+        res.setHeader('X-Catalog-Source', 'curated');
         return res.status(200).json(curated);
       }
       return res.status(500).json({
@@ -1373,6 +1527,7 @@ app.get('/api/anime/:id', async (req, res) => {
       const curated = buildCuratedAnimeDetail(animeId);
       if (curated) {
         console.warn(`AniList returned no entry; serving curated details for ID ${animeId}.`);
+        res.setHeader('X-Catalog-Source', 'curated');
         return res.status(200).json(curated);
       }
       return res.status(404).json({ message: "Anime not found on AniList nor in curated catalog." });
@@ -1381,6 +1536,7 @@ app.get('/api/anime/:id', async (req, res) => {
     // Sanitize description before sending to client
     anime.description = sanitizeDescription(anime.description);
 
+    res.setHeader('X-Catalog-Source', 'anilist');
     res.json(anime);
 
   } catch (error) {
@@ -1395,12 +1551,20 @@ app.get('/api/anime/:id', async (req, res) => {
     const curated = buildCuratedAnimeDetail(animeId);
     if (curated) {
       console.warn(`AniList unavailable; serving curated details for ID ${animeId}.`);
+      res.setHeader('X-Catalog-Source', 'curated');
       return res.status(200).json(curated);
     }
     res.status(500).json({
       message: "Could not connect to AniList API."
     });
   }
+});
+
+// Unknown routes answer with JSON so the response keeps the application
+// security headers; Express's built-in 404 page would otherwise replace the
+// Content-Security-Policy with its own "default-src 'none'".
+app.use((req, res) => {
+  res.status(404).json({ message: 'Not found.' });
 });
 
 app.use((error, req, res, next) => {
@@ -1411,7 +1575,7 @@ app.use((error, req, res, next) => {
       ? error.status
       : 500;
 
-  console.error(`Request failed (${status}): ${error.message}`);
+  console.error(`Request failed (${status}) [${req.id || 'no-request-id'}]: ${error.message}`);
   res.status(status).json({
     message: status === 413
       ? 'Request body is too large.'

@@ -2,7 +2,12 @@ const http = require('http');
 const assert = require('assert');
 const { spawn } = require('child_process');
 const path = require('path');
-const { mapLocalAnimeToAniList, searchAnimeLocal } = require('./search-utils');
+const {
+  mapLocalAnimeToAniList,
+  rankAnimeSuggestions,
+  searchAnimeLocal,
+  searchAnimeLocalFuzzy
+} = require('./search-utils');
 const { mapAniListMediaToCatalogItem, mergeAniListCatalog, withCanonicalId } = require('./catalog-utils');
 
 const TEST_PORT = process.env.TEST_PORT || 3001;
@@ -126,6 +131,58 @@ async function run() {
       'Naruto results should include Naruto'
     );
 
+    const suggestions = await request('/api/search/suggestions?q=one');
+    assert.strictEqual(suggestions.statusCode, 200, 'Autocomplete suggestions should return HTTP 200');
+    assert(Array.isArray(suggestions.body), 'Autocomplete suggestions should return an array');
+    assert(
+      suggestions.body.some(anime => getTitle(anime).toLowerCase().includes('one piece')),
+      'Autocomplete suggestions should include One Piece'
+    );
+    const firstPrefixMatch = suggestions.body.findIndex(anime => getTitle(anime).toLowerCase().startsWith('one'));
+    const firstPartialMatch = suggestions.body.findIndex(anime => {
+      const title = getTitle(anime).toLowerCase();
+      return title.includes('one') && !title.startsWith('one');
+    });
+    const onePieceIndex = suggestions.body.findIndex(anime => getTitle(anime).toLowerCase().startsWith('one piece'));
+    const otherPrefixIndex = suggestions.body.findIndex(anime => {
+      const title = getTitle(anime).toLowerCase();
+      return title.startsWith('one ') && !title.startsWith('one piece');
+    });
+    assert(firstPrefixMatch >= 0, 'Suggestions should include a title-prefix match');
+    assert(onePieceIndex >= 0, 'Short queries should include the curated One Piece match');
+    assert(
+      firstPartialMatch < 0 || firstPrefixMatch < firstPartialMatch,
+      'Title-prefix matches should precede partial title matches'
+    );
+    assert(
+      otherPrefixIndex < 0 || onePieceIndex < otherPrefixIndex,
+      'Curated title-prefix matches should appear ahead of unrelated AniList prefixes'
+    );
+    assert(
+      !suggestions.body.some(anime => 'description' in anime || 'genres' in anime || 'studios' in anime),
+      'Autocomplete suggestions should omit fields not needed by the dropdown'
+    );
+
+    const typoSuggestions = await request('/api/search/suggestions?q=one%20peice');
+    assert.strictEqual(typoSuggestions.statusCode, 200, 'Typo-tolerant suggestions should return HTTP 200');
+    assert(
+      typoSuggestions.body.some(anime => getTitle(anime).toLowerCase().includes('one piece')),
+      'A small title typo should still suggest One Piece'
+    );
+    const missingSuggestions = await request('/api/search/suggestions?q=anime%20that%20does%20not%20exist%20anywhere');
+    assert.strictEqual(missingSuggestions.statusCode, 200, 'No matches should not be an API error');
+    assert.deepStrictEqual(missingSuggestions.body, [], 'No matches should return an empty suggestions list');
+    assert.strictEqual(
+      (await request('/api/search/suggestions?q=a')).statusCode,
+      400,
+      'Autocomplete should reject queries shorter than two characters'
+    );
+    assert.strictEqual(
+      (await request(`/api/search/suggestions?q=${'x'.repeat(101)}`)).statusCode,
+      400,
+      'Autocomplete should reject oversized queries'
+    );
+
     const empty = await search('');
     assert.strictEqual(empty.statusCode, 400, 'Empty search should return HTTP 400');
     assert.strictEqual(empty.body.message, 'Enter an anime name of 1 to 100 characters.', 'Empty search should explain the validation error');
@@ -238,6 +295,16 @@ async function run() {
     assert(localWatchlistScript.body.includes("searchFilterForm?.addEventListener('change', applySearchFilters)"), 'Search filters and sorting should update results when changed');
     assert(localWatchlistScript.body.includes("searchFilterForm?.addEventListener('reset'"), 'Search filters should reapply after reset');
     assert(localWatchlistScript.body.includes('if (requestId !== searchRequestId) return;'), 'Outdated search responses should not replace newer results');
+    assert(localWatchlistScript.body.includes('/search/suggestions?q='), 'Autocomplete should use the lightweight suggestions endpoint');
+    assert(localWatchlistScript.body.includes('}, 180);'), 'Autocomplete should debounce requests by 180 milliseconds');
+    assert(localWatchlistScript.body.includes('new AbortController()'), 'Autocomplete should cancel obsolete requests');
+    assert(localWatchlistScript.body.includes('requestId !== state.requestId'), 'Stale autocomplete responses should be ignored');
+    assert(localWatchlistScript.body.includes("event.key === 'ArrowDown' || event.key === 'ArrowUp'"), 'Autocomplete should retain arrow-key navigation');
+    assert(localWatchlistScript.body.includes("event.key === 'Escape' && !panel.hidden"), 'Autocomplete should retain Escape behavior');
+    assert(localWatchlistScript.body.includes('No anime found.'), 'Empty autocomplete results should use a non-technical message');
+    assert(localWatchlistScript.body.includes('banner: r.bannerImage || r.coverImage?.large'), 'Recommendation cards should preserve banner or poster fallback data');
+    assert(localWatchlistScript.body.includes('safeImageUrl(bannerUrl || poster)'), 'Detail banners should fall back to the anime poster');
+    assert(localWatchlistScript.body.includes("image.hidden = true"), 'Failed fallback images should not show broken-image icons');
     assert(localWatchlistScript.body.includes("link[rel=\"canonical\"]"), 'Dynamic SEO updates should update the canonical URL');
     assert(localWatchlistScript.body.includes("replace(/\"/g, '&quot;')"), 'Catalog text should escape double quotes in attributes');
 
@@ -373,6 +440,15 @@ async function run() {
       getTitle(canonicalDetail.body).toLowerCase().includes('cowboy bebop'),
       'AniList ID 1 must resolve to Cowboy Bebop, not the retired local ID 1 entry'
     );
+    const recommendedMedia = canonicalDetail.body.recommendations?.edges
+      ?.map(edge => edge.node?.mediaRecommendation)
+      .find(Boolean);
+    if (recommendedMedia) {
+      assert(
+        Object.prototype.hasOwnProperty.call(recommendedMedia, 'bannerImage'),
+        'Recommendation responses should preserve the AniList banner field'
+      );
+    }
 
     const highCatalogDetail = await request('/api/anime/206949');
     assert.strictEqual(highCatalogDetail.statusCode, 200, 'A valid AniList ID above 100,000 should load');
@@ -393,6 +469,7 @@ async function run() {
       title: 'Sample Fantasy',
       genre: ['Fantasy'],
       poster: 'https://example.com/poster.jpg',
+      banner: 'https://example.com/banner.jpg',
       rating: 8.4,
       year: 2024,
       studio: 'Sample Studio',
@@ -422,6 +499,7 @@ async function run() {
     assert.strictEqual(mappedMedia.status, 'Airing', 'AniList status should be made human-readable');
     assert.strictEqual(mappedMedia.studio, 'Sample Studio', 'Catalog mapping should include the main studio');
     assert.strictEqual(mappedMedia.language, 'Japanese', 'Catalog mapping should include the language');
+    assert.strictEqual(mappedMedia.banner, mediaFixture.bannerImage, 'Catalog mapping should preserve the AniList banner');
     const mergedCatalog = mergeAniListCatalog([localTitle], [mediaFixture, {
       id: null,
       title: { english: 'Malformed entry' }
@@ -564,10 +642,39 @@ async function run() {
       'Local fallback should search the local genre field'
     );
 
+    const typoTitles = [
+      { id: 1, title: 'One Piece' },
+      { id: 2, title: 'Naruto' },
+      { id: 3, title: 'Demon Slayer' },
+      { id: 4, title: 'Jujutsu Kaisen' }
+    ];
+    for (const [query, expectedTitle] of [
+      ['one peice', 'One Piece'],
+      ['narutoo', 'Naruto'],
+      ['demom slayer', 'Demon Slayer'],
+      ['jujutsu kiasen', 'Jujutsu Kaisen']
+    ]) {
+      assert.strictEqual(
+        searchAnimeLocalFuzzy(typoTitles, query)[0]?.title,
+        expectedTitle,
+        `${query} should find a title with one transposed or mistyped character`
+      );
+    }
+    assert.deepStrictEqual(
+      rankAnimeSuggestions([
+        { title: { english: 'Someone Loves You' } },
+        { title: { english: 'One Piece Film: Red' } },
+        { title: { english: 'One Punch Man' } }
+      ], 'one').map(getTitle),
+      ['One Piece Film: Red', 'One Punch Man', 'Someone Loves You'],
+      'Prefix matches should rank above partial title matches while preserving AniList order'
+    );
+
     const mappedTitle = mapLocalAnimeToAniList(localTitle);
     assert.strictEqual(mappedTitle.id, localTitle.anilistId, 'Fallback results should open the matching AniList detail');
     assert.strictEqual(mappedTitle.title.english, localTitle.title, 'Local fallback should expose the AniList title shape');
     assert.strictEqual(mappedTitle.coverImage.large, localTitle.poster, 'Local fallback should expose the AniList cover shape');
+    assert.strictEqual(mappedTitle.bannerImage, localTitle.banner, 'Local fallback should preserve its banner image');
     assert.deepStrictEqual(mappedTitle.genres, localTitle.genre, 'Local fallback should expose AniList genres');
     assert.strictEqual(mappedTitle.studios.nodes[0].name, localTitle.studio, 'Fallback results should include the local studio');
     assert.strictEqual(mappedTitle.countryOfOrigin, 'JP', 'Fallback results should expose the AniList country code');

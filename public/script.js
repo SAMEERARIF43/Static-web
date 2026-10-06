@@ -197,9 +197,22 @@ document.addEventListener('DOMContentLoaded', () => {
     if (image.dataset.fallbackBound === 'true') return;
     image.dataset.fallbackBound = 'true';
     image.addEventListener('error', () => {
-      image.onerror = null;
-      image.src = image.dataset.fallbackSrc;
-    });
+      const fallbackSrc = image.dataset.fallbackSrc;
+      const resolvedFallbackSrc = fallbackSrc ? new URL(fallbackSrc, document.baseURI).href : '';
+      if (
+        resolvedFallbackSrc &&
+        image.src !== resolvedFallbackSrc &&
+        image.dataset.fallbackApplied !== 'true'
+      ) {
+        image.dataset.fallbackApplied = 'true';
+        image.addEventListener('error', () => {
+          image.hidden = true;
+        }, { once: true });
+        image.src = fallbackSrc;
+        return;
+      }
+      image.hidden = true;
+    }, { once: true });
   }
 
   const POSTER_FALLBACK = 'https://placehold.co/300x450/0f172a/ff7200?text=No+Poster';
@@ -696,8 +709,10 @@ document.addEventListener('DOMContentLoaded', () => {
       const rawNative = anime.title?.romaji !== rawTitle ? anime.title?.romaji : '';
       const nativeTitle = escapeHtml(rawNative);
       const rating = anime.averageScore ? (anime.averageScore / 10).toFixed(1) : (anime.rating ? anime.rating.toFixed(1) : 'N/A');
-      const banner = safeImageUrl(anime.bannerImage || anime.banner);
       const poster = safeImageUrl(anime.coverImage?.extraLarge || anime.coverImage?.large || anime.poster || anime.image);
+      const bannerUrl = anime.bannerImage || anime.banner;
+      const banner = safeImageUrl(bannerUrl || poster);
+      const bannerFallback = bannerUrl ? poster : BANNER_FALLBACK;
       const totalEpisodes = Number(anime.episodes) > 0 ? Number(anime.episodes) : null;
       const format = escapeHtml(anime.format || anime.type || 'Anime');
       const statusLabels = {
@@ -811,15 +826,23 @@ document.addEventListener('DOMContentLoaded', () => {
 
       const relatedItems = (anime.relations?.edges || [])
         .filter(edge => edge.node?.type === 'ANIME' && Number(edge.node.id) !== Number(anime.id))
-        .map(edge => ({
-          id: edge.node.id,
-          title: edge.node.title,
-          poster: edge.node.coverImage?.large,
-          rating: edge.node.averageScore ? edge.node.averageScore / 10 : 0,
-          type: edge.node.format || 'TV',
-          status: statusLabels[edge.node.status] || edge.node.status || 'Unknown',
-          relationType: (edge.relationType || 'Related').replace(/_/g, ' ').toLowerCase()
-        }));
+        .map(edge => {
+          const related = edge.node;
+          const relatedPoster = related.coverImage?.large || null;
+          return {
+            id: related.id,
+            anilistId: related.id,
+            title: getAnimeTitle(related),
+            image: relatedPoster,
+            poster: relatedPoster,
+            banner: related.bannerImage || relatedPoster,
+            rating: related.averageScore ? related.averageScore / 10 : 0,
+            year: related.seasonYear || null,
+            type: related.format || 'TV',
+            status: statusLabels[related.status] || related.status || 'Unknown',
+            relationType: (edge.relationType || 'Related').replace(/_/g, ' ').toLowerCase()
+          };
+        });
       const relatedHtml = relatedItems.length
         ? `<section class="reco-section" aria-labelledby="detail-related-heading">
             <h2 class="episodes-title" id="detail-related-heading">Related titles</h2>
@@ -840,9 +863,13 @@ document.addEventListener('DOMContentLoaded', () => {
               <div class="anime-grid">
                 ${recos.map(r => renderAnimeCard({
                   id: r.id,
-                  title: r.title?.english || r.title?.romaji || 'Unknown',
+                  anilistId: r.id,
+                  title: getAnimeTitle(r),
+                  image: r.coverImage?.large,
                   poster: r.coverImage?.large,
+                  banner: r.bannerImage || r.coverImage?.large,
                   rating: r.averageScore ? r.averageScore / 10 : 0,
+                  year: r.seasonYear || null,
                   type: r.format || 'TV',
                   status: r.status || 'Unknown'
                 })).join('')}
@@ -856,7 +883,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
       detailContent.innerHTML = `
         <div class="detail-banner">
-          <img src="${escapeHtml(banner)}" alt="" data-fallback-src="${BANNER_FALLBACK}">
+          <img src="${escapeHtml(banner)}" alt="" data-fallback-src="${escapeHtml(bannerFallback)}">
           <div class="detail-banner-overlay"></div>
         </div>
         <div class="detail-content">
@@ -1250,11 +1277,13 @@ document.addEventListener('DOMContentLoaded', () => {
     const status = document.getElementById(statusId);
     if (!input || !panel || !options || !status) return;
 
-    const state = { items: [], activeIndex: -1, timer: null, controller: null };
+    const state = { items: [], activeIndex: -1, timer: null, controller: null, lastQuery: '', requestId: 0 };
 
     function closeSuggestions() {
       clearTimeout(state.timer);
       state.controller?.abort();
+      state.requestId += 1;
+      state.lastQuery = '';
       panel.hidden = true;
       options.replaceChildren();
       status.textContent = '';
@@ -1305,25 +1334,31 @@ document.addEventListener('DOMContentLoaded', () => {
           <small>${escapeHtml(detail)}</small>
         </li>`;
       }).join('');
-      status.textContent = state.items.length ? '' : 'No matches yet. Press Enter to search.';
+      status.textContent = state.items.length ? '' : 'No anime found.';
       panel.hidden = false;
       input.setAttribute('aria-expanded', 'true');
     }
 
     input.addEventListener('input', () => {
+      const query = input.value.trim().replace(/\s+/g, ' ');
+      const normalizedQuery = query.toLowerCase();
+      if (query.length < 2) {
+        closeSuggestions();
+        return;
+      }
+      if (normalizedQuery === state.lastQuery) return;
+
+      state.lastQuery = normalizedQuery;
+      state.requestId += 1;
+      const requestId = state.requestId;
       clearTimeout(state.timer);
       state.controller?.abort();
       state.activeIndex = -1;
       state.items = [];
       options.replaceChildren();
       input.removeAttribute('aria-activedescendant');
-      const query = input.value.trim();
-      if (query.length < 2) {
-        closeSuggestions();
-        return;
-      }
 
-      const cached = suggestionCache.get(query.toLowerCase());
+      const cached = suggestionCache.get(normalizedQuery);
       if (cached) {
         showResults(cached);
         return;
@@ -1333,25 +1368,26 @@ document.addEventListener('DOMContentLoaded', () => {
       panel.hidden = false;
       input.setAttribute('aria-expanded', 'true');
       state.timer = setTimeout(async () => {
+        state.timer = null;
         state.controller = new AbortController();
         try {
-          const response = await fetch(`${baseURL}/search?q=${encodeURIComponent(query)}`, {
+          const response = await fetch(`${baseURL}/search/suggestions?q=${encodeURIComponent(query)}`, {
             signal: state.controller.signal
           });
           if (!response.ok) throw new Error(`Suggestions request failed: ${response.status}`);
           const results = await response.json();
-          if (input.value.trim() !== query) return;
+          if (requestId !== state.requestId || input.value.trim().replace(/\s+/g, ' ').toLowerCase() !== normalizedQuery) return;
           if (suggestionCache.size >= 50) {
             suggestionCache.delete(suggestionCache.keys().next().value);
           }
-          suggestionCache.set(query.toLowerCase(), results);
+          suggestionCache.set(normalizedQuery, results);
           showResults(results);
         } catch (error) {
-          if (error.name === 'AbortError') return;
+          if (error.name === 'AbortError' || requestId !== state.requestId) return;
           console.error('Unable to load search suggestions:', error);
           status.textContent = 'Suggestions unavailable. Press Enter to search.';
         }
-      }, 280);
+      }, 180);
     });
 
     input.addEventListener('keydown', event => {

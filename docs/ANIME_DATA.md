@@ -103,7 +103,7 @@ There is **no** database of anime titles, no CMS, no scraper, no local JSON cata
 | --- | --- |
 | AniList down / error during any catalog endpoint (`/api/trending`, `/api/popular`, `/api/movies`, `/api/series`, `/api/genre/:genre`, `/api/genres`) | stale cache if present, else the curated catalog (or the curated genre matches); warning logged naming which was used. `/api/movies` is empty offline — the curated catalog has no films |
 | AniList down during `/api/search` | local `searchAnimeLocal` (title/genre/studio/type matching with relevance ranking) mapped to the AniList response shape |
-| AniList down during `/api/anime/:id` | **500 error** — no local fallback for detail pages |
+| AniList down during `/api/anime/:id` | a **curated** entry answers with **200** and `X-Catalog-Source: curated` (the AniList ID stays canonical); an ID that is not curated still fails honestly — **500** for an outage, **404** when AniList answers without that media, **400** for a non-numeric or out-of-range ID. Verified by `test-security.js` (2026-10-07) |
 | Invalid/missing image | placeholder image |
 
 ## 8. NOT FOUND / NEEDS CONFIRMATION
