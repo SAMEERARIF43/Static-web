@@ -294,6 +294,10 @@ app.use('/api/search', proxyLimiter);
 app.use('/api/anime/:id', proxyLimiter);
 app.use('/api/account', accountDeletionLimiter);
 
+app.get('/api/health', (req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  res.json({ status: 'ok' });
+});
 
 app.use(express.json({ limit: '16kb' }));
 

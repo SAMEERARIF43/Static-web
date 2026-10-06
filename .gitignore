@@ -3,5 +3,14 @@ node_modules/
 .env.*
 !.env.example
 *.log
+*.tmp
+*.temp
+*.swp
+/logs/
+/tmp/
+/temp/
+/dist/
+/build/
+/.cache/
 opencode.json
 .freebuff/

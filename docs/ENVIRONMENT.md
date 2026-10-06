@@ -29,6 +29,8 @@
 | `ANILIST_GRAPHQL_URL` | optional | server | AniList GraphQL endpoint override for tests or controlled environments; production public endpoints must use HTTPS |
 | `JUSTWATCH_REGION` | optional | server → browser via `/api/site-config` | Availability-link region slug; defaults to `us` |
 
+`GET /api/health` is an unauthenticated, no-store liveness endpoint; it returns a small status response and performs no external service checks.
+
 ## 3. Production startup guards (CURRENT)
 
 With `NODE_ENV=production` the server **refuses to start** unless:
@@ -70,11 +72,11 @@ The server also rejects a configured `TRUST_PROXY` that is not a positive intege
 - Auth-related settings (email confirmations, redirect URLs, rate limits, templates) live in the Supabase dashboard — **NOT FOUND / NEEDS CONFIRMATION** in this repository.
 - **Decision (2026-10-05):** development and production will use **separate Supabase projects**. The currently configured project must be verified in the dashboard before any schema work; which one it is remains **NEEDS CONFIRMATION**.
 
-## 7. Deployment configuration — NOT FOUND
+## 7. Deployment configuration — RENDER PREPARATION
 
-No Dockerfile, Procfile, `vercel.json`, `netlify.toml`, IIS config, systemd unit, or reverse-proxy config exists. Hosting platform, TLS termination, process manager, and any CDN are all **NOT FOUND / NEEDS CONFIRMATION**.
+No Dockerfile, Procfile, `vercel.json`, `netlify.toml`, IIS config, systemd unit, or reverse-proxy config exists; the prepared target is Render's managed Node.js Web Service.
 
-- **Decision (2026-10-05):** deploy to a **persistent Node process on a managed PaaS** (fits the in-memory catalog cache and the boot-time `index.html` read). Vendor selection and the concrete config are still open.
+- The service URL, production variables, proxy hop count, TLS configuration, and Supabase production Auth settings must be configured after the Render service is created.
 
 ## 8. Operational guidance recorded from the audit (CURRENT)
 
@@ -82,4 +84,4 @@ No Dockerfile, Procfile, `vercel.json`, `netlify.toml`, IIS config, systemd unit
 - Set `NODE_ENV=production`, `SITE_URL` (HTTPS), working contact/DMCA addresses, explicit `CORS_ORIGINS`, and all three Supabase variables before launch.
 - Set `TRUST_PROXY` to the provider-documented hop count when the service is behind a reverse proxy; do not guess the count.
 - Restart the server after editing `public/index.html` — it is read once at boot.
-- See [`DEPLOYMENT.md`](../DEPLOYMENT.md) for the generic managed Node.js deployment procedure and provider-dependent decisions.
+- See [`DEPLOYMENT.md`](../DEPLOYMENT.md) for the Render deployment procedure and provider-dependent decisions.

@@ -171,12 +171,23 @@ async function run() {
     assert(!homePage.body.includes('data-nav="account"'), 'Catalog should not include account navigation');
     assert(!homePage.body.includes('page-account'), 'Catalog should not include account or signup forms');
 
+    const health = await request('/api/health');
+    assert.strictEqual(health.statusCode, 200, 'Health check should return HTTP 200');
+    assert.deepStrictEqual(health.body, { status: 'ok' }, 'Health check should expose only its status');
+    assert.strictEqual(health.headers['cache-control'], 'no-store', 'Health check responses should not be cached');
+
+    for (const asset of ['/style.css', '/script.js', '/websites%20picture.webp']) {
+      const response = await request(asset);
+      assert.strictEqual(response.statusCode, 200, `${asset} should be served`);
+    }
+
     const protectedPath = await request('/server.js');
     assert.strictEqual(protectedPath.statusCode, 404, 'Project source must not be served as a static asset');
 
     const securityHeaders = await request('/');
     assert.strictEqual(securityHeaders.statusCode, 200, 'Catalog home page should load');
     assert.strictEqual(securityHeaders.headers['x-content-type-options'], 'nosniff');
+    assert(securityHeaders.headers['content-security-policy'], 'Content Security Policy should remain enabled');
 
     const siteConfig = await request('/api/site-config');
     assert.strictEqual(siteConfig.statusCode, 200, 'Public site configuration should load');
