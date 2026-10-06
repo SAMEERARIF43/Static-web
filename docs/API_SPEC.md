@@ -1,6 +1,6 @@
 # API_SPEC — HTTP API reference (current implementation)
 
-> Snapshot: 2026-10-05. Documents `server.js` exactly as it behaves today.
+> Snapshot: 2026-10-06 — **Phase 1 landed** (single canonical AniList ID; the catalog endpoints are live-backed). Documents `server.js` exactly as it behaves today.
 > Legend: **CURRENT** — implemented and reachable in `server.js` today · **NOT IMPLEMENTED** — absent (§3) ·
 > **PLANNED** — recorded in `docs/ROADMAP.md`, not built · **NOT FOUND / NEEDS CONFIRMATION** — cannot be determined from the repository.
 > Endpoints are **not** fixed, renamed, or removed by this document.
@@ -17,12 +17,14 @@
 | GET | `/api/site-config` | Public site settings | env | none | `no-store` | ⚪ |
 | GET | `/api/config` | Public Supabase client config | env | none | `no-store` | ⚪ |
 | DELETE | `/api/account` | Self-service account deletion | Supabase Auth + Admin API | Bearer token (Supabase) | n/a | ⚪ |
-| GET | `/api/trending` | "Trending" list — fixed local slice | local `ANIME_DB` | none | ⚫ | ⚪ |
-| GET | `/api/popular` | Merged popular catalog (≤51 items) | AniList + local | none | 10-min in-memory | — |
-| GET | `/api/search?q=` | Title search (10 results) | AniList → local fallback | none | ⚫ | ⚪ |
-| GET | `/api/genre/:genre` | Genre filter | local `ANIME_DB` only | none | ⚫ | 🔴 (see §2) ⚪ |
-| GET | `/api/detail/:id` | Detail by **local** id | local `ANIME_DB` only | none | ⚫ | 🔴 🟡 ⚪ |
-| GET | `/api/genres` | Genre list | local `ANIME_DB` only | none | ⚫ | 🔴 🟡 ⚪ |
+| GET | `/api/trending` | Trending list (live) | AniList `TRENDING_DESC` + curated | none | 10-min in-memory | ⚪ |
+| GET | `/api/popular` | Merged popular catalog | AniList `POPULARITY_DESC` + curated | none | 10-min in-memory | ⚪ |
+| GET | `/api/movies` | Anime films (live) | AniList `format_in: [MOVIE]` + curated | none | 10-min in-memory | ⚪ |
+| GET | `/api/series` | TV series (live) | AniList `format_in: [TV, TV_SHORT]` + curated | none | 10-min in-memory | ⚪ |
+| GET | `/api/search?q=` | Title search (10 results) | AniList → curated fallback | none | ⚫ | ⚪ |
+| GET | `/api/genre/:genre` | Genre filter (optional `?type=series\|movies`) | AniList genre query → curated fallback | none | 10-min in-memory (≤30 genres) | ⚪ |
+| GET | `/api/detail/:id` | **Retired** — permanent redirect to `/api/anime/:id` | — | none | n/a | 🟡 ⚪ |
+| GET | `/api/genres` | Genre list (adult genres excluded) | AniList `GenreCollection` + curated | none | 10-min in-memory | 🟡 ⚪ |
 | GET | `/api/anime/:id` | Detail by **AniList** id (staff, characters, relations, recommendations, trailer) | AniList | none | ⚫ | ⚪ |
 | POST | `/api/anime/search` | **Retired** — returns 404 | — | — | — | — |
 
@@ -65,15 +67,30 @@ Global middleware: CORS allowlist (`CORS_ORIGINS`; foreign origins → **403**; 
 - **Security:** the request body is ignored; the deleted user is always the token-verified user.
 - **Cascades:** `profiles` and `watchlist` rows are removed by `ON DELETE CASCADE`.
 
-### `GET /api/trending` 🔴 (semantics)
-- **Response:** `ANIME_DB.slice(0, 5)` — a **fixed five-item local list**, not computed from AniList popularity/trending.
-- **Verified example:** Jujutsu Kaisen, Solo Leveling, One Piece, Demon Slayer, Attack on Titan.
+### Catalog endpoints (shared behaviour)
+`/api/trending`, `/api/popular`, `/api/movies`, `/api/series` and `/api/genre/:genre` are all served from live AniList queries merged with the curated catalog, and share one caching/fallback scheme:
+
+- **Caching:** in-memory, 10-minute TTL, single-flight (concurrent requests share one upstream call). Genre results are cached per `genre|type` key, capped at 30 entries.
+- **Fallback:** on AniList failure the last good cached list is served; with no cache the curated catalog answers. Each fallback logs whether it used `cached` or `curated` data.
+- **Errors:** these endpoints never surface an error — they always return something.
+- **Canonical ID:** every item carries `id === anilistId`. **Verified 2026-10-06** across all five endpoints.
+
+### `GET /api/trending`
+- **Response:** array of catalog items; AniList `Page(perPage: 20, sort: TRENDING_DESC, isAdult: false)` merged with curated entries that the live page did not cover.
+- **Verified 2026-10-06:** 30 items (20 live + curated), 18 not in the curated catalog — i.e. genuinely computed from live AniList trending data (the old fixed local slice is gone).
 
 ### `GET /api/popular`
-- **Response:** array of catalog items; merged from AniList `Page(perPage: 50, sort: POPULARITY_DESC, isAdult: false)` plus local entries not present in that page. **Observed 51 items** at audit time.
+- **Response:** AniList `Page(perPage: 50, sort: POPULARITY_DESC, isAdult: false)` plus curated entries not present in that page. **Observed 51 items** (47 TV + 3 films + curated).
 - **Fields per item:** `id`, `anilistId`, `title`, `genre[]`, `year`, `rating` (10-point), `episodes`, `type`, `studio`, `language`, `status`, `image`, `poster`, `banner`, `description`.
-- **Caching:** in-memory, 10-minute TTL, single-flight; on AniList failure falls back to the stale cache, then the untouched local catalog.
-- **Errors:** never surfaces an error to the client — always returns something.
+- **Note:** live AniList metadata is authoritative, so a curated title's displayed name is AniList's — e.g. curated "Jujutsu Kaisen" is returned as **"JUJUTSU KAISEN"**.
+
+### `GET /api/movies`
+- **Response:** AniList `format_in: [MOVIE]`, popularity-sorted, merged with curated entries — then re-filtered so the list contains films only.
+- **Verified 2026-10-06:** 50 items, every one `format: MOVIE`. (The Movies page previously filtered the mixed `/api/popular` page and showed ~3 films.)
+
+### `GET /api/series`
+- **Response:** AniList `format_in: [TV, TV_SHORT]`, popularity-sorted, merged with curated entries, then re-filtered to television formats only.
+- **Verified 2026-10-06:** 51 items, all `TV`, zero film titles.
 
 ### `GET /api/search?q=`
 - **Parameters:** `q` — required, trimmed, 1–100 characters; otherwise **400** `{ message: 'Enter an anime name of 1 to 100 characters.' }`.
@@ -81,19 +98,22 @@ Global middleware: CORS allowlist (`CORS_ORIGINS`; foreign origins → **403**; 
 - **Timeouts:** 15 s.
 - **Caching:** ⚫ none server-side (the browser caches suggestions for 50 queries).
 
-### `GET /api/genre/:genre` 🔴
-- **Response:** local `ANIME_DB` entries whose genres include `:genre` (case-insensitive). Unknown genre → `[]` (no 404).
-- **Verified examples:** `Action` → many, `Sci-Fi` → 1, **`Comedy` → 0** — though the live catalog contains comedies.
-- **Conflict:** the Popular page filters genres client-side over live data; home/series/movie genre buttons hit this local-only endpoint. Same button, different data.
+### `GET /api/genre/:genre`
+- **Parameters:** `genre` — trimmed, 1–50 characters; otherwise **400**. Optional `?type=series|movies` restricts the result to that format group (any other value is ignored).
+- **Response:** AniList genre query (popularity-sorted, 30 items), merged with curated entries, then re-filtered so every item really carries the requested genre (and the requested format, when `type` is given).
+- **Curated-only genres:** a genre AniList does not define (e.g. `Shounen`, a demographic) is answered from the curated catalog instead of returning nothing.
+- **Adult genres:** `Hentai` returns `[]` — the catalog is non-adult throughout.
+- **Unknown genre:** `[]` with HTTP 200 (no 404).
+- **Verified 2026-10-06:** `Comedy` → 30 items, all tagged Comedy (was **0** before Phase 1) · `Comedy?type=series` → TV only · `Comedy?type=movies` → films only · `Shounen` → 4 curated titles · `DefinitelyNotAGenre` → `[]` · `Hentai` → `[]`.
 
-### `GET /api/detail/:id` 🔴 🟡
-- **Response:** the local catalog object for local `id` (1–12); otherwise **404** `{ message: 'Anime not found.' }`.
-- **Conflict:** `/api/anime/:id` uses AniList IDs. Verified: `/api/detail/1` → Jujutsu Kaisen (local id 1); `/api/anime/1` → Cowboy Bebop (AniList id 1).
-- **Unused:** the frontend never calls this.
+### `GET /api/detail/:id` 🟡 (retired)
+- **Response:** **308 permanent redirect** to `/api/anime/:id` for a positive integer id; otherwise **404** `{ message: 'Anime not found.' }`.
+- **Why:** the route used to serve the hand-assigned local id space, which collided with AniList IDs. **Verified 2026-10-06:** `/api/detail/1` → `308` `Location: /api/anime/1` → Cowboy Bebop, where it previously returned Jujutsu Kaisen.
+- **Unused:** the frontend calls `/api/anime/:id` directly.
 
-### `GET /api/genres` 🔴 🟡
-- **Response:** sorted-by-insertion array of genres found in the local catalog. Observed: Action, Supernatural, Shounen, Adventure, Fantasy, Drama, Mystery, Psychological, Sci-Fi, Thriller.
-- **Unused:** the frontend derives genres client-side from `/api/popular`.
+### `GET /api/genres` 🟡
+- **Response:** alphabetically sorted union of AniList's `GenreCollection` (with adult genres removed) and genres present only in the curated catalog. **Observed 19 items** including `Comedy` and `Shounen`, excluding `Hentai`.
+- **Unused:** the frontend derives the catalog page's genre options client-side from `/api/popular`.
 
 ### `GET /api/anime/:id`
 - **Parameters:** `id` — integer AniList id; non-numeric → **400** `{ message: 'Invalid Anime ID.' }`.
@@ -106,13 +126,13 @@ Returns JSON `{ message }`:
 - CORS rejection → **403** `This origin is not allowed.`
 - `413` → `Request body is too large.` · `400` → `Invalid request.` · otherwise **500** `An internal server error occurred.`
 
-## 2. Duplicate / conflicting endpoints
+## 2. Duplicate / conflicting endpoints — RESOLVED (Phase 1, 2026-10-06)
 
-| Conflict | Detail |
+| Conflict | Resolution |
 | --- | --- |
-| `/api/detail/:id` vs `/api/anime/:id` | Same-looking route, two different ID spaces. Any consumer must know which catalog it is addressing. |
-| `/api/genre/:genre` + `/api/genres` vs client-side filtering | Two implementations of genre filtering with different data sources and different results. |
-| `/api/trending` vs `/api/popular` | "Trending" implies computed popularity; it is a static local slice. |
+| `/api/detail/:id` vs `/api/anime/:id` (two ID spaces) | The local id space is gone: `ANIME_DB` entries carry `anilistId` only, every catalog item leaves with `id === anilistId`, and `/api/detail/:id` is a 308 redirect to `/api/anime/:id`. |
+| `/api/genre/:genre` + `/api/genres` vs client-side filtering | `/api/genre/:genre` and `/api/genres` are now live-backed from the same AniList source the client filters. Genre buttons on Home/Series use the endpoint; the Popular page still filters client-side over `/api/popular` (same live data). |
+| `/api/trending` vs `/api/popular` | `/api/trending` is now a real AniList `TRENDING_DESC` query, so the name matches the behaviour. |
 
 ## 3. Missing endpoints 🆕
 
@@ -129,6 +149,7 @@ Needed for features currently absent (see `docs/FEATURES.md`, `docs/WATCH_SYSTEM
 ## 4. Cross-cutting gaps
 
 - **No rate limiting** anywhere.
-- **No server-side caching** for `/api/search` and `/api/anime/:id` (only `/api/popular` is cached).
+- **No server-side caching** for `/api/search` and `/api/anime/:id` (the four catalog lists and genre queries are cached for 10 minutes).
+- **Every list endpoint is capped** at 20–50 items and there is no pagination or `offset` support.
 - **No API versioning** and no machine-readable schema (OpenAPI) — a candidate for a future `docs/` addition.
 - **No request logging**; only ad-hoc `console.log`/`console.error`/`console.warn`.

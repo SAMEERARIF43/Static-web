@@ -22,10 +22,10 @@
 │  ├─ config: /api/config,      │   │       profiles, watchlist        │
 │  │   /api/site-config         │   └──────────────────────────────────┘
 │  ├─ catalog proxy:            │                ▲
-│  │   /api/popular,search,     │                │ Admin API (service-role)
-│  │   anime/:id                │────────────────┘
-│  ├─ local-only: /api/trending,│
-│  │   genre, detail, genres    │
+│  │   popular, trending,       │                │ Admin API (service-role)
+│  │   movies, series, genre    │────────────────┘
+│  ├─ retired: /api/detail/:id  │
+│  │   → 308 /api/anime/:id     │
 │  ├─ account deletion:         │
 │  │   DELETE /api/account      │        ┌──────────────────────────┐
 │  └─ in-memory cache (10 min)  │───────►│ AniList GraphQL API      │
@@ -45,7 +45,9 @@
 | Flow | Path |
 | --- | --- |
 | Page load | Browser → `GET /` → templated `index.html` (every `__SITE_URL__` replaced with the configured origin at startup) → static assets from `public/` |
-| Trending | Browser → `GET /api/trending` → fixed slice of local `ANIME_DB` |
+| Trending | Browser → `GET /api/trending` → cache hit (≤10 min) or AniList `TRENDING_DESC` → `catalog-utils` merge with curated overlay → cached in memory → JSON |
+| Movies / TV Series | Browser → `GET /api/movies` or `GET /api/series` → AniList `format_in` query → merge → re-filter to the page's own format group → JSON |
+| Genre filter | Browser → `GET /api/genre/:genre` (Series adds `?type=series`) → AniList genre query (or curated matches for a genre AniList does not define) → merge → re-filter → JSON |
 | Popular | Browser → `GET /api/popular` → cache hit (≤10 min) or AniList top-50 → `catalog-utils` merge with local curation → cached in memory → JSON |
 | Search | Browser → `GET /api/search?q=` → AniList (10 results) → dedupe + description sanitisation → JSON; on failure → local `search-utils` fallback mapped to the AniList shape |
 | Detail | Browser → `GET /api/anime/:id` → AniList Media (staff, characters, relations, recommendations, trailer) → sanitised description → JSON |
@@ -96,8 +98,8 @@
 
 ## 9. Architectural problems (CURRENT — recorded, not fixed)
 
-1. **Split catalog sources.** Live AniList backs Popular/Search/Details; the 12-entry local `ANIME_DB` backs Trending/genre/detail-by-local-id/genres. The same user action can yield different or empty results depending on the page.
-2. **Duplicate ID spaces.** `/api/detail/:id` (local 1–12) and `/api/anime/:id` (AniList, large integers) look interchangeable but are not.
+1. ~~**Split catalog sources.**~~ **FIXED 2026-10-06 (Phase 1).** Every catalog list — trending, popular, movies, series, genre, genres — is now served from live AniList plus the curated overlay, and the endpoint used no longer changes the answer.
+2. ~~**Duplicate ID spaces.**~~ **FIXED 2026-10-06 (Phase 1).** `ANIME_DB` no longer holds a local id; every catalog item leaves with `id === anilistId`, and `/api/detail/:id` is a 308 redirect to `/api/anime/:id`.
 3. **Single-process server.** One Node process, in-memory cache only, no shared cache, no horizontal-scale story; restarting clears the catalog cache.
 4. **No rate limiting** on any endpoint, including the public AniList-backed proxy.
 5. **No API versioning** (`/api/*` unversioned) and no documented error schema beyond `{ message }`.

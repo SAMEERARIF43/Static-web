@@ -47,10 +47,12 @@ Every legal page and the site footer repeat this non-hosting statement. **AnimeH
 
 ## 5. Current limitations (CURRENT — verified in the audit)
 
-- **Split catalog sources:** Trending, genre filtering, `/api/detail`, and `/api/genres` use only the 12-entry local catalog while Popular/Search/Details use live AniList. Example: the home "Comedy" genre button returns **0** results although the live catalog contains comedies.
-- **Two incompatible anime ID spaces:** local catalog `id` (1–12) vs AniList `id`. `/api/detail/1` → Jujutsu Kaisen; `/api/anime/1` → Cowboy Bebop.
-- **TV Series page is unfiltered** — it renders the whole catalog, including movies.
-- **Trending is static** — a fixed slice of the local array, not computed from AniList popular/trending data.
+**Resolved 2026-10-06 (Phase 1, owner-approved) — all four of the following are fixed and verified:**
+
+- ~~**Split catalog sources:** Trending, genre filtering, `/api/detail`, and `/api/genres` use only the 12-entry local catalog while Popular/Search/Details use live AniList. Example: the home "Comedy" genre button returns **0** results although the live catalog contains comedies.~~ → Every catalog list is now live-backed through one shared cached query path; `Comedy` returns 30 titles.
+- ~~**Two incompatible anime ID spaces:** local catalog `id` (1–12) vs AniList `id`. `/api/detail/1` → Jujutsu Kaisen; `/api/anime/1` → Cowboy Bebop.~~ → One canonical AniList ID (`id === anilistId` everywhere); `/api/detail/:id` now 308-redirects to `/api/anime/:id`.
+- ~~**TV Series page is unfiltered** — it renders the whole catalog, including movies.~~ → `/api/series` is `format_in: [TV, TV_SHORT]`; verified 0 films.
+- ~~**Trending is static** — a fixed slice of the local array, not computed from AniList popular/trending data.~~ → Real AniList `TRENDING_DESC`.
 - **Episodes are only a count.** No episode list, numbering, air dates, or per-episode data of any kind.
 - **No Favorites, Watch History, Continue Watching, or Admin** (see `docs/FEATURES.md`).
 - **No user-visible failure states** for the Popular, Movies, Series, and genre paths (failures only reach the console).
@@ -63,16 +65,32 @@ Every legal page and the site footer repeat this non-hosting statement. **AnimeH
 - Legal pages are self-described drafts and require review before launch; a DMCA page alone does not register a designated agent or establish safe-harbor eligibility (README statement).
 - Contact/DMCA addresses are configuration-driven (`CONTACT_EMAIL`, `DMCA_EMAIL`); when unset, the pages say the operator has not configured an address.
 
-## 7. PLANNED capabilities (not built)
+## 7. Approved scope and recorded decisions (2026-10-05) — PLANNED, not built
 
-- Decide product scope for Favorites, Watch History, Continue Watching (see `docs/ROADMAP.md` Phase 3).
-- A unified catalog/ID model and consistent endpoints (see `docs/TASKS.md` Phase 1).
-- Episode-level data and a watch system (see `docs/WATCH_SYSTEM.md`).
-- Admin tooling — **NOT IMPLEMENTED**, decision pending (see `docs/ADMIN_SPEC.md`).
+These decisions were recorded with the product owner on 2026-10-05. **Approved is not implemented**: nothing in this section exists in the codebase yet, and no section of this PRD should be read as claiming otherwise.
+
+| Decision | Outcome |
+| --- | --- |
+| Canonical anime ID | **AniList ID everywhere** — local 1–12 IDs stop being exposed in APIs, URLs, and stored rows. **IMPLEMENTED 2026-10-06 (Phase 1):** the local id field is deleted, `catalog-utils.withCanonicalId` enforces `id === anilistId`, and `/api/detail/:id` now redirects to `/api/anime/:id` |
+| Favorites | **YES** — approved to build |
+| Watch History | **YES** — approved to build |
+| Continue Watching | **YES** — approved to build |
+| Episode-level progress | **YES** — approved to build (requires an episode identity that does not exist yet) |
+| Admin | **LATER** — deferred; curation stays in code for now |
+| Anime data source | **Hybrid** — AniList is the primary catalog; the local layer is curation + offline fallback only |
+| Node.js version | **24.x LTS** — to be pinned (`engines` + `.nvmrc`) and reflected in CI |
+| Hosting | **Persistent Node host (managed PaaS)** — vendor not yet chosen |
+| Supabase environment | **Verify first** — the currently configured project is undetermined (dashboard check required) |
+| Separate environments | **YES** — development and production will be separate |
+| Restoring deletion tests | **YES — before Phase 1** (completed 2026-10-05; see `docs/TESTING.md` §3) |
+
+Ordering implied by these decisions: Phase 1 (canonical ID + hybrid catalog) → episode identity → progress/history schema → Continue Watching UI, with Favorites as the early independent piece. Admin remains deferred.
+
+Open sub-decisions (Phase 4; not blocking Phase 1): favourites storage shape, episode identity source, and whether history is derived from progress or stored append-only.
 
 ## 8. NOT FOUND / NEEDS CONFIRMATION
 
 - Formal product owner, success metrics, KPIs, analytics — none exist in the codebase (no analytics is loaded, by design).
 - Target regions/markets (legal availability links are US-only today).
-- Whether Favorites/History/Continue Watching and Admin are actually in scope.
 - Monetisation intent — none present (no ads, no payments).
+- Which Supabase project the local `.env` points at (development/test vs production) — to be verified before schema work.

@@ -8,7 +8,7 @@ const fs = require('fs');
 const path = require('path');
 const axios = require('axios');
 const { mapLocalAnimeToAniList, searchAnimeLocal, deduplicateMediaList } = require('./search-utils');
-const { mergeAniListCatalog } = require('./catalog-utils');
+const { mergeAniListCatalog, withCanonicalId } = require('./catalog-utils');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -250,7 +250,6 @@ function safe(obj, path, fallback = null) {
 
 const ANIME_DB = [
   {
-    id: 1,
     anilistId: 113415,
     title: "Jujutsu Kaisen",
     genre: ["Action", "Supernatural", "Shounen"],
@@ -269,7 +268,6 @@ const ANIME_DB = [
   },
 
   {
-    id: 2,
     anilistId: 151807,
     title: "Solo Leveling",
     genre: ["Action", "Adventure", "Fantasy"],
@@ -288,7 +286,6 @@ const ANIME_DB = [
   },
 
   {
-    id: 3,
     anilistId: 21,
     title: "One Piece",
     genre: ["Action", "Adventure", "Fantasy", "Shounen"],
@@ -307,7 +304,6 @@ const ANIME_DB = [
   },
 
   {
-    id: 4,
     anilistId: 101922,
     title: "Demon Slayer",
     genre: ["Action", "Supernatural", "Shounen"],
@@ -326,7 +322,6 @@ const ANIME_DB = [
   },
 
   {
-    id: 5,
     anilistId: 16498,
     title: "Attack on Titan",
     genre: ["Action", "Drama", "Fantasy"],
@@ -345,7 +340,6 @@ const ANIME_DB = [
   },
 
   {
-    id: 6,
     anilistId: 20,
     title: "Naruto",
     genre: ["Action", "Adventure", "Shounen"],
@@ -364,7 +358,6 @@ const ANIME_DB = [
   },
 
   {
-    id: 7,
     anilistId: 1535,
     title: "Death Note",
     genre: ["Mystery", "Psychological", "Supernatural"],
@@ -383,7 +376,6 @@ const ANIME_DB = [
   },
 
   {
-    id: 8,
     anilistId: 5114,
     title: "Fullmetal Alchemist: Brotherhood",
     genre: ["Action", "Adventure", "Fantasy"],
@@ -402,7 +394,6 @@ const ANIME_DB = [
   },
 
   {
-    id: 9,
     anilistId: 269,
     title: "Bleach",
     genre: ["Action", "Adventure", "Supernatural"],
@@ -421,7 +412,6 @@ const ANIME_DB = [
   },
 
   {
-    id: 10,
     anilistId: 101348,
     title: "Vinland Saga",
     genre: ["Action", "Adventure", "Drama"],
@@ -440,7 +430,6 @@ const ANIME_DB = [
   },
 
   {
-    id: 11,
     anilistId: 9253,
     title: "Steins;Gate",
     genre: ["Sci-Fi", "Thriller", "Psychological"],
@@ -459,7 +448,6 @@ const ANIME_DB = [
   },
 
   {
-    id: 12,
     anilistId: 11061,
     title: "Hunter x Hunter",
     genre: ["Action", "Adventure", "Fantasy"],
@@ -484,98 +472,298 @@ const ANIME_DB = [
 // ============================================================
 
 
-function getAnimeById(id) {
+// ============================================================
+// CANONICAL CATALOG & FORMAT FILTERS
+// ============================================================
+//
+// The AniList ID is the only anime identity this server exposes: every catalog
+// entry leaves with `id === anilistId`. Curated entries in ANIME_DB therefore
+// carry `anilistId` alone, and no hand-assigned local key can collide with a
+// real AniList ID.
 
-  return ANIME_DB.find(anime =>
-    anime.id === Number(id)
+const CURATED_CATALOG = ANIME_DB.map(withCanonicalId);
+
+// Format groups shared by the catalog endpoints and by genre filtering, so the
+// TV Series page can never be served films (and Movies can never be series).
+const TYPE_FILTERS = {
+  series: { formats: ['TV', 'TV_SHORT'] },
+  movies: { formats: ['MOVIE'] }
+};
+
+// Every AniList query filters `isAdult: false`, so adult-only genres are never
+// offered or served either.
+const ADULT_GENRES = new Set(['hentai']);
+const MAX_GENRE_LENGTH = 50;
+
+function typeValueOf(anime) {
+  return String(anime?.type || anime?.format || '').toUpperCase();
+}
+
+function matchesTypeFilter(anime, typeKey) {
+  const filter = TYPE_FILTERS[typeKey];
+  if (!filter) return true;
+  return filter.formats.includes(typeValueOf(anime));
+}
+
+function animeMatchesGenre(anime, genre) {
+  const wanted = String(genre || '').toLowerCase();
+  return (anime?.genre || anime?.genres || []).some(
+    value => String(value).toLowerCase() === wanted
   );
 }
 
-const popularCatalogCache = {
+function curatedCatalogWhere(predicate) {
+  return CURATED_CATALOG.filter(predicate);
+}
+
+function curatedGenres() {
+  const genres = new Set();
+  ANIME_DB.forEach(anime => {
+    (anime.genre || []).forEach(genre => genres.add(genre));
+  });
+  return [...genres];
+}
+
+// ============================================================
+// LIVE CATALOG CACHING
+// ============================================================
+//
+// AniList is the source of truth for every catalog list. Each list is cached in
+// memory for ten minutes; a failed refresh serves the last good list, and when
+// there has never been one the curated catalog answers instead, so the site
+// keeps working with AniList unavailable. Every fallback logs which source
+// answered, so a cached or curated list is never mistaken for a live one.
+
+const CATALOG_CACHE_TTL_MS = 10 * 60 * 1000;
+const CATALOG_TIMEOUT_MS = 10000;
+const GENRE_CACHE_LIMIT = 30;
+const genreCatalogCache = new Map();
+const genreListCache = {
   data: null,
   expiresAt: 0,
   pending: null
 };
-const POPULAR_CATALOG_CACHE_TTL_MS = 10 * 60 * 1000;
 
-async function getPopularCatalog() {
-  if (popularCatalogCache.data && Date.now() < popularCatalogCache.expiresAt) {
-    return popularCatalogCache.data;
+const CATALOG_MEDIA_FIELDS = `
+  id
+  title {
+    romaji
+    english
+    native
   }
-  if (popularCatalogCache.pending) return popularCatalogCache.pending;
+  coverImage {
+    large
+    extraLarge
+  }
+  bannerImage
+  description
+  episodes
+  status
+  averageScore
+  genres
+  seasonYear
+  startDate {
+    year
+  }
+  format
+  countryOfOrigin
+  studios(isMain: true) {
+    nodes {
+      name
+    }
+  }
+`;
 
-  const staleCatalog = popularCatalogCache.data;
-  popularCatalogCache.pending = (async () => {
+/**
+ * Build a catalog query. Sort, per-page and format are server-defined
+ * constants; the genre is the only user-supplied value and is always passed as
+ * a GraphQL variable rather than interpolated into the document.
+ */
+function buildCatalogQuery({ perPage, sort, formatIn, genre = false }) {
+  const args = ['type: ANIME', `sort: ${sort}`, 'isAdult: false'];
+  if (formatIn?.length) args.push(`format_in: [${formatIn.join(', ')}]`);
+  if (genre) args.push('genre: $genre');
+  const variables = genre ? '($genre: String)' : '';
+  return `query${variables} {
+  Page(page: 1, perPage: ${perPage}) {
+    media(${args.join(', ')}) {
+      ${CATALOG_MEDIA_FIELDS}
+    }
+  }
+}`;
+}
+
+/** Fetch one live AniList catalog page, sanitized and merged with curation. */
+async function fetchLiveCatalog(query, variables = {}) {
+  const response = await axios.post(
+    'https://graphql.anilist.co',
+    { query, variables },
+    {
+      headers: { 'Content-Type': 'application/json' },
+      timeout: CATALOG_TIMEOUT_MS
+    }
+  );
+  if (response.data.errors) {
+    throw new Error(response.data.errors.map(error => error.message).join('; '));
+  }
+
+  const media = safe(response, 'data.data.Page.media', null);
+  if (!Array.isArray(media) || media.length === 0) {
+    throw new Error('AniList returned no catalog entries.');
+  }
+
+  const sanitizedMedia = media.map(anime => ({
+    ...anime,
+    description: sanitizeDescription(anime.description)
+  }));
+  return mergeAniListCatalog(ANIME_DB, sanitizedMedia);
+}
+
+/** Wrap one live catalog source in the shared cache/fallback behaviour. */
+function createCatalogLoader({ label, query, filter, fallback }) {
+  const cache = {
+    data: null,
+    expiresAt: 0,
+    pending: null
+  };
+
+  return async function loadCatalog() {
+    if (cache.data && Date.now() < cache.expiresAt) return cache.data;
+    if (cache.pending) return cache.pending;
+
+    const staleCatalog = cache.data;
+    cache.pending = (async () => {
+      try {
+        const liveCatalog = await fetchLiveCatalog(query());
+        // The merge appends curated entries that the live list did not cover,
+        // so a filtered list re-checks the filter: a films list can neither
+        // carry a curated series nor a series list a curated film.
+        const catalog = filter ? liveCatalog.filter(filter) : liveCatalog;
+        cache.data = catalog;
+        cache.expiresAt = Date.now() + CATALOG_CACHE_TTL_MS;
+        return catalog;
+      } catch (error) {
+        console.warn(`AniList ${label} catalog unavailable; using ${staleCatalog ? 'cached' : 'curated'} catalog: ${error.message}`);
+        return staleCatalog || fallback();
+      } finally {
+        cache.pending = null;
+      }
+    })();
+
+    return cache.pending;
+  };
+}
+
+const getPopularCatalog = createCatalogLoader({
+  label: 'popular',
+  query: () => buildCatalogQuery({ perPage: 50, sort: 'POPULARITY_DESC' }),
+  fallback: () => CURATED_CATALOG
+});
+
+const getTrendingCatalog = createCatalogLoader({
+  label: 'trending',
+  query: () => buildCatalogQuery({ perPage: 20, sort: 'TRENDING_DESC' }),
+  fallback: () => CURATED_CATALOG
+});
+
+const getMoviesCatalog = createCatalogLoader({
+  label: 'movie',
+  query: () => buildCatalogQuery({ perPage: 50, sort: 'POPULARITY_DESC', formatIn: TYPE_FILTERS.movies.formats }),
+  filter: anime => matchesTypeFilter(anime, 'movies'),
+  fallback: () => curatedCatalogWhere(anime => matchesTypeFilter(anime, 'movies'))
+});
+
+const getSeriesCatalog = createCatalogLoader({
+  label: 'TV series',
+  query: () => buildCatalogQuery({ perPage: 50, sort: 'POPULARITY_DESC', formatIn: TYPE_FILTERS.series.formats }),
+  filter: anime => matchesTypeFilter(anime, 'series'),
+  fallback: () => curatedCatalogWhere(anime => matchesTypeFilter(anime, 'series'))
+});
+
+/**
+ * Genre filtering, live first. AniList defines no "Shounen" genre, for example,
+ * while the curated catalog still labels those titles — so a genre AniList
+ * cannot serve at all is answered from curation instead of returning nothing.
+ */
+async function getGenreCatalog(genre, typeKey) {
+  const cacheKey = `${genre.toLowerCase()}|${typeKey || 'all'}`;
+  const cached = genreCatalogCache.get(cacheKey);
+  if (cached && Date.now() < cached.expiresAt) return cached.data;
+
+  const curatedMatches = () => curatedCatalogWhere(anime =>
+    animeMatchesGenre(anime, genre) && (!typeKey || matchesTypeFilter(anime, typeKey))
+  );
+
+  const knownGenres = await getGenreList();
+  if (!knownGenres.some(name => String(name).toLowerCase() === genre.toLowerCase())) {
+    return curatedMatches();
+  }
+
+  let liveCatalog;
+  try {
+    liveCatalog = await fetchLiveCatalog(
+      buildCatalogQuery({
+        perPage: 30,
+        sort: 'POPULARITY_DESC',
+        formatIn: typeKey ? TYPE_FILTERS[typeKey].formats : undefined,
+        genre: true
+      }),
+      { genre }
+    );
+  } catch (error) {
+    console.warn(`AniList "${genre}" catalog unavailable; using ${cached ? 'cached' : 'curated'} catalog: ${error.message}`);
+    return cached ? cached.data : curatedMatches();
+  }
+
+  // Curated entries the merge appends only belong in this result when they
+  // carry the requested genre — and the requested format, on a typed page.
+  const catalog = liveCatalog.filter(anime =>
+    animeMatchesGenre(anime, genre) && (!typeKey || matchesTypeFilter(anime, typeKey))
+  );
+
+  genreCatalogCache.set(cacheKey, {
+    data: catalog,
+    expiresAt: Date.now() + CATALOG_CACHE_TTL_MS
+  });
+  if (genreCatalogCache.size > GENRE_CACHE_LIMIT) {
+    genreCatalogCache.delete(genreCatalogCache.keys().next().value);
+  }
+  return catalog;
+}
+
+/** The genres this catalog can filter by: live AniList genres plus curation. */
+async function getGenreList() {
+  if (genreListCache.data && Date.now() < genreListCache.expiresAt) return genreListCache.data;
+  if (genreListCache.pending) return genreListCache.pending;
+
+  const staleGenres = genreListCache.data;
+  genreListCache.pending = (async () => {
     try {
-      const graphqlQuery = `
-        query {
-          Page(page: 1, perPage: 50) {
-            media(type: ANIME, sort: POPULARITY_DESC, isAdult: false) {
-              id
-              title {
-                romaji
-                english
-                native
-              }
-              coverImage {
-                large
-                extraLarge
-              }
-              bannerImage
-              description
-              episodes
-              status
-              averageScore
-              genres
-              seasonYear
-              startDate {
-                year
-              }
-              format
-              countryOfOrigin
-              studios(isMain: true) {
-                nodes {
-                  name
-                }
-              }
-            }
-          }
-        }
-      `;
       const response = await axios.post(
         'https://graphql.anilist.co',
-        { query: graphqlQuery },
+        { query: 'query { GenreCollection }' },
         {
           headers: { 'Content-Type': 'application/json' },
-          timeout: 10000
+          timeout: CATALOG_TIMEOUT_MS
         }
       );
-      if (response.data.errors) {
-        throw new Error(response.data.errors.map(error => error.message).join('; '));
+      const genres = safe(response, 'data.data.GenreCollection', null);
+      if (!Array.isArray(genres) || genres.length === 0) {
+        throw new Error('AniList returned no genres.');
       }
-
-      const media = safe(response, 'data.data.Page.media', null);
-      if (!Array.isArray(media) || media.length === 0) {
-        throw new Error('AniList returned no popular catalog entries.');
-      }
-
-      const sanitizedMedia = media.map(anime => ({
-        ...anime,
-        description: sanitizeDescription(anime.description)
-      }));
-      const catalog = mergeAniListCatalog(ANIME_DB, sanitizedMedia);
-      popularCatalogCache.data = catalog;
-      popularCatalogCache.expiresAt = Date.now() + POPULAR_CATALOG_CACHE_TTL_MS;
-      return catalog;
+      const usableGenres = genres.filter(genre => !ADULT_GENRES.has(String(genre).toLowerCase()));
+      genreListCache.data = usableGenres;
+      genreListCache.expiresAt = Date.now() + CATALOG_CACHE_TTL_MS;
+      return usableGenres;
     } catch (error) {
-      console.warn(`AniList popular catalog unavailable; using ${staleCatalog ? 'cached' : 'local'} catalog: ${error.message}`);
-      return staleCatalog || ANIME_DB;
+      console.warn(`AniList genre list unavailable; using ${staleGenres ? 'cached' : 'curated'} genres: ${error.message}`);
+      return staleGenres || curatedGenres();
     } finally {
-      popularCatalogCache.pending = null;
+      genreListCache.pending = null;
     }
   })();
 
-  return popularCatalogCache.pending;
+  return genreListCache.pending;
 }
 
 
@@ -583,11 +771,37 @@ async function getPopularCatalog() {
 // TRENDING
 // ============================================================
 
-app.get('/api/trending', (req, res) => {
+app.get('/api/trending', async (req, res) => {
 
-  const trending = ANIME_DB.slice(0, 5);
+  const trending = await getTrendingCatalog();
 
   res.json(trending);
+
+});
+
+
+// ============================================================
+// MOVIES
+// ============================================================
+
+app.get('/api/movies', async (req, res) => {
+
+  const movies = await getMoviesCatalog();
+
+  res.json(movies);
+
+});
+
+
+// ============================================================
+// TV SERIES
+// ============================================================
+
+app.get('/api/series', async (req, res) => {
+
+  const series = await getSeriesCatalog();
+
+  res.json(series);
 
 });
 
@@ -701,17 +915,31 @@ app.get('/api/search', async (req, res) => {
 // GENRE SEARCH
 // ============================================================
 
-app.get('/api/genre/:genre', (req, res) => {
+app.get('/api/genre/:genre', async (req, res) => {
 
-  const genre = req.params.genre.toLowerCase();
+  const genre = typeof req.params.genre === 'string' ? req.params.genre.trim() : '';
 
-  const results = ANIME_DB.filter(anime =>
-    anime.genre.some(g =>
-      g.toLowerCase() === genre
-    )
-  );
+  if (!genre || genre.length > MAX_GENRE_LENGTH) {
 
-  res.json(results);
+    return res.status(400).json({
+      message: `Enter a genre name of 1 to ${MAX_GENRE_LENGTH} characters.`
+    });
+
+  }
+
+  if (ADULT_GENRES.has(genre.toLowerCase())) {
+
+    return res.json([]);
+
+  }
+
+  // `?type=series|movies` keeps a page's genre filter inside its own format
+  // group, so filtering by genre can never reintroduce the wrong type.
+  const typeKey = typeof req.query.type === 'string' && Object.hasOwn(TYPE_FILTERS, req.query.type)
+    ? req.query.type
+    : null;
+
+  res.json(await getGenreCatalog(genre, typeKey));
 
 });
 
@@ -722,9 +950,13 @@ app.get('/api/genre/:genre', (req, res) => {
 
 app.get('/api/detail/:id', (req, res) => {
 
-  const anime = getAnimeById(req.params.id);
+  // Retired route. It used to answer from the hand-assigned local id space,
+  // which collided with AniList IDs: `/api/detail/1` returned Jujutsu Kaisen
+  // while `/api/anime/1` returned Cowboy Bebop. It now permanently redirects
+  // to the canonical AniList-id route, so old links resolve to the same anime.
+  const id = Number(req.params.id);
 
-  if (!anime) {
+  if (!Number.isInteger(id) || id < 1) {
 
     return res.status(404).json({
       message: "Anime not found."
@@ -732,7 +964,7 @@ app.get('/api/detail/:id', (req, res) => {
 
   }
 
-  res.json(anime);
+  res.redirect(308, `/api/anime/${id}`);
 
 });
 
@@ -741,19 +973,19 @@ app.get('/api/detail/:id', (req, res) => {
 // GENRES
 // ============================================================
 
-app.get('/api/genres', (req, res) => {
+app.get('/api/genres', async (req, res) => {
 
-  const genres = new Set();
+  const genres = new Set(await getGenreList());
 
-  ANIME_DB.forEach(anime => {
+  // Curated-only genres stay filterable, so they are listed too — AniList
+  // defines no "Shounen" genre, yet the curated catalog labels titles with it.
+  curatedGenres().forEach(genre => {
 
-    anime.genre.forEach(genre => {
-      genres.add(genre);
-    });
+    if (!ADULT_GENRES.has(String(genre).toLowerCase())) genres.add(genre);
 
   });
 
-  res.json([...genres]);
+  res.json([...genres].sort((a, b) => a.localeCompare(b)));
 
 });
 

@@ -86,6 +86,20 @@ document.addEventListener('DOMContentLoaded', () => {
       (typeof anime.title === 'string' ? anime.title : 'Unknown Anime');
   }
 
+  // AniList format values, normalized so a card can be classified even when a
+  // payload carries either the catalog `type` or the raw AniList `format`.
+  function animeTypeValue(anime) {
+    return String(anime?.type || anime?.format || '').toUpperCase();
+  }
+
+  function isMovieEntry(anime) {
+    return animeTypeValue(anime) === 'MOVIE';
+  }
+
+  function isSeriesEntry(anime) {
+    return ['TV', 'TV_SHORT'].includes(animeTypeValue(anime));
+  }
+
   function safeImageUrl(value) {
     if (typeof value !== 'string' || !value.trim()) {
       return 'https://placehold.co/300x450/0f172a/ff7200?text=No+Poster';
@@ -915,6 +929,7 @@ document.addEventListener('DOMContentLoaded', () => {
     try {
       const activePage = document.querySelector('.page.active');
       let targetGridId = 'trending-grid';
+      let typeKey = null;
 
       if (!activePage) return;
 
@@ -926,23 +941,37 @@ document.addEventListener('DOMContentLoaded', () => {
         applyCatalogFilters();
         return;
       }
-      else if (activePage.id === 'page-movies') targetGridId = 'movies-grid';
-      else if (activePage.id === 'page-series') targetGridId = 'series-grid';
+      else if (activePage.id === 'page-movies') {
+        targetGridId = 'movies-grid';
+        typeKey = 'movies';
+      } else if (activePage.id === 'page-series') {
+        targetGridId = 'series-grid';
+        typeKey = 'series';
+      }
 
       renderSkeletonGrid(targetGridId, 6);
 
+      // "All" restores the page's own catalog instead of a different one, so a
+      // genre click can never replace the TV Series page with films.
       if (genre === 'All') {
-        const res = await fetch(`${baseURL}/popular`);
-        const data = await res.json();
-        renderAnimeGrid(data, targetGridId);
-        return;
+        if (activePage.id === 'page-series') return loadSeries();
+        if (activePage.id === 'page-movies') return loadMovies();
+        return loadTrending();
       }
 
-      const res = await fetch(`${baseURL}/genre/${encodeURIComponent(genre)}`);
+      const genreUrl = `${baseURL}/genre/${encodeURIComponent(genre)}${typeKey ? `?type=${typeKey}` : ''}`;
+      const res = await fetch(genreUrl);
       if (!res.ok) throw new Error(`Genre request failed: ${res.status}`);
       const data = await res.json();
 
-      renderAnimeGrid(data, targetGridId);
+      // The genre endpoint honours `type`, but filtering again here means the
+      // wrong format can never reach the grid.
+      renderAnimeGrid(
+        typeKey === 'series'
+          ? (Array.isArray(data) ? data : []).filter(isSeriesEntry)
+          : (Array.isArray(data) ? data : []),
+        targetGridId
+      );
 
     } catch (err) {
       console.error('Error filtering by genre:', err);
@@ -1028,17 +1057,12 @@ document.addEventListener('DOMContentLoaded', () => {
   async function loadMovies() {
     renderSkeletonGrid('movies-grid', 6);
     try {
-      const res = await fetch(`${baseURL}/popular`);
+      const res = await fetch(`${baseURL}/movies`);
+      if (!res.ok) throw new Error(`Movies request failed: ${res.status}`);
       const data = await res.json();
-      const movies = data.filter(anime => {
-        const type = String(anime.type || anime.format || '').toUpperCase();
-        const genres = Array.isArray(anime.genre)
-          ? anime.genre
-          : Array.isArray(anime.genres)
-            ? anime.genres
-            : [];
-        return type === 'MOVIE' || genres.includes('Movie');
-      });
+      // `/api/movies` already filters to films; this keeps the page honest even
+      // if a cached or curated fallback payload ever carries another format.
+      const movies = (Array.isArray(data) ? data : []).filter(isMovieEntry);
       const emptyState = document.getElementById('movies-empty');
       const grid = document.getElementById('movies-grid');
       
@@ -1058,9 +1082,12 @@ document.addEventListener('DOMContentLoaded', () => {
   async function loadSeries() {
     renderSkeletonGrid('series-grid', 8);
     try {
-      const res = await fetch(`${baseURL}/popular`);
+      const res = await fetch(`${baseURL}/series`);
+      if (!res.ok) throw new Error(`Series request failed: ${res.status}`);
       const data = await res.json();
-      renderAnimeGrid(data, 'series-grid');
+      // `/api/series` already filters to television formats; without this the
+      // page used to render the whole catalog, films included.
+      renderAnimeGrid((Array.isArray(data) ? data : []).filter(isSeriesEntry), 'series-grid');
     } catch (err) {
       console.error('Error loading series:', err);
     }

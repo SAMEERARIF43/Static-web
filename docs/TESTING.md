@@ -7,7 +7,7 @@
 
 | Command | What it runs |
 | --- | --- |
-| `npm test` | `node test-search.js` (398 lines) — starts its own server, runs all assertions, exits non-zero on failure |
+| `npm test` | `node test-search.js` (563 lines) — starts its own server, runs all assertions, exits non-zero on failure |
 | `npm run lint` | `eslint .` with `.eslintrc.json` (`eslint:recommended`, `no-undef: error`, `no-unused-vars: warn`) |
 | `npm start` | `node server.js` (development/manual use) |
 
@@ -29,36 +29,42 @@
 | Security header | `X-Content-Type-Options: nosniff` on `/` |
 | `/api/site-config` | 200; `siteUrl` = configured origin; does **not** expose Supabase settings |
 | `/api/config` | 200; key set is exactly `['SUPABASE_ANON_KEY', 'SUPABASE_URL']`; `Cache-Control: no-store` |
-| Account deletion | **Only** the unauthenticated case: `DELETE /api/account` without a token → 401 |
+| Account deletion | Unauthenticated `DELETE /api/account` → 401 **and** (restored 2026-10-05) authenticated deletion → 200 with token verification at `/auth/v1/user`, the Admin API targeted at the verified user (not a body-supplied `user_id`), service-role header checks and a no-leak assertion |
 | Client source guards | `script.js` still reads `anime_hub_watchlist`; never removes `anime_hub_continue_watching`; search-filter `change`/`reset` listeners exist; search race guard present; canonical update present; quote escaping present |
 | CORS | Foreign origin → 403 (**live assertion**); configured origin → 200 with matching `access-control-allow-origin` |
-| `/api/trending` | 200; Jujutsu Kaisen carries `anilistId` 113415, studio `MAPPA`, language `Japanese` |
-| `/api/popular` | 200; array; ≥ 12 entries; every entry has an integer `anilistId > 0`; no duplicate IDs |
-| Merge/mapping unit tests | `mapAniListMediaToCatalogItem` (ID, year fallback, 10-point rating, status label, studio, language); `mergeAniListCatalog` dedupe/preserve; malformed entries skipped; live-AniList-wins for every authoritative field; local-only keys survive; local `id` stays stable; sparse-AniList fallback to local values; empty media list leaves the local catalog unchanged |
+| `/api/trending` | 200; ≥ 5 entries; every entry has `id === anilistId`; no duplicate IDs; **at least one entry outside the curated ID set** — proves the list is live rather than the old fixed local slice |
+| `/api/popular` | 200; array; ≥ 12 entries; every entry has an integer `anilistId > 0` **and** `id === anilistId`; no duplicate IDs; the curated Jujutsu Kaisen entry (113415) keeps studio `MAPPA` and language `Japanese` |
+| `/api/movies` | 200; > 0 entries; every entry is `MOVIE`; canonical IDs |
+| `/api/series` | 200; > 0 entries; every entry is `TV`/`TV_SHORT` (no films) |
+| `/api/genre/:genre` | 200; `Comedy` is non-empty and every result actually carries `Comedy`; canonical IDs; `?type=series` returns television only; curated-only `Shounen` still returns titles; unknown genre → `[]`; `Hentai` → `[]` |
+| `/api/genres` | 200; non-empty; includes live `Comedy`; excludes `Hentai` |
+| `/api/detail/:id` (retired) | `308` with `Location: /api/anime/1`; a malformed id still returns 404 |
+| `/api/anime/:id` | 200 for ID 1 with `id === 1` and title Cowboy Bebop — the direct regression test for the retired local id space |
+| Merge/mapping unit tests | `mapAniListMediaToCatalogItem` (ID, year fallback, 10-point rating, status label, studio, language); `mergeAniListCatalog` dedupe/preserve; malformed entries skipped; live-AniList-wins for every authoritative field; local-only keys survive; **the AniList ID replaces any local key** (`withCanonicalId`, matched and unmatched); sparse-AniList fallback to local values; empty media list leaves curated content intact, keyed by AniList ID |
 | Local search unit tests | `searchAnimeLocal` genre match; `mapLocalAnimeToAniList` shape (id, title, cover, genres, studio, country) |
 
-## 3. Removed coverage (accurate record — 2026-10-05)
+## 3. Account-deletion coverage — removed, then restored (2026-10-05)
 
-An edit on 2026-10-05 (file mtime 22:59) **removed the authenticated account-deletion assertions** from `test-search.js` (file went 446 → 398 lines). Removed:
+**Historical record.** An edit on 2026-10-05 (file mtime 22:59) removed the authenticated account-deletion assertions from `test-search.js` (446 → 398 lines): the in-process mock Supabase auth server, the positive authenticated deletion test, the "no Supabase request when unauthenticated" assertion, the token-verification assertions at `/auth/v1/user`, the assertions that the Admin API targets **the verified user's ID** (not a body-supplied `user_id`) with the service-role credentials, and the no-leak assertion. For a period `SUPABASE_URL` pointed at the dummy `https://example.invalid`.
 
-- the in-process **mock Supabase auth server** that recorded requests,
-- the positive authenticated deletion test (`DELETE /api/account` with `Bearer test-access-token` → 200),
-- the assertion that **no** Supabase request happens for unauthenticated deletion,
-- the assertions that the token is verified at `/auth/v1/user` with the anon key,
-- the assertions that the Admin API call targets **the verified user's ID** (not a body-supplied `user_id`) and uses the service-role credentials,
-- the assertion that the response does not leak the service-role marker.
+**Current state — restored 2026-10-05** (decision recorded in `docs/PRD.md` §7; task P6.1 marked done). All of the above are back:
 
-Also changed: `SUPABASE_URL` for the spawned server is now the dummy `https://example.invalid`.
+- the mock Supabase auth server is created in `run()` and closed in the `finally` block;
+- the spawned server's `SUPABASE_URL` points at that mock;
+- unauthenticated `DELETE /api/account` → **401** with `authRequests.length === 0` (no Supabase contact);
+- authenticated deletion (`Bearer test-access-token`, body carrying a *different* `user_id`) → **200** with exactly two upstream calls;
+- call 1 = `GET /auth/v1/user` with the anon key and the caller's token;
+- call 2 = `DELETE /auth/v1/admin/users/<verifiedUserId>` with the service-role credentials — the **IDOR guard**;
+- the response body does not leak the service-role marker.
 
-**Consequence (GAP):** the server's account-deletion verification path — its most sensitive server flow — is currently **untested**. `DELETE /api/account` behaviour is documented in `docs/API_SPEC.md`; restoring coverage is task P6 in `docs/TASKS.md`.
+**Verification of the restoration:** `npm test` passes (exit 0), and an instrumented run (assertion wrapper loaded with `--require`) recorded **8 account-deletion-related assertions executing**, including the Admin-API-target check; the success message showed `auth requests: 2`. At that point `test-search.js` was back to **446 lines** with CRLF endings preserved (it grew to **563 lines** when the Phase 1 catalog assertions were added on 2026-10-06, §2).
 
 ## 4. Untested endpoints and paths (GAP)
 
-- `GET /api/anime/:id` (success, 400, 404, 500, network failure).
-- `GET /api/detail/:id` (success and 404).
-- `GET /api/genre/:genre` (including the empty-result case).
-- `GET /api/genres`.
-- Authenticated `DELETE /api/account` (see §3) and its 503/502 paths.
+- `GET /api/anime/:id` — success for ID 1 is now covered; **400, 404, 500 and network failure are still untested**.
+- `GET /api/detail/:id` (redirect + malformed id), `GET /api/genre/:genre` (incl. `?type=`, curated-only, unknown and adult genres) and `GET /api/genres` were added in Phase 1 (2026-10-06).
+- The catalog fallback paths (AniList failure → stale cache → curated catalog) are **not** exercised: the assertions require a reachable AniList. Only the pure functions are unit-tested.
+- `DELETE /api/account` failure paths (503 when unconfigured, 502 when Supabase is unreachable) — the success and IDOR-guard paths are covered again (§3).
 - `/api/search` **offline fallback path** and `/api/popular` AniList-failure fallback (only their pure functions are unit-tested).
 - Global error middleware paths (400/413/500 payloads), unknown-route 404.
 - Frontend behaviour end-to-end (no browser tests exist; UI was verified manually during the audit).

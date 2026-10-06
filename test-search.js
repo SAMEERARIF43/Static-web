@@ -3,11 +3,14 @@ const assert = require('assert');
 const { spawn } = require('child_process');
 const path = require('path');
 const { mapLocalAnimeToAniList, searchAnimeLocal } = require('./search-utils');
-const { mapAniListMediaToCatalogItem, mergeAniListCatalog } = require('./catalog-utils');
+const { mapAniListMediaToCatalogItem, mergeAniListCatalog, withCanonicalId } = require('./catalog-utils');
 
 const TEST_PORT = process.env.TEST_PORT || 3001;
 const baseURL = `http://localhost:${TEST_PORT}`;
 const verifiedUserId = '01234567-89ab-cdef-0123-456789abcdef';
+// The AniList IDs of the curated catalog, used to prove the catalog endpoints
+// are served from live AniList data rather than from that curated list.
+const CURATED_ANILIST_IDS = new Set([113415, 151807, 21, 101922, 16498, 20, 1535, 5114, 269, 101348, 9253, 11061]);
 const authRequests = [];
 
 function request(pathname, headers = {}, method = 'GET', body = null) {
@@ -240,26 +243,128 @@ async function run() {
     );
     console.log('Allowed CORS origin: configured origin returned HTTP 200.');
 
+    // ---- Catalog identity: the AniList ID is the only anime ID exposed ----
     const trending = await request('/api/trending');
     assert.strictEqual(trending.statusCode, 200, 'Trending catalog should load');
-    const jujutsuKaisen = trending.body.find(anime => anime.title === 'Jujutsu Kaisen');
-    assert.strictEqual(jujutsuKaisen?.anilistId, 113415, 'Local catalog entries should carry their AniList detail ID');
-    assert.strictEqual(jujutsuKaisen?.studio, 'MAPPA', 'Catalog entries should include studio metadata');
-    assert.strictEqual(jujutsuKaisen?.language, 'Japanese', 'Catalog entries should include language metadata');
+    assert(Array.isArray(trending.body), 'Trending catalog should return an array');
+    assert(trending.body.length >= 5, 'Trending catalog should return several titles');
+    assert(
+      trending.body.every(anime => anime.id === anime.anilistId),
+      'Trending entries should expose the canonical AniList ID as their only ID'
+    );
+    assert.strictEqual(
+      new Set(trending.body.map(anime => anime.anilistId)).size,
+      trending.body.length,
+      'Trending catalog should not contain duplicate AniList IDs'
+    );
+    assert(
+      trending.body.some(anime => !CURATED_ANILIST_IDS.has(anime.anilistId)),
+      'Trending must be computed from live AniList data, not from the curated slice'
+    );
 
     const popular = await request('/api/popular');
     assert.strictEqual(popular.statusCode, 200, 'Expanded popular catalog should load');
     assert(Array.isArray(popular.body), 'Popular catalog should return an array');
-    assert(popular.body.length >= 12, 'Popular catalog should retain the local fallback titles');
+    assert(popular.body.length >= 12, 'Popular catalog should retain the curated titles');
     assert(
       popular.body.every(anime => Number.isInteger(anime.anilistId) && anime.anilistId > 0),
       'Every popular catalog entry should have an AniList detail ID'
+    );
+    assert(
+      popular.body.every(anime => anime.id === anime.anilistId),
+      'Popular entries should expose the canonical AniList ID as their only ID'
     );
     assert.strictEqual(
       new Set(popular.body.map(anime => anime.anilistId)).size,
       popular.body.length,
       'Popular catalog should not contain duplicate AniList IDs'
     );
+    const jujutsuKaisen = popular.body.find(anime => anime.anilistId === 113415);
+    assert(jujutsuKaisen, 'Popular catalog should include the curated Jujutsu Kaisen entry');
+    assert.strictEqual(jujutsuKaisen.studio, 'MAPPA', 'Catalog entries should include studio metadata');
+    assert.strictEqual(jujutsuKaisen.language, 'Japanese', 'Catalog entries should include language metadata');
+
+    // ---- Movies and TV series are separate live catalogs ----
+    const movies = await request('/api/movies');
+    assert.strictEqual(movies.statusCode, 200, 'Movies catalog should load');
+    assert(movies.body.length > 0, 'Movies catalog should return films');
+    assert(
+      movies.body.every(anime => String(anime.type || anime.format).toUpperCase() === 'MOVIE'),
+      'Movies catalog must contain only films'
+    );
+    assert(
+      movies.body.every(anime => anime.id === anime.anilistId),
+      'Movie entries should use the canonical AniList ID'
+    );
+
+    const series = await request('/api/series');
+    assert.strictEqual(series.statusCode, 200, 'TV series catalog should load');
+    assert(series.body.length > 0, 'TV series catalog should return titles');
+    assert(
+      series.body.every(anime => ['TV', 'TV_SHORT'].includes(String(anime.type || anime.format).toUpperCase())),
+      'TV series catalog must not contain films'
+    );
+
+    // ---- Genre filtering is served from the live catalog ----
+    const comedy = await request('/api/genre/Comedy');
+    assert.strictEqual(comedy.statusCode, 200, 'Genre filtering should load');
+    assert(comedy.body.length > 0, 'The Comedy genre must not be empty');
+    assert(
+      comedy.body.every(anime => (anime.genre || anime.genres || []).includes('Comedy')),
+      'Every genre result should actually carry the requested genre'
+    );
+    assert(
+      comedy.body.every(anime => anime.id === anime.anilistId),
+      'Genre results should use the canonical AniList ID'
+    );
+
+    const comedySeries = await request('/api/genre/Comedy?type=series');
+    assert.strictEqual(comedySeries.statusCode, 200, 'Genre filtering by format should load');
+    assert(comedySeries.body.length > 0, 'Comedy TV series should not be empty');
+    assert(
+      comedySeries.body.every(anime => ['TV', 'TV_SHORT'].includes(String(anime.type || anime.format).toUpperCase())),
+      'Genre filtering on the TV Series page must not return films'
+    );
+
+    const curatedGenre = await request('/api/genre/Shounen');
+    assert.strictEqual(curatedGenre.statusCode, 200, 'Curated-only genres should still load');
+    assert(curatedGenre.body.length > 0, 'The curated Shounen genre should still return titles');
+
+    const unknownGenre = await request('/api/genre/DefinitelyNotAGenre');
+    assert.strictEqual(unknownGenre.statusCode, 200, 'An unknown genre should not error');
+    assert.deepStrictEqual(unknownGenre.body, [], 'An unknown genre should return no titles');
+
+    const adultGenre = await request('/api/genre/Hentai');
+    assert.deepStrictEqual(adultGenre.body, [], 'A non-adult catalog must not serve adult genres');
+
+    const genres = await request('/api/genres');
+    assert.strictEqual(genres.statusCode, 200, 'Genre list should load');
+    assert(genres.body.length > 0, 'Genre list should return genres');
+    assert(genres.body.includes('Comedy'), 'Genre list should include live AniList genres');
+    assert(
+      !genres.body.some(genre => String(genre).toLowerCase() === 'hentai'),
+      'Genre list should not offer adult genres'
+    );
+
+    // ---- The retired local-id detail route redirects to AniList IDs ----
+    const retiredLocalDetail = await request('/api/detail/1');
+    assert.strictEqual(retiredLocalDetail.statusCode, 308, 'The retired local-id route should redirect permanently');
+    assert.strictEqual(
+      retiredLocalDetail.headers.location,
+      '/api/anime/1',
+      'The retired route should redirect to the canonical AniList route'
+    );
+
+    const canonicalDetail = await request('/api/anime/1');
+    assert.strictEqual(canonicalDetail.statusCode, 200, 'AniList detail should load for ID 1');
+    assert.strictEqual(canonicalDetail.body.id, 1, 'Detail responses should use the canonical AniList ID');
+    assert(
+      getTitle(canonicalDetail.body).toLowerCase().includes('cowboy bebop'),
+      'AniList ID 1 must resolve to Cowboy Bebop, not the retired local ID 1 entry'
+    );
+
+    const malformedDetail = await request('/api/detail/not-an-id');
+    assert.strictEqual(malformedDetail.statusCode, 404, 'A malformed detail id should still return 404');
 
     const localTitle = {
       id: 23,
@@ -358,7 +463,7 @@ async function run() {
     assert.strictEqual(liveEntry.poster, 'https://example.com/live.jpg', 'AniList artwork should replace local artwork');
     assert.strictEqual(liveEntry.description, 'Live description.', 'AniList description should replace the local copy');
     assert.strictEqual(liveEntry.anilistId, 4242, 'The AniList detail ID must come from AniList');
-    assert.strictEqual(liveEntry.id, 77, 'The local catalog key should stay stable for matched entries');
+    assert.strictEqual(liveEntry.id, 4242, 'The AniList ID must replace any local key on matched entries');
     assert.strictEqual(
       liveEntry.editorialBadge,
       'Staff pick',
@@ -416,8 +521,20 @@ async function run() {
     const offlineCatalog = mergeAniListCatalog([localFallbackTitle], []);
     assert.deepStrictEqual(
       offlineCatalog,
-      [{ ...localFallbackTitle, anilistId: 4243 }],
-      'An unavailable AniList must leave the local catalog untouched'
+      [{ ...localFallbackTitle, id: 4243, anilistId: 4243 }],
+      'An unavailable AniList must leave curated content intact, keyed by AniList ID'
+    );
+
+    // ---- Single canonical ID ----
+    assert.deepStrictEqual(
+      withCanonicalId({ id: 7, anilistId: 42, title: 'Canonical' }),
+      { id: 42, anilistId: 42, title: 'Canonical' },
+      'A curated entry must expose its AniList ID as its own id'
+    );
+    assert.strictEqual(
+      mergeAniListCatalog([staleLocalTitle], [])[0].id,
+      4242,
+      'An unmatched curated entry must still be keyed by its AniList ID'
     );
 
     assert.deepStrictEqual(
@@ -434,7 +551,7 @@ async function run() {
     assert.strictEqual(mappedTitle.studios.nodes[0].name, localTitle.studio, 'Fallback results should include the local studio');
     assert.strictEqual(mappedTitle.countryOfOrigin, 'JP', 'Fallback results should expose the AniList country code');
 
-    console.log('All search tests passed.');
+    console.log('All search and catalog tests passed.');
   } finally {
     server.kill();
     await new Promise(resolve => authServer.close(resolve));

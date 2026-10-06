@@ -7,7 +7,7 @@
 
 | Item | Value | Evidence |
 | --- | --- | --- |
-| Runtime | Node.js (version **NOT FOUND** — no `engines` field, no `.nvmrc`) | `package.json` |
+| Runtime | Node.js — **24.x LTS decided 2026-10-05**; not yet pinned (no `engines`/`.nvmrc`) and CI still tests 18.x/20.x | `package.json`, `.github/workflows/ci.yml` |
 | Language | JavaScript, CommonJS (`"type": "commonjs"`) | `package.json` |
 | Entry point | `server.js` (`"main": "server.js"`, `npm start`) | `package.json` |
 | Frontend language | Vanilla JavaScript (no framework, no bundler, no build step) | `public/script.js`, `public/auth-ui.js` |
@@ -57,13 +57,13 @@ Backend helper modules (no external dependencies): `catalog-utils.js` (AniList�
 ## Repository layout (current)
 
 ```
-server.js             Express API + static host + AniList proxy        (973 lines)
-catalog-utils.js      AniList→catalog mapping + merge policy           (148 lines)
+server.js             Express API + static host + AniList proxy        (1205 lines)
+catalog-utils.js      AniList→catalog mapping + merge + canonical ID    (163 lines)
 search-utils.js       local search, dedupe, local→AniList mapping      (103 lines)
-test-search.js        end-to-end API/SEO/unit test suite               (398 lines)
+test-search.js        end-to-end API/SEO/unit test suite               (563 lines)
 supabase-schema.sql   database schema, RLS, signup trigger             (149 lines)
 public/               entire frontend, served statically
-  index.html (475) · script.js (1537) · auth-ui.js (471) · style.css (1687)
+  index.html (475) · script.js (1564) · auth-ui.js (471) · style.css (1687)
   legal.css (88) · legal.js (23) · privacy/terms/contact/dmca.html
   favicon.svg · assets/favicon-64.png · social-preview.jpg · websites picture.png
 docs/                 this documentation set

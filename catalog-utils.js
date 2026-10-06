@@ -94,13 +94,28 @@ function mapAniListMediaToCatalogItem(media) {
  *  3. Local-only keys — custom tags, editorial badges, presentation or link
  *     metadata — are never present on the AniList item and therefore always
  *     survive untouched. That is where site-specific curation belongs.
- *  4. `anilistId` always comes from AniList so detail links stay correct.
- *     `id` keeps the local key when a curated entry matches, preserving the
- *     existing local identifiers.
- *  5. Local entries with no AniList match are appended unchanged, and when
- *     AniList is unreachable server.js falls back to the untouched local
- *     catalog, so no field ever depends on AniList being available.
+ *  4. The AniList ID is the single canonical anime identity. Every entry leaves
+ *     this module with `id === anilistId`, so no consumer can mistake a
+ *     hand-assigned local key for an AniList ID.
+ *  5. Curated content with no AniList match is appended with its curated
+ *     fields intact, and when AniList is unreachable server.js falls back to
+ *     the curated catalog, so no field ever depends on AniList being available.
  */
+
+/**
+ * Apply the single-canonical-ID rule to a catalog entry.
+ *
+ * The AniList ID is the only anime identity the site exposes. Curated entries
+ * carry it as `anilistId`, so `id` is set from it here rather than being kept
+ * as a separate hand-assigned local key that could collide with an AniList ID.
+ * Entries without a usable ID are returned untouched.
+ */
+function withCanonicalId(item) {
+  const anilistId = Number(item?.anilistId ?? item?.id);
+  if (!Number.isInteger(anilistId) || anilistId < 1) return { ...item };
+  return { ...item, id: anilistId, anilistId };
+}
+
 function mergeCuratedItem(anilistItem, localItem) {
   const merged = { ...localItem };
 
@@ -111,7 +126,7 @@ function mergeCuratedItem(anilistItem, localItem) {
   }
 
   merged.anilistId = anilistItem.anilistId;
-  if (!hasUsableValue(merged.id)) merged.id = anilistItem.id;
+  merged.id = anilistItem.id;
 
   return merged;
 }
@@ -138,11 +153,11 @@ function mergeAniListCatalog(localCatalog, mediaList) {
     const anilistId = Number(item.anilistId || item.id);
     if (!seen.has(anilistId)) {
       seen.add(anilistId);
-      merged.push({ ...item, anilistId });
+      merged.push(withCanonicalId(item));
     }
   }
 
   return merged;
 }
 
-module.exports = { mapAniListMediaToCatalogItem, mergeAniListCatalog };
+module.exports = { mapAniListMediaToCatalogItem, mergeAniListCatalog, withCanonicalId };

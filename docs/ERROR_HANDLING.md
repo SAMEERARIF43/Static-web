@@ -20,7 +20,8 @@ Errors are logged to the console with the status. There is **no** error-id, requ
 ### 1.2 Per-endpoint validation
 - `/api/search`: empty or >100-character `q` → **400** `Enter an anime name of 1 to 100 characters.`
 - `/api/anime/:id`: non-numeric id → **400** `Invalid Anime ID.`; not found on AniList → **404**; GraphQL error → **500** `AniList returned an error.`; network failure → **500** `Could not connect to AniList API.`
-- `/api/detail/:id`: unknown local id → **404** `Anime not found.`
+- `/api/detail/:id` (retired): positive integer id → **308** redirect to `/api/anime/:id`; malformed id → **404** `Anime not found.`
+- `/api/genre/:genre`: missing or over-50-character genre → **400** `Enter a genre name of 1 to 50 characters.`; unknown genre → `[]` with **200**; adult genre → `[]` with **200**.
 - `/api/account`: missing/malformed bearer → **401**; unconfigured server → **503**; invalid/expired session → **401**; Supabase unreachable → **502**; delete failure → **502**.
 - Unknown routes fall through to Express's default 404 (HTML, not JSON).
 
@@ -28,7 +29,8 @@ Errors are logged to the console with the status. There is **no** error-id, requ
 
 | Endpoint | AniList failure result |
 | --- | --- |
-| `/api/popular` | stale cache → untouched local catalog; warning logged; client always receives 200 with data |
+| `/api/trending`, `/api/popular`, `/api/movies`, `/api/series` | stale cache → curated catalog (or the curated format subset); warning logged; client always receives 200 with data |
+| `/api/genre/:genre`, `/api/genres` | stale cache → curated genre matches / curated genre names; warning logged; client always receives 200 with data |
 | `/api/search` | local-DB fallback mapped to the AniList shape; `console.log('❌ AniList failed, using local database fallback')` |
 | `/api/anime/:id` | **500** — no fallback; the detail page shows its error state |
 

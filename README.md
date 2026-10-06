@@ -34,7 +34,8 @@ Before public launch, set `NODE_ENV=production`, set `SITE_URL` to the real HTTP
 
 - Guest watchlists are stored in the visitor's browser; signed-in watchlists are stored in Supabase, with an optional verified migration from local storage.
 - Search terms are sent to this server and forwarded to AniList for catalog results.
-- The Popular page loads up to 50 non-adult anime entries from AniList, adds curated local titles outside that page, caches the merged catalog in memory for 10 minutes, and falls back to the local catalog if AniList is unavailable.
+- Catalog pages load live, non-adult AniList data and cache it in memory for 10 minutes: Trending (live trending), Popular (top 50 by popularity), Movies (films only) and TV Series (television formats only). Each list merges in curated titles, and falls back to the last cached list or the curated catalog when AniList is unavailable.
+- Every anime is identified by its AniList ID; the older `/api/detail/:id` route now redirects to `/api/anime/:id`.
 - The Popular page displays 24 titles per page; filters apply to the complete loaded catalog, and the selected page is shareable through the URL.
 - Title details include available AniList metadata, staff and Japanese voice-actor credits, related titles, recommendations, and official YouTube trailer links; Anime Hub does not host or stream video.
 - Fonts are loaded from Google Fonts.

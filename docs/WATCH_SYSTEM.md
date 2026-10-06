@@ -6,14 +6,14 @@
 ## 1. Current status at a glance
 
 ```text
-Watchlist            = IMPLEMENTED   (guest-local + signed-in cloud)
-Watch Progress       = NOT IMPLEMENTED
-Watch History        = NOT IMPLEMENTED
-Continue Watching    = NOT IMPLEMENTED
-Episode-level tracking = NOT IMPLEMENTED
+Watchlist              = IMPLEMENTED   (guest-local + signed-in cloud)
+Watch Progress         = NOT IMPLEMENTED   (approved to build — decision 2026-10-05)
+Watch History          = NOT IMPLEMENTED   (approved to build — decision 2026-10-05)
+Continue Watching      = NOT IMPLEMENTED   (approved to build — decision 2026-10-05)
+Episode-level tracking = NOT IMPLEMENTED   (approved to build — decision 2026-10-05)
 ```
 
-Nothing in the current UI promises progress, history, or continue watching.
+Nothing in the current UI promises progress, history, or continue watching. Approval (recorded in `docs/PRD.md` §7) is **not** implementation — no table, endpoint, storage key, or UI exists for any of the four, and `episodes` remains only a total count.
 
 ## 2. Watchlist (CURRENT) — implemented behaviour
 
@@ -51,25 +51,26 @@ Nothing in the current UI promises progress, history, or continue watching.
 - No notion of current episode, position, percentage, completion, or last-watched timestamp.
 - `episodes` on a title is only a total count; there is no episode identity to attach progress to (see `docs/ANIME_DATA.md` §6).
 
-## 5. PLANNED ARCHITECTURE (decisions required before any implementation)
+## 5. PLANNED ARCHITECTURE (scope approved 2026-10-05; design questions still open)
 
-This section records the open questions; **it authorises no work.**
+The four features above are **approved to build**. Three design questions were decided on **2026-10-06** (items 1, 2, 7 and 12 below); the rest remain open. **This section authorises no work.**
 
-1. **Canonical anime ID.** Choose the AniList ID as the single identifier for all watch data (recommended in the audit) or keep a mapping table. Today two ID spaces coexist (`docs/ANIME_DATA.md` §3); progress written under the wrong one becomes unresolvable.
-2. **Episode identity.** Decide whether to introduce an episodes table/materialised list (AniList `streamingEpisodes` or a numbered model `(anime_id, episode_number)`), or to track progress as a simple "episodes watched" counter. Without this, per-episode resume cannot exist.
+1. **Canonical anime ID — DECIDED (2026-10-05), IMPLEMENTED (2026-10-06).** All watch data is keyed on the AniList ID, and the local 1–12 id space no longer exists: `ANIME_DB` declares `anilistId` only and every catalog item leaves with `id === anilistId` (`docs/ANIME_DATA.md` §3). Watchlist rows were already AniList-keyed, so **no migration of existing rows is required**.
+2. **Episode identity — DECIDED (2026-10-06): numbered `(anime_id, episode_number)` records first.** AniList `streamingEpisodes` is treated as optional later enrichment, not as the identity. Without an episode identity, per-episode resume cannot exist.
 3. **Progress storage.** Decide table shape: e.g. `watch_progress(user_id, anime_id, episode_number, position_seconds, duration_seconds, updated_at)` with a uniqueness rule and RLS mirroring `watchlist` (own-rows only).
 4. **Completion state.** Decide how a title/episode is marked completed (explicit user action vs threshold, e.g. ≥90 %), and whether a completed item leaves Continue Watching.
 5. **Last-watched timestamp.** Every progress row needs `updated_at` to order Continue Watching.
 6. **Resume position.** Decide granularity (seconds) and behaviour for unknown durations.
-7. **History vs Progress.** Decide whether history is implicit (derived from progress rows) or a separate append-only table (what to keep when a user re-watches or clears history).
+7. **History vs Progress — DECIDED (2026-10-06): history is derived from the progress rows.** No separate append-only event log is introduced unless a concrete need appears (e.g. re-watch tracking or explicit "clear history" semantics).
 8. **RLS.** Every new table must follow the existing own-row policy pattern, including any future admin read access.
 9. **Guest behaviour.** Decide whether guests get local progress (like the local watchlist) and whether the same verified migration path applies.
 10. **Episode data source and caching.** If episodes come from AniList per title, decide server caching (none exists today for `/api/anime/:id`) and fallback behaviour when AniList is unavailable.
 11. **Write path.** Decide whether progress writes go browser → Supabase directly (consistent with watchlist) or through new server endpoints (needed if server-side validation or aggregation is required).
+12. **Favorites storage — DECIDED (2026-10-06): one `watchlist` table with a `kind` column**, not a separate favourites table. The uniqueness rule becomes `(user_id, anime_id, kind)` and the RLS policies keep the own-row pattern.
 
 ## 6. NOT FOUND / NEEDS CONFIRMATION
 
-- Whether Favorites is part of the product (there is no favourites model at all).
+- ~~Whether Favorites is part of the product~~ — **DECIDED 2026-10-05: YES**, approved to build (not built yet). Its storage model was decided on 2026-10-06 (§5.12: one `watchlist` table with a `kind` column).
 - Whether "continue watching" means resume playback links, a home shelf, or both.
 - Whether progress should sync across devices (implied by using Supabase, but not confirmed).
 - Any analytics on watch behaviour (none exist; analytics is deliberately absent).
