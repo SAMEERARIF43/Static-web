@@ -7,10 +7,24 @@ const cors = require('cors');
 const fs = require('fs');
 const path = require('path');
 const axios = require('axios');
+const rateLimit = require('express-rate-limit');
 const { mapLocalAnimeToAniList, searchAnimeLocal, deduplicateMediaList } = require('./search-utils');
 const { mergeAniListCatalog, withCanonicalId } = require('./catalog-utils');
 
 const app = express();
+
+// Behind a reverse proxy (production PaaS), client IPs arrive in
+// X-Forwarded-For; TRUST_PROXY (hop count) makes req.ip the real client so
+// rate limiting and logs attribute requests correctly. Disabled by default so
+// a direct deployment cannot have its client IP spoofed via headers.
+if (process.env.TRUST_PROXY) {
+  const proxyHops = process.env.TRUST_PROXY;
+  if (!/^[1-9]\d*$/.test(proxyHops) || !Number.isSafeInteger(Number(proxyHops))) {
+    throw new Error('TRUST_PROXY must be a positive integer hop count; leave it unset when no trusted proxy is present.');
+  }
+  app.set('trust proxy', Number(proxyHops));
+}
+
 const PORT = process.env.PORT || 3000;
 const configuredSiteUrl = new URL(process.env.SITE_URL || `http://localhost:${PORT}`);
 if (
@@ -22,6 +36,75 @@ if (
   throw new Error('SITE_URL must be an HTTP or HTTPS site origin.');
 }
 const SITE_URL = configuredSiteUrl.origin;
+
+/**
+ * AniList GraphQL endpoint. Production uses the public API; the override lets
+ * tests and outage drills point the live catalog at a local mock instead.
+ */
+function resolveAnilistGraphqlUrl(value) {
+  if (!value) return 'https://graphql.anilist.co';
+  let parsed;
+  try {
+    parsed = new URL(value);
+  } catch {
+    throw new Error('ANILIST_GRAPHQL_URL must be a valid http(s) URL.');
+  }
+  if (!['http:', 'https:'].includes(parsed.protocol) || parsed.username || parsed.password) {
+    throw new Error('ANILIST_GRAPHQL_URL must be an http(s) URL without credentials.');
+  }
+  if (process.env.NODE_ENV === 'production' && parsed.protocol === 'http:' && !['localhost', '127.0.0.1', '[::1]'].includes(parsed.hostname)) {
+    throw new Error('ANILIST_GRAPHQL_URL must use HTTPS in production.');
+  }
+  return `${parsed.origin}${parsed.pathname === '/' ? '' : parsed.pathname}`;
+}
+
+const ANILIST_GRAPHQL_URL = resolveAnilistGraphqlUrl(process.env.ANILIST_GRAPHQL_URL);
+
+/**
+ * Shape a curated entry like an AniList detail response, so the detail page
+ * keeps rendering (sparser) when AniList is unreachable. Returns null when the
+ * ID is not in the curated catalog.
+ */
+function buildCuratedAnimeDetail(animeId) {
+  const localAnime = ANIME_DB.find(anime => anime.anilistId === animeId);
+  return localAnime ? mapLocalAnimeToAniList(localAnime) : null;
+}
+
+/**
+ * Region slug for JustWatch availability links, surfaced to the client through
+ * /api/site-config. An invalid value falls back to "us" instead of breaking
+ * the links: this is presentation configuration, not a security boundary.
+ */
+function resolveJustWatchRegion(value) {
+  const region = String(value || '').trim().toLowerCase();
+  if (!region) return 'us';
+  if (!/^[a-z]{2,3}(?:-[a-z]{2,3})?$/.test(region)) {
+    console.warn('Ignoring invalid JUSTWATCH_REGION; JustWatch links default to "us".');
+    return 'us';
+  }
+  return region;
+}
+
+const JUSTWATCH_REGION = resolveJustWatchRegion(process.env.JUSTWATCH_REGION);
+
+/**
+ * The browser talks to Supabase directly (auth and the cloud watchlist), so
+ * the CSP must allow connecting to the configured project origin. HTTP
+ * origins are not eligible: credentials must never cross cleartext.
+ */
+const supabaseConnectOrigin = (() => {
+  const value = process.env.SUPABASE_URL;
+  if (!value) return null;
+  let parsed;
+  try {
+    parsed = new URL(value);
+  } catch {
+    return null;
+  }
+  return parsed.protocol === 'https:' && !parsed.username && !parsed.password ? parsed.origin : null;
+})();
+
+const CSP_CONNECT_SOURCES = ["'self'", supabaseConnectOrigin].filter(Boolean).join(' ');
 
 // ============================================================
 // MIDDLEWARE
@@ -42,9 +125,12 @@ if (process.env.NODE_ENV === 'production') {
   if (
     !process.env.SITE_URL ||
     configuredSiteUrl.protocol !== 'https:' ||
+    configuredSiteUrl.pathname !== '/' ||
+    configuredSiteUrl.search ||
+    configuredSiteUrl.hash ||
     isLocalhost(configuredSiteUrl.hostname)
   ) {
-    throw new Error('Production requires SITE_URL set to the public HTTPS origin.');
+    throw new Error('Production requires SITE_URL set to the public HTTPS origin without a path, query, or fragment.');
   }
   if (!process.env.CORS_ORIGINS) {
     throw new Error('Production requires CORS_ORIGINS to be explicitly configured.');
@@ -70,6 +156,32 @@ if (process.env.NODE_ENV === 'production') {
       throw new Error(`Production requires a valid monitored ${variable}.`);
     }
   }
+  for (const variable of ['SUPABASE_URL', 'SUPABASE_ANON_KEY', 'SUPABASE_SERVICE_ROLE_KEY']) {
+    if (!process.env[variable]?.trim()) {
+      throw new Error(`Production requires ${variable} to be configured.`);
+    }
+  }
+  let productionSupabaseUrl;
+  try {
+    productionSupabaseUrl = new URL(process.env.SUPABASE_URL);
+  } catch {
+    throw new Error('Production requires SUPABASE_URL to be a valid HTTPS project origin.');
+  }
+  if (
+    productionSupabaseUrl.protocol !== 'https:' ||
+    productionSupabaseUrl.origin === 'null' ||
+    productionSupabaseUrl.username ||
+    productionSupabaseUrl.password ||
+    productionSupabaseUrl.pathname !== '/' ||
+    productionSupabaseUrl.search ||
+    productionSupabaseUrl.hash ||
+    isLocalhost(productionSupabaseUrl.hostname)
+  ) {
+    throw new Error('Production requires SUPABASE_URL to be a public HTTPS project origin without a path, query, or fragment.');
+  }
+  if (process.env.SUPABASE_ANON_KEY === process.env.SUPABASE_SERVICE_ROLE_KEY) {
+    throw new Error('Production requires separate public and server-only Supabase keys.');
+  }
 }
 
 app.use(cors({
@@ -91,12 +203,97 @@ app.use((err, req, res, next) => {
 });
 
 app.use((req, res, next) => {
-  res.setHeader('X-Content-Type-Options', 'nosniff');
+res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('X-Frame-Options', 'DENY');
   res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
   res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
+  // The frontend ships no inline scripts (see public/script.js) and uses
+  // inline <style> attributes plus Google Fonts, so script-src can stay
+  // strict while style-src stays compatible with the current markup.
+  res.setHeader('Content-Security-Policy', [
+    "default-src 'self'",
+    "script-src 'self' https://cdn.jsdelivr.net",
+    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+    "font-src 'self' https://fonts.gstatic.com",
+    "img-src 'self' https://s4.anilist.co https://placehold.co",
+    "connect-src " + CSP_CONNECT_SOURCES,
+    "media-src 'self'",
+    "object-src 'none'",
+    "base-uri 'self'",
+    "form-action 'self'",
+    "frame-ancestors 'none'",
+    "upgrade-insecure-requests"
+  ].join('; '));
+  // X-Request-ID for request tracing in production logs
+  const requestId = require('crypto').randomUUID();
+  req.id = requestId;
+  res.setHeader('X-Request-ID', requestId);
+  // The site is HTTPS-only in production; HSTS keeps it that way for
+  // returning browsers. Skipped locally so HTTP development keeps working.
+  if (process.env.NODE_ENV === 'production') {
+    res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+  }
   next();
 });
+
+// ============================================================
+// RATE LIMITING
+// ============================================================
+//
+// Limits are scoped by upstream cost: the AniList proxy endpoints carry the
+// highest quota risk (every request forwards to AniList's shared quota), the
+// account-deletion endpoint is unauthenticated but expensive and destructive,
+// and everything under /api gets a coarse global cap. Pages and static assets
+// are not limited. In production, set TRUST_PROXY to the proxy hop count
+// (e.g. TRUST_PROXY=1) so clients are counted by their real address instead
+// of the proxy's.
+
+const RATE_LIMIT_WINDOW_MS = 60 * 1000;
+const RATE_LIMIT_GLOBAL_MAX = 120;
+const RATE_LIMIT_PROXY_MAX = 60;
+const RATE_LIMIT_ACCOUNT_MAX = 5;
+
+const globalApiLimiter = rateLimit({
+  windowMs: RATE_LIMIT_WINDOW_MS,
+  limit: RATE_LIMIT_GLOBAL_MAX,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+  // req.path is mount-relative here (/site-config), so the full originalUrl
+  // decides which public config endpoints stay unthrottled.
+  skip: req => req.originalUrl.startsWith('/api/site-config') || req.originalUrl.startsWith('/api/config'),
+  handler: (req, res) => {
+    console.warn(`Rate limit exceeded (global /api) from ${req.ip}`);
+    res.status(429).json({ message: 'Too many requests. Please slow down.' });
+  }
+});
+
+const proxyLimiter = rateLimit({
+  windowMs: RATE_LIMIT_WINDOW_MS,
+  limit: RATE_LIMIT_PROXY_MAX,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+  handler: (req, res) => {
+    console.warn(`Rate limit exceeded (AniList proxy) from ${req.ip}`);
+    res.status(429).json({ message: 'Too many requests. Please slow down.' });
+  }
+});
+
+const accountDeletionLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: RATE_LIMIT_ACCOUNT_MAX,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+  handler: (req, res) => {
+    console.warn(`Rate limit exceeded (account deletion) from ${req.ip}`);
+    res.status(429).json({ message: 'Too many requests. Please try again later.' });
+  }
+});
+
+app.use('/api', globalApiLimiter);
+app.use('/api/search', proxyLimiter);
+app.use('/api/anime/:id', proxyLimiter);
+app.use('/api/account', accountDeletionLimiter);
+
 
 app.use(express.json({ limit: '16kb' }));
 
@@ -106,7 +303,7 @@ app.get(['/', '/index.html'], (req, res) => {
 });
 
 // Serve ONLY the public/ directory — not the project root
-app.use(express.static(path.join(__dirname, 'public')));
+app.use(express.static(path.join(__dirname, 'public'), { dotfiles: 'deny' }));
 
 app.get('/robots.txt', (req, res) => {
   res.type('text/plain').send(`User-agent: *\nAllow: /\nSitemap: ${SITE_URL}/sitemap.xml\n`);
@@ -134,7 +331,8 @@ app.get('/api/site-config', (req, res) => {
   res.json({
     siteUrl: SITE_URL,
     contactEmail: process.env.CONTACT_EMAIL || '',
-    dmcaEmail: process.env.DMCA_EMAIL || ''
+    dmcaEmail: process.env.DMCA_EMAIL || '',
+    justWatchRegion: JUSTWATCH_REGION
   });
 });
 
@@ -190,6 +388,10 @@ app.delete('/api/account', async (req, res) => {
     });
     authenticatedUser = verification.data;
   } catch (error) {
+    // Distinguish authentication failures from upstream/service failures
+    if (error.code === 'ECONNABORTED' || error.timeout) {
+      return res.status(504).json({ message: 'Supabase session verification timed out. Please try again.' });
+    }
     if ([401, 403].includes(error.response?.status)) {
       return res.status(401).json({ message: 'Your login session is invalid or expired.' });
     }
@@ -197,7 +399,7 @@ app.delete('/api/account', async (req, res) => {
     return res.status(502).json({ message: 'Could not verify the account session.' });
   }
 
-  const userId = authenticatedUser?.id;
+const userId = authenticatedUser?.id;
   if (typeof userId !== 'string' || !/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(userId)) {
     console.error('Supabase session verification returned an invalid user identity.');
     return res.status(502).json({ message: 'Could not verify the account session.' });
@@ -213,6 +415,12 @@ app.delete('/api/account', async (req, res) => {
     });
     return res.status(200).json({ message: 'Your account has been deleted.' });
   } catch (error) {
+    // Distinguish deletion-specific errors from generic failures
+    if (error.code === 'ECONNABORTED' || error.timeout) {
+      return res.status(504).json({ message: 'Account deletion request timed out. Please try again.' });
+    }
+    // Any Admin API failure (including service-role misconfiguration) is a
+    // server-side problem: the user's session was already verified above.
     console.error(`Supabase account deletion failed${error.response?.status ? ` (${error.response.status})` : ''}.`);
     return res.status(502).json({ message: 'Account deletion could not be completed. Please try again later.' });
   }
@@ -596,7 +804,7 @@ function buildCatalogQuery({ perPage, sort, formatIn, genre = false }) {
 /** Fetch one live AniList catalog page, sanitized and merged with curation. */
 async function fetchLiveCatalog(query, variables = {}) {
   const response = await axios.post(
-    'https://graphql.anilist.co',
+    ANILIST_GRAPHQL_URL,
     { query, variables },
     {
       headers: { 'Content-Type': 'application/json' },
@@ -740,7 +948,7 @@ async function getGenreList() {
   genreListCache.pending = (async () => {
     try {
       const response = await axios.post(
-        'https://graphql.anilist.co',
+        ANILIST_GRAPHQL_URL,
         { query: 'query { GenreCollection }' },
         {
           headers: { 'Content-Type': 'application/json' },
@@ -830,6 +1038,15 @@ app.get('/api/search', async (req, res) => {
     });
   }
 
+  // Sensible input validation: only reject truly dangerous patterns
+  // GraphQL uses parameterized variables ($search: String), so no injection risk.
+  // Allow letters, numbers, spaces, and common anime title punctuation.
+  if (query.length < 1) {
+    return res.status(400).json({
+      message: "Search query cannot be empty."
+    });
+  }
+
   // Try AniList GraphQL first
   try {
     const graphqlQuery = `
@@ -865,7 +1082,7 @@ app.get('/api/search', async (req, res) => {
     `;
 
     const response = await axios.post(
-      "https://graphql.anilist.co",
+      ANILIST_GRAPHQL_URL,
       {
         query: graphqlQuery,
         variables: {
@@ -891,12 +1108,11 @@ app.get('/api/search', async (req, res) => {
         ...anime,
         description: sanitizeDescription(anime.description)
       }));
-      console.log(`AniList returned ${sanitized.length} search results.`);
       res.json(sanitized);
       return;
     }
   } catch (error) {
-    console.log("❌ AniList failed, using local database fallback");
+    console.warn('AniList search unavailable; using local catalog fallback.');
     // AniList failed - will fall through to local DB
   }
 
@@ -925,6 +1141,14 @@ app.get('/api/genre/:genre', async (req, res) => {
       message: `Enter a genre name of 1 to ${MAX_GENRE_LENGTH} characters.`
     });
 
+  }
+
+  // Strict input validation: only allow letters, numbers, and basic punctuation
+  const allowedGenrePattern = /^[\p{L}\p{N}\s'.-]+$/u;
+  if (!allowedGenrePattern.test(genre)) {
+    return res.status(400).json({
+      message: "Genre contains invalid characters. Use letters, numbers, and .'-."
+    });
   }
 
   if (ADULT_GENRES.has(genre.toLowerCase())) {
@@ -995,10 +1219,14 @@ app.get('/api/genres', async (req, res) => {
 // ============================================================
 
 app.get('/api/anime/:id', async (req, res) => {
-  const animeId = parseInt(req.params.id);
+  const animeId = Number(req.params.id);
 
-  if (isNaN(animeId)) {
+  if (!/^\d+$/.test(req.params.id) || !Number.isSafeInteger(animeId)) {
     return res.status(400).json({ message: "Invalid Anime ID." });
+  }
+
+  if (animeId < 1 || animeId > 2147483647) {
+    return res.status(400).json({ message: "Anime ID is out of valid range." });
   }
 
   const graphqlQuery = `
@@ -1109,10 +1337,8 @@ app.get('/api/anime/:id', async (req, res) => {
   `;
 
   try {
-    console.log(`🔎 Fetching AniList details for ID: ${animeId}`);
-
     const response = await axios.post(
-      "https://graphql.anilist.co",
+      ANILIST_GRAPHQL_URL,
       {
         query: graphqlQuery,
         variables: { id: animeId }
@@ -1125,6 +1351,13 @@ app.get('/api/anime/:id', async (req, res) => {
 
     if (response.data.errors) {
       console.error("❌ AniList GraphQL Error:", response.data.errors);
+      // Degraded mode: a curated entry keeps the detail page usable during an
+      // AniList incident; unknown IDs keep the verified error contract.
+      const curated = buildCuratedAnimeDetail(animeId);
+      if (curated) {
+        console.warn(`AniList returned errors; serving curated details for ID ${animeId}.`);
+        return res.status(200).json(curated);
+      }
       return res.status(500).json({
         message: "AniList returned an error."
       });
@@ -1132,14 +1365,17 @@ app.get('/api/anime/:id', async (req, res) => {
 
     const anime = safe(response, 'data.data.Media', null);
     if (!anime) {
-      return res.status(404).json({ message: "Anime not found on AniList." });
+      // Fall back to curated catalog if available
+      const curated = buildCuratedAnimeDetail(animeId);
+      if (curated) {
+        console.warn(`AniList returned no entry; serving curated details for ID ${animeId}.`);
+        return res.status(200).json(curated);
+      }
+      return res.status(404).json({ message: "Anime not found on AniList nor in curated catalog." });
     }
 
     // Sanitize description before sending to client
     anime.description = sanitizeDescription(anime.description);
-
-    const titleDisplay = safe(anime, 'title.romaji', '') || safe(anime, 'title.english', 'Unknown');
-    console.log(`✅ AniList returned details for: ${titleDisplay}`);
 
     res.json(anime);
 
@@ -1149,6 +1385,13 @@ app.get('/api/anime/:id', async (req, res) => {
       console.error("Status:", error.response.status);
     } else {
       console.error("Message:", error.message);
+    }
+    // Degraded mode: a curated entry keeps the detail page usable while
+    // AniList is down; unknown IDs keep the verified error contract.
+    const curated = buildCuratedAnimeDetail(animeId);
+    if (curated) {
+      console.warn(`AniList unavailable; serving curated details for ID ${animeId}.`);
+      return res.status(200).json(curated);
     }
     res.status(500).json({
       message: "Could not connect to AniList API."
@@ -1182,25 +1425,5 @@ app.use((error, req, res, next) => {
 // ============================================================
 
 app.listen(PORT, () => {
-
-  console.log("");
-
-  console.log("======================================");
-
-  console.log("🎌 ANIME HUB SERVER");
-
-  console.log("======================================");
-
-  console.log(
-    `🚀 Server: http://localhost:${PORT}`
-  );
-
-  console.log(
-    `📁 Serving frontend from: ./public/`
-  );
-
-  console.log("======================================");
-
-  console.log("");
-
+  console.log(`AnimeHub server listening on port ${PORT}.`);
 });

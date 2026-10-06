@@ -9,7 +9,7 @@
 - Pages: `#page-home`, `#page-popular`, `#page-movies`, `#page-series`, `#page-watchlist`, `#page-search`, `#page-detail`, `#page-profile`.
 - Navbar (`.topnav`, `#navbar`): brand logo (Anime**Hub**), mobile menu toggle (hamburger, ARIA-expanded), links — Profile (hidden unless signed in), Log In, Log Out (hidden unless signed in), Home, Movies, TV Series, Most Popular, My Watchlist — plus a search icon that toggles a drop-down search overlay with autocomplete.
 - Navbar gains a `scrolled` class past 30 px of scroll (glassmorphism effect).
-- Mobile: nav links collapse into a drawer toggled by `#mobile-menu`; the button flips `aria-expanded` and its label between "Open navigation"/"Close navigation".
+- At viewport widths up to 900px, nav links collapse into a scrollable drawer toggled by `#mobile-menu`; the button flips `aria-expanded` and its label between "Open navigation"/"Close navigation". Escape, outside clicks, and link selection close the drawer.
 - Footer: brand line, non-hosting/compliance statement, and legal navigation (Privacy, Terms, Contact, Copyright/DMCA).
 
 ## 2. Home page (CURRENT)
@@ -82,8 +82,8 @@
 - One stylesheet, sectioned with banners: ROOT TOKENS, NAVBAR, SPA PAGES, HERO, GENRE FILTER, PREMIUM ANIME CARD, ANIME DETAIL PAGE, LOADING SKELETON, BACK BUTTON, FOOTER, RESPONSIVE BREAKPOINTS.
 - Design tokens (CSS custom properties) in `:root`: dark palette (`--bg #090c12`, `--surface`, `--surface-2`, glass surface), orange accent (`--primary #ff7200`, `--primary-dark`, `--primary-glow`), text colours, `--star`, `--success`, `--danger`, four radius tokens, two shadow tokens, one easing token, transition token, fonts (`--font-head #Outfit`, `--font-body #Inter`), and `--nav-h: 72px`.
 - Typography loaded from Google Fonts (Outfit 400–900, Inter 400–700).
-- Responsive breakpoints: `max-width: 1024px`, `768px`, `480px`, plus `@media (prefers-reduced-motion: reduce)`.
-- Body background uses `websites picture.png` (1.94 MB asset).
+- Responsive breakpoints: `max-width: 1024px`, `900px`, `768px`, `480px`, plus `@media (prefers-reduced-motion: reduce)`. Inner-page containers, two-column small-phone grids, touch-sized controls, and scrollable mobile auth dialogs are included in the responsive rules.
+- Body background uses the existing artwork in `websites picture.webp` (about 110 KB, down from the 1.9 MB PNG) to reduce page weight without changing the design.
 - Legal pages use a separate small stylesheet (`legal.css`, 88 lines) sharing the palette; `legal.js` injects configured contact/DMCA addresses.
 
 ## 13. Accessibility (CURRENT)

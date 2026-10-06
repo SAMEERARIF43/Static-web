@@ -21,7 +21,7 @@ Verified absent:
 ## 2. Why nothing exists
 
 - The catalog is entirely third-party (AniList) plus a small curated array; there is no user-generated content to moderate.
-- No product requirement for administration has been recorded — **NEEDS CONFIRMATION** whether one is wanted at all.
+- No product requirement for administration has been recorded; on 2026-10-05 the scope decision was to **defer** it (`LATER`, §5).
 - Account data is user-owned and protected by RLS; no operator workflow needs to read it.
 
 ## 3. Decisions required before building anything (PLANNED — decision list only)
@@ -42,8 +42,12 @@ Verified absent:
 - Any admin capability that reads other users' data must be server-mediated with explicit authorisation checks; RLS as configured protects users from each other, not from an administrator.
 - The admin surface must not break the existing public flows or the non-hosting legal positioning.
 
-## 5. NOT FOUND / NEEDS CONFIRMATION
+## 5. Scope decision
 
-- Whether an admin system is in scope at all.
+- **DECIDED 2026-10-05: Admin is deferred (`LATER`).** No admin system is in scope now; curation stays in the codebase and no admin work is authorised. Revisit only if a concrete operator need appears (see §3).
+
+## 6. NOT FOUND / NEEDS CONFIRMATION
+
+- Which operator need might justify revisiting the decision above.
 - Who the operator(s) would be and how many.
 - Any hosting/database access policy for operators.

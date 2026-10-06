@@ -45,10 +45,12 @@ a:focus-visible {
 
 .legal-main {
   padding-block: 48px 64px;
+  overflow-wrap: anywhere;
 }
 
 .legal-main h1 {
   line-height: 1.2;
+  font-size: clamp(1.75rem, 6vw, 2.25rem);
 }
 
 .legal-main h2 {
@@ -81,6 +83,10 @@ a:focus-visible {
 
 .legal-links a {
   color: #cbd5e1;
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  padding-inline: 4px;
 }
 
 .contact-link[hidden] {

@@ -1,6 +1,6 @@
 # SECURITY — current controls and current gaps
 
-> Snapshot: 2026-10-05. Controls below were verified in code and (where noted) against the running app.
+> Snapshot: 2026-10-06. Controls below were verified in code and (where noted) against the running app.
 > **Nothing in this document is a fix.** Gaps are recorded for later phases (`docs/TASKS.md`).
 > Legend: **CURRENT** · **GAP (not implemented)** · **NOT FOUND / NEEDS CONFIRMATION**.
 
@@ -39,14 +39,14 @@
 - Unlisted origins receive **403** (verified live and in tests); requests with no `Origin` header are allowed (same-origin/server-side behaviour).
 
 ### 1.7 Security headers
-Set on every response: `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: strict-origin-when-cross-origin`, `Permissions-Policy: camera=(), microphone=(), geolocation=()`.
+Set on every response: `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: strict-origin-when-cross-origin`, `Permissions-Policy: camera=(), microphone=(), geolocation=()`, and a Content Security Policy. The CSP restricts scripts to self and the pinned Supabase CDN, allows the configured Supabase origin for connections, and allows inline styles for existing style attributes.
 
 ### 1.8 Subresource Integrity
 - The Supabase CDN script is pinned to `@supabase/supabase-js@2.49.1` with `integrity="sha384-YieC…Uoy"` and `crossorigin="anonymous"`.
 - The hash was independently recomputed from the CDN file during the audit and **matches**.
 
 ### 1.9 HTTPS-only image URLs (client)
-- `safeImageUrl()` accepts only `https:` URLs (resolved against the current origin) and otherwise substitutes a placeholder; failed images are swapped by `onerror` handlers.
+- `safeImageUrl()` accepts only `https:` URLs (resolved against the current origin) and otherwise substitutes a placeholder; failed images are swapped by delegated error listeners.
 
 ### 1.10 Static-file restrictions
 - Only `public/` is served. Verified 404 for `/server.js`, `/package.json`, `/supabase-schema.sql`, `/test-search.js`, `/catalog-utils.js`, `/.env`, `/.freebuff/project-id` (dotfiles ignored).
@@ -61,21 +61,20 @@ Set on every response: `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY
 
 | # | Gap | Impact | Notes |
 | --- | --- | --- | --- |
-| 1 | **No Content-Security-Policy** | No defence-in-depth against injected script; the app generates inline `onerror=` attributes in card HTML, so a naive CSP with `script-src 'self'` would need those refactored first | `server.js`, `public/script.js` |
-| 2 | **No rate limiting on any endpoint** | `/api/search` and `/api/anime/:id` are unauthenticated proxies to AniList; abuse could exhaust AniList quota or server resources | no middleware present |
-| 3 | **Public AniList proxy** | Anyone can use the server as an AniList relay; no per-IP caps, no caching for search/detail | `server.js` |
-| 4 | **Service-role key in a local `.env` inside a OneDrive-synced folder** | Key sprawl/sync risk on the developer machine; a leaked service-role key grants full admin access to Supabase | `.env` is gitignored but present on disk |
-| 5 | **Authenticated account-deletion test coverage removed (2026-10-05)** | The verification path (token → Auth API → Admin API target) is no longer asserted by `npm test`; only the unauthenticated 401 case remains | `test-search.js` — see `docs/TESTING.md` |
-| 6 | No security logging/alerting | No visibility into abuse or deletion events | none found |
-| 7 | No account-security controls visible in the repo (captcha, lockout tuning, MFA) | Supabase defaults apply | **NOT FOUND / NEEDS CONFIRMATION** (Supabase dashboard settings) |
-| 8 | No dependency-audit automation | No `npm audit`/Dependabot in CI | `.github/workflows/ci.yml` |
-| 9 | No integrity/PII inventory for Supabase region & retention | Compliance unverified | **NOT FOUND / NEEDS CONFIRMATION** |
-| 10 | Legal pages are self-described drafts | Compliance/safe-harbour not established | `README.md`, `docs/PRD.md` |
+| 1 | **Public AniList proxy; process-local rate limits** | Read/catalog/search/detail endpoints are intentionally public. Per-IP limits bound request rates, but in-memory counters reset on restart and are not shared across instances; proxy attribution depends on correct `TRUST_PROXY` configuration | `server.js` |
+| 2 | **Service-role key in a local `.env` inside a OneDrive-synced folder** | Key sprawl/sync risk on the developer machine; a leaked service-role key grants full admin access to Supabase | `.env` is gitignored but present on disk |
+| 3 | ~~Authenticated account-deletion test coverage removed (2026-10-05)~~ — **RESTORED 2026-10-05** (gap closed) | The verification path (token → Auth API → Admin API target = verified user) is asserted by `npm test` again, including the IDOR guard | `test-search.js` — see `docs/TESTING.md` §3 |
+| 4 | No centralized security logging/alerting | No centralized visibility into abuse or deletion events; the server currently emits ad-hoc logs | none found |
+| 5 | No account-security controls visible in the repo (captcha, lockout tuning, MFA) | Supabase defaults apply | **NOT FOUND / NEEDS CONFIRMATION** (Supabase dashboard settings) |
+| 6 | Dependency audit automation | Production dependencies are audited in CI; development dependencies are not covered by that workflow step | `.github/workflows/ci.yml` runs `npm run audit` (`npm audit --omit=dev`) |
+| 7 | No integrity/PII inventory for Supabase region & retention | Compliance unverified | **NOT FOUND / NEEDS CONFIRMATION** |
+| 8 | Legal pages are self-described drafts | Compliance/safe-harbour not established | `README.md`, `docs/PRD.md` |
 
 ## 3. Threat notes (CURRENT behaviour)
 
-- **XSS via catalog data:** mitigated by server-side strip + client escaping; no CSP as a second layer.
+- **XSS via catalog data:** mitigated by server-side strip, client escaping, and a restrictive script Content Security Policy. The policy allows inline styles for existing markup.
 - **IDOR on watchlist:** mitigated by RLS on every operation.
 - **Account-deletion abuse:** requires a valid Supabase session; the target is derived from the verified token, not from input.
+- **AniList proxy abuse:** rate-limited by client IP, subject to the process-local and reverse-proxy limitations above.
 - **CSRF:** the app uses bearer tokens set by the client, not cookies, and mutating endpoints are limited to `DELETE /api/account` with an explicit header — no cookie-based session for the API.
 - **Secret exposure via `/api/config`:** verified single-purpose whitelist; service-role key is never serialised.

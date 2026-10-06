@@ -14,6 +14,19 @@ document.addEventListener('DOMContentLoaded', () => {
     url: `${siteOrigin}/`
   };
 
+  // JustWatch availability links follow the region configured on the server
+  // (JUSTWATCH_REGION), so operators can point visitors at their own catalog.
+  // It defaults to "us" until (or unless) the setting loads.
+  let justWatchRegion = 'us';
+  fetch(`${baseURL}/site-config`)
+    .then(response => (response.ok ? response.json() : null))
+    .then(config => {
+      if (typeof config?.justWatchRegion === 'string' && /^[a-z]{2,3}(?:-[a-z]{2,3})?$/i.test(config.justWatchRegion)) {
+        justWatchRegion = config.justWatchRegion.toLowerCase();
+      }
+    })
+    .catch(() => {});
+
   /**
    * Dynamically update document title, meta description, Open Graph,
    * Twitter Card metadata, and Schema.org structured data.
@@ -178,6 +191,33 @@ document.addEventListener('DOMContentLoaded', () => {
   // RENDER ANIME CARD
   // ============================================================
 
+  // CSP: handlers are delegated (no inline event attributes), so the server can
+  // ship a script-src without 'unsafe-inline'.
+  function applyImageFallback(image) {
+    if (image.dataset.fallbackBound === 'true') return;
+    image.dataset.fallbackBound = 'true';
+    image.addEventListener('error', () => {
+      image.onerror = null;
+      image.src = image.dataset.fallbackSrc;
+    });
+  }
+
+  const POSTER_FALLBACK = 'https://placehold.co/300x450/0f172a/ff7200?text=No+Poster';
+  const BANNER_FALLBACK = 'https://placehold.co/1920x420/0b0e14/2d3748?text=Anime+Hub';
+
+  // Bind the fallback for every image the app renders (cards, detail views,
+  // recommendations) without inline event attributes, keeping the CSP
+  // free of 'unsafe-inline' for scripts.
+  new MutationObserver(mutations => {
+    for (const mutation of mutations) {
+      for (const node of mutation.addedNodes) {
+        if (node.nodeType !== Node.ELEMENT_NODE) continue;
+        if (node.matches?.('img[data-fallback-src]')) applyImageFallback(node);
+        node.querySelectorAll?.('img[data-fallback-src]').forEach(applyImageFallback);
+      }
+    }
+  }).observe(document.body, { childList: true, subtree: true });
+
   function renderAnimeCard(anime) {
     const rating =
       typeof anime.rating === 'number'
@@ -217,7 +257,7 @@ document.addEventListener('DOMContentLoaded', () => {
             src="${escapeHtml(poster)}"
             alt="${safeTitle} poster"
             loading="lazy"
-            onerror="this.onerror=null; this.src='https://placehold.co/300x450/0f172a/ff7200?text=No+Poster';"
+            data-fallback-src="${POSTER_FALLBACK}"
           >
 
           <div class="card-overlay">
@@ -787,7 +827,7 @@ document.addEventListener('DOMContentLoaded', () => {
           </section>`
         : '';
 
-      const legalSearchUrl = `https://www.justwatch.com/us/search?q=${encodeURIComponent(rawTitle)}`;
+      const legalSearchUrl = `https://www.justwatch.com/${justWatchRegion}/search?q=${encodeURIComponent(rawTitle)}`;
 
       let recommendationsHtml = '';
       if (anime.recommendations?.edges?.length > 0) {
@@ -816,7 +856,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
       detailContent.innerHTML = `
         <div class="detail-banner">
-          <img src="${escapeHtml(banner)}" alt="" onerror="this.onerror=null; this.src='https://placehold.co/1920x420/0b0e14/2d3748?text=Anime+Hub';">
+          <img src="${escapeHtml(banner)}" alt="" data-fallback-src="${BANNER_FALLBACK}">
           <div class="detail-banner-overlay"></div>
         </div>
         <div class="detail-content">
@@ -824,7 +864,7 @@ document.addEventListener('DOMContentLoaded', () => {
             ← Back
           </button>
           <div class="detail-top">
-            <img src="${escapeHtml(poster)}" alt="${title} poster" class="detail-poster" onerror="this.onerror=null; this.src='https://placehold.co/300x450/0f172a/ff7200?text=No+Poster';">
+            <img src="${escapeHtml(poster)}" alt="${title} poster" class="detail-poster" data-fallback-src="${POSTER_FALLBACK}">
             <div class="detail-info">
               <h1 class="detail-title">${title}</h1>
               ${nativeTitle ? `<div style="color: var(--text-muted); font-size: 16px; margin-bottom: 12px;">${nativeTitle}</div>` : ''}
@@ -1506,6 +1546,17 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
 
+  const mobileMenuBtn = document.getElementById('mobile-menu');
+  const navLinksContainer = document.getElementById('nav-links');
+
+  function closeMobileNav(restoreFocus = false) {
+    navLinksContainer?.classList.remove('open');
+    mobileMenuBtn?.classList.remove('active');
+    mobileMenuBtn?.setAttribute('aria-expanded', 'false');
+    mobileMenuBtn?.setAttribute('aria-label', 'Open navigation');
+    if (restoreFocus) mobileMenuBtn?.focus();
+  }
+
   // Navbar Links Navigation
   document.querySelectorAll('[data-nav]').forEach(link => {
     link.addEventListener('click', (e) => {
@@ -1513,18 +1564,12 @@ document.addEventListener('DOMContentLoaded', () => {
       const targetNav = link.dataset.nav;
       if (targetNav) {
         navigateToPage(targetNav);
-        document.getElementById('nav-links')?.classList.remove('open');
-        const menuButton = document.getElementById('mobile-menu');
-        menuButton?.classList.remove('active');
-        menuButton?.setAttribute('aria-expanded', 'false');
+        closeMobileNav(true);
       }
     });
   });
 
   // Mobile Menu Drawer Toggle
-  const mobileMenuBtn = document.getElementById('mobile-menu');
-  const navLinksContainer = document.getElementById('nav-links');
-
   if (mobileMenuBtn && navLinksContainer) {
     mobileMenuBtn.addEventListener('click', () => {
       const isOpen = mobileMenuBtn.getAttribute('aria-expanded') !== 'true';
@@ -1535,7 +1580,26 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
+  document.addEventListener('click', event => {
+    if (!navLinksContainer?.classList.contains('open') || !(event.target instanceof Element)) return;
+
+    if (navLinksContainer.contains(event.target)) {
+      if (event.target.closest('a')) closeMobileNav(!event.target.closest('#nav-login'));
+      return;
+    }
+    if (!mobileMenuBtn?.contains(event.target)) closeMobileNav();
+  });
+
+  window.matchMedia('(min-width: 901px)').addEventListener('change', event => {
+    if (event.matches) closeMobileNav();
+  });
+
   document.addEventListener('keydown', event => {
+    if (event.key === 'Escape' && navLinksContainer?.classList.contains('open')) {
+      event.preventDefault();
+      closeMobileNav(true);
+      return;
+    }
     const card = event.target.closest?.('.anime-card');
     if (!card || event.target.closest('button') || (event.key !== 'Enter' && event.key !== ' ')) return;
     event.preventDefault();

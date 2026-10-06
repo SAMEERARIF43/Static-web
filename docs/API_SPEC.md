@@ -4,31 +4,33 @@
 > Legend: **CURRENT** — implemented and reachable in `server.js` today · **NOT IMPLEMENTED** — absent (§3) ·
 > **PLANNED** — recorded in `docs/ROADMAP.md`, not built · **NOT FOUND / NEEDS CONFIRMATION** — cannot be determined from the repository.
 > Endpoints are **not** fixed, renamed, or removed by this document.
-> Flags: 🔴 **DUPLICATE / CONFLICTING** · 🟡 **UNUSED by the frontend** · ⚪ **NO RATE LIMIT** · ⚫ **NO CACHE** · 🆕 **NOT IMPLEMENTED**
+> Flags: 🔴 **DUPLICATE / CONFLICTING** · 🟡 **UNUSED by the frontend** · ⚪ **ADDITIONAL ENDPOINT RATE LIMIT** · ⚫ **NO CACHE** · 🆕 **NOT IMPLEMENTED**
 
 ## Summary table
 
 | Method | Path | Purpose | Data source | Auth | Cache | Flags |
 | --- | --- | --- | --- | --- | --- | --- |
-| GET | `/` , `/index.html` | SPA shell with `__SITE_URL__` substituted | `public/index.html` read once at boot | none | none (no `Cache-Control`) | ⚪ |
-| GET | `/*` | Static files from `public/` | filesystem | none | ETag/Last-Modified only (no `max-age`) | ⚪ |
-| GET | `/robots.txt` | Crawler rules + sitemap URL | generated | none | none | ⚪ |
-| GET | `/sitemap.xml` | 5-URL sitemap | generated | none | none | ⚪ |
-| GET | `/api/site-config` | Public site settings | env | none | `no-store` | ⚪ |
-| GET | `/api/config` | Public Supabase client config | env | none | `no-store` | ⚪ |
+| GET | `/` , `/index.html` | SPA shell with `__SITE_URL__` substituted | `public/index.html` read once at boot | none | none (no `Cache-Control`) |
+| GET | `/*` | Static files from `public/` | filesystem | none | `public, max-age=0`; ETag/Last-Modified validators |
+| GET | `/robots.txt` | Crawler rules + sitemap URL | generated | none | none |
+| GET | `/sitemap.xml` | 5-URL sitemap | generated | none | none |
+| GET | `/api/site-config` | Public site settings | env | none | `no-store` |
+| GET | `/api/config` | Public Supabase client config | env | none | `no-store` |
 | DELETE | `/api/account` | Self-service account deletion | Supabase Auth + Admin API | Bearer token (Supabase) | n/a | ⚪ |
-| GET | `/api/trending` | Trending list (live) | AniList `TRENDING_DESC` + curated | none | 10-min in-memory | ⚪ |
-| GET | `/api/popular` | Merged popular catalog | AniList `POPULARITY_DESC` + curated | none | 10-min in-memory | ⚪ |
-| GET | `/api/movies` | Anime films (live) | AniList `format_in: [MOVIE]` + curated | none | 10-min in-memory | ⚪ |
-| GET | `/api/series` | TV series (live) | AniList `format_in: [TV, TV_SHORT]` + curated | none | 10-min in-memory | ⚪ |
-| GET | `/api/search?q=` | Title search (10 results) | AniList → curated fallback | none | ⚫ | ⚪ |
-| GET | `/api/genre/:genre` | Genre filter (optional `?type=series\|movies`) | AniList genre query → curated fallback | none | 10-min in-memory (≤30 genres) | ⚪ |
-| GET | `/api/detail/:id` | **Retired** — permanent redirect to `/api/anime/:id` | — | none | n/a | 🟡 ⚪ |
-| GET | `/api/genres` | Genre list (adult genres excluded) | AniList `GenreCollection` + curated | none | 10-min in-memory | 🟡 ⚪ |
-| GET | `/api/anime/:id` | Detail by **AniList** id (staff, characters, relations, recommendations, trailer) | AniList | none | ⚫ | ⚪ |
+| GET | `/api/trending` | Trending list (live) | AniList `TRENDING_DESC` + curated | none | 10-min in-memory |
+| GET | `/api/popular` | Merged popular catalog | AniList `POPULARITY_DESC` + curated | none | 10-min in-memory |
+| GET | `/api/movies` | Anime films (live) | AniList `format_in: [MOVIE]` + curated | none | 10-min in-memory |
+| GET | `/api/series` | TV series (live) | AniList `format_in: [TV, TV_SHORT]` + curated | none | 10-min in-memory |
+| GET | `/api/search?q=` | Title search (10 results) | AniList → curated fallback | none | ⚫ ⚪ |
+| GET | `/api/genre/:genre` | Genre filter (optional `?type=series\|movies`) | AniList genre query → curated fallback | none | 10-min in-memory (≤30 genres) |
+| GET | `/api/detail/:id` | **Retired** — permanent redirect to `/api/anime/:id` | — | none | n/a | 🟡 |
+| GET | `/api/genres` | Genre list (adult genres excluded) | AniList `GenreCollection` + curated | none | 10-min in-memory | 🟡 |
+| GET | `/api/anime/:id` | Detail by **AniList** id (staff, characters, relations, recommendations, trailer) | AniList | none | ⚫ ⚪ |
 | POST | `/api/anime/search` | **Retired** — returns 404 | — | — | — | — |
 
-Global middleware: CORS allowlist (`CORS_ORIGINS`; foreign origins → **403**; in production the list is validated at boot — see `docs/ENVIRONMENT.md` §3), security headers (`X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: strict-origin-when-cross-origin`, `Permissions-Policy: camera=(), microphone=(), geolocation=()`), `express.json({ limit: '16kb' })`, and a JSON error handler.
+Global middleware: CORS allowlist (`CORS_ORIGINS`; foreign origins → **403**; in production the list is validated at boot — see `docs/ENVIRONMENT.md` §3), security headers including CSP, `express.json({ limit: '16kb' })`, rate limits, and a JSON error handler.
+
+Rate limits are process-local fixed windows: `/api` allows 120 requests per minute per client IP, except `/api/site-config` and `/api/config`; `/api/search` and `/api/anime/:id` additionally allow 60 per minute; `/api/account` allows 5 per 15 minutes. Set `TRUST_PROXY` to the actual proxy hop count in production so the limiter sees client IPs; counters are not shared across server instances.
 
 ## 1. Endpoint details
 
@@ -42,7 +44,7 @@ Global middleware: CORS allowlist (`CORS_ORIGINS`; foreign origins → **403**; 
 ### `GET /*` (static)
 - **Purpose:** serve `public/` only (`express.static`).
 - **Not served (verified 404):** `/server.js`, `/package.json`, `/supabase-schema.sql`, `/test-search.js`, `/catalog-utils.js`, `/.env`, `/.freebuff/project-id` (dotfiles ignored by default).
-- **Caching:** express defaults (ETag/Last-Modified); **no `max-age`** configured.
+- **Caching:** Express responds with `Cache-Control: public, max-age=0` and ETag/Last-Modified validators; the browser can revalidate, but there is no long-lived max-age or CDN configuration in this repository.
 
 ### `GET /robots.txt`
 - **Response:** `text/plain` — allow all, `Sitemap: {SITE_URL}/sitemap.xml`.
@@ -52,7 +54,7 @@ Global middleware: CORS allowlist (`CORS_ORIGINS`; foreign origins → **403**; 
 - **Note:** legal pages publish **relative** canonical/OG URLs of their own, while the SPA uses absolute templated URLs.
 
 ### `GET /api/site-config`
-- **Response:** `{ siteUrl, contactEmail, dmcaEmail }`; `Cache-Control: no-store`.
+- **Response:** `{ siteUrl, contactEmail, dmcaEmail, justWatchRegion }`; `Cache-Control: no-store`.
 - **Guarantee:** never exposes Supabase settings (asserted by tests).
 
 ### `GET /api/config`
@@ -116,9 +118,9 @@ Global middleware: CORS allowlist (`CORS_ORIGINS`; foreign origins → **403**; 
 - **Unused:** the frontend derives the catalog page's genre options client-side from `/api/popular`.
 
 ### `GET /api/anime/:id`
-- **Parameters:** `id` — integer AniList id; non-numeric → **400** `{ message: 'Invalid Anime ID.' }`.
+- **Parameters:** `id` — positive decimal AniList `Int` (1–2,147,483,647); non-numeric or non-integer path values → **400**. IDs above 100,000 are accepted; the former arbitrary cap incorrectly rejected catalog titles such as AniList ID `206949`.
 - **Response:** AniList Media with title, cover, banner, description (sanitised), episodes, status, score, genres, season/year, format, start date, duration, source, country, main studios, 6 staff edges, 6 characters with first Japanese voice actor, YouTube trailer (if any), relations, 6 recommendations.
-- **Errors:** AniList GraphQL error → **500**; not found → **404**; network failure → **500** `{ message: 'Could not connect to AniList API.' }`.
+- **Errors:** malformed/out-of-range ID → **400**; AniList GraphQL error → **500**; not found → **404**; upstream/network failure → **500** `{ message: 'Could not connect to AniList API.' }`.
 - **Caching:** ⚫ none; called on every detail view and for cloud-watchlist hydration.
 
 ### Global error handler
@@ -144,11 +146,10 @@ Needed for features currently absent (see `docs/FEATURES.md`, `docs/WATCH_SYSTEM
 - Favorites.
 - Admin/management endpoints.
 - Health/readiness endpoint.
-- Rate limiting / abuse protection for the public AniList proxy.
 
 ## 4. Cross-cutting gaps
 
-- **No rate limiting** anywhere.
+- **Rate limiting is process-local:** counters reset on restart and are not shared across instances; configure `TRUST_PROXY` to match the actual production proxy topology.
 - **No server-side caching** for `/api/search` and `/api/anime/:id` (the four catalog lists and genre queries are cached for 10 minutes).
 - **Every list endpoint is capped** at 20–50 items and there is no pagination or `offset` support.
 - **No API versioning** and no machine-readable schema (OpenAPI) — a candidate for a future `docs/` addition.

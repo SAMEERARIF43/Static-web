@@ -65,7 +65,7 @@ supabase-schema.sql   database schema, RLS, signup trigger             (149 line
 public/               entire frontend, served statically
   index.html (475) · script.js (1564) · auth-ui.js (471) · style.css (1687)
   legal.css (88) · legal.js (23) · privacy/terms/contact/dmca.html
-  favicon.svg · assets/favicon-64.png · social-preview.jpg · websites picture.png
+  favicon.svg · assets/favicon-64.png · social-preview.jpg · websites picture.webp
 docs/                 this documentation set
 .github/workflows/    CI
 ```

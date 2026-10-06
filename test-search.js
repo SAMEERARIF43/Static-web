@@ -52,7 +52,7 @@ function waitForServer(server) {
 
     server.stdout.on('data', chunk => {
       output += chunk.toString();
-      if (output.includes(`Server: ${baseURL}`)) {
+      if (output.includes(`AnimeHub server listening on port ${TEST_PORT}.`)) {
         clearTimeout(timeout);
         resolve();
       }
@@ -362,6 +362,16 @@ async function run() {
       getTitle(canonicalDetail.body).toLowerCase().includes('cowboy bebop'),
       'AniList ID 1 must resolve to Cowboy Bebop, not the retired local ID 1 entry'
     );
+
+    const highCatalogDetail = await request('/api/anime/206949');
+    assert.strictEqual(highCatalogDetail.statusCode, 200, 'A valid AniList ID above 100,000 should load');
+    assert.strictEqual(highCatalogDetail.body.id, 206949, 'High AniList detail responses should preserve their canonical ID');
+
+    const malformedAnimeId = await request('/api/anime/not-an-id');
+    assert.strictEqual(malformedAnimeId.statusCode, 400, 'A malformed AniList ID should be rejected');
+
+    const outOfRangeAnimeId = await request('/api/anime/2147483648');
+    assert.strictEqual(outOfRangeAnimeId.statusCode, 400, 'An AniList ID outside the GraphQL Int range should be rejected');
 
     const malformedDetail = await request('/api/detail/not-an-id');
     assert.strictEqual(malformedDetail.statusCode, 404, 'A malformed detail id should still return 404');

@@ -30,6 +30,8 @@ The server loads a `.env` file from the project root automatically when one is p
 
 Before public launch, set `NODE_ENV=production`, set `SITE_URL` to the real HTTPS origin, and configure working contact and copyright addresses. Set `CORS_ORIGINS` to include the exact deployed origin. The server refuses to start in production if those values are missing or invalid. Use HTTPS at the hosting platform or reverse proxy.
 
+For managed Node.js hosting instructions, production environment-variable requirements, Supabase key handling, CORS, and reverse-proxy configuration, see [DEPLOYMENT.md](./DEPLOYMENT.md).
+
 ## Data and privacy notes
 
 - Guest watchlists are stored in the visitor's browser; signed-in watchlists are stored in Supabase, with an optional verified migration from local storage.

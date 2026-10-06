@@ -92,7 +92,7 @@ Approved and implemented in one pass (owner greenlit 2026-10-06). `npm test` and
 | P8.3 | Configure production env (`NODE_ENV`, `SITE_URL`, `CORS_ORIGINS`, contact/DMCA emails, Supabase keys) and verify the startup guards | Guards exist; deployment values NOT FOUND |
 | P8.4 | Move the service-role key out of the OneDrive-synced `.env` (secret handling policy) | `SECURITY.md` gap 4 |
 | P8.5 | Add observability (structured logs/metrics, error reporting decision) and dependency auditing | `ARCHITECTURE.md` §9.7, `SECURITY.md` gap 8 |
-| P8.6 | Optimise/`max-age` the large static assets | `websites picture.png` 1.94 MB; no cache headers |
+| P8.6 | Optimise/`max-age` the large static assets | Background compressed from 1.9 MB PNG to 110 KB WebP; Express serves static assets with `max-age=0` and validators, while CDN policy awaits hosting choice |
 | P8.7 | Legal review of the four legal pages and the operator’s DMCA posture | `PRD.md` §6 |
 
 ## Standing rules for future work
