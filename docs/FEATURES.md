@@ -1,0 +1,54 @@
+# FEATURES — inventory of the current codebase
+
+> Statuses: **IMPLEMENTED** · **PARTIAL** · **MISSING** · **PLANNED** · **NEEDS CONFIRMATION**.
+> Snapshot: 2026-10-05. Every row was verified against code and, where marked, a live run of the app.
+
+## Feature inventory
+
+| Feature | Status | Current implementation | Relevant files | Dependencies |
+| --- | --- | --- | --- | --- |
+| Home | IMPLEMENTED | SPA page `#page-home`: hero, search, Top Searches, genre bar, Trending grid (5), Popular preview (5) | `public/index.html`, `public/script.js`, `public/style.css` | `/api/trending`, `/api/popular` |
+| Trending | IMPLEMENTED | `GET /api/trending`: live AniList `TRENDING_DESC` (20, non-adult) merged with curated entries not already covered; 10-min in-memory cache; curated fallback when AniList fails. **Verified 2026-10-06:** 30 items, 18 outside the curated set (the old fixed local slice is gone) | `server.js`, `catalog-utils.js`, `public/script.js` | AniList GraphQL |
+| Popular | IMPLEMENTED | `GET /api/popular`: AniList top-50 (non-adult, popularity) merged with local curation; 10-min in-memory cache; falls back to cached/local data if AniList fails | `server.js`, `catalog-utils.js` | AniList GraphQL |
+| Catalog filters & sorting | IMPLEMENTED | 7 filters (genre, year, min rating, studio, language, type) + 4 sorts (popularity, rating, year, title) applied client-side over the loaded catalog | `public/index.html`, `public/script.js` | `/api/popular` |
+| Pagination | IMPLEMENTED | 24 titles/page, Previous/Next + "Page X of Y", URL state `?page=popular&catalogPage=n` | `public/script.js`, `public/index.html` | none |
+| Movies | IMPLEMENTED | `GET /api/movies`: live AniList `format_in: [MOVIE]` (50, non-adult) merged with curated entries, re-filtered to films; the client filters again as a guard; empty state when none. **Verified 2026-10-06:** 50 films (was 3 — it used to filter the mixed `/api/popular` page) | `server.js`, `public/script.js` | `/api/movies` |
+| TV Series | IMPLEMENTED | `GET /api/series`: live AniList `format_in: [TV, TV_SHORT]` (50) merged with curated TV entries, re-filtered to television formats; `loadSeries()` also filters client-side. **Verified 2026-10-06:** 51 titles, **0 films** (previously it rendered the entire catalog) | `server.js`, `public/script.js` | `/api/series` |
+| Genre browsing | IMPLEMENTED | `GET /api/genre/:genre` is live-backed and shared by the Home and Series genre bars (Series passes `?type=series`); the Popular page filters the loaded live catalog client-side. **Verified 2026-10-06:** `Comedy` → 30 (was **0**), `Comedy?type=series` → TV only, `Comedy?type=movies` → films only, curated-only `Shounen` → 4 curated titles, unknown genre → `[]` | `server.js`, `public/script.js` | `/api/genre/:genre` |
+| Search | IMPLEMENTED | `GET /api/search?q=`: AniList top-10 (SEARCH_MATCH) with local-DB fallback; validates 1–100 chars; results page with count, empty state, filter-empty state, error state with Retry | `server.js`, `search-utils.js`, `public/script.js` | AniList GraphQL |
+| Search autocomplete | IMPLEMENTED | Debounced (280 ms) suggestions on hero + navbar inputs; ARIA combobox/listbox; keyboard navigation; 50-entry client cache; aborts in-flight requests | `public/script.js`, `public/index.html` | `/api/search` |
+| Search filters | IMPLEMENTED | Genre, format, minimum rating, 4 sort modes; "Clear filters"; result counts | `public/script.js`, `public/index.html` | `/api/search` |
+| Anime Details | IMPLEMENTED | `GET /api/anime/:id`: AniList Media incl. studios, staff (6), characters + JP voice actors (6), relations, recommendations (6), trailer, start date, duration, source; rich detail page + dynamic JSON-LD | `server.js`, `public/script.js` | AniList GraphQL |
+| Watchlist (guest) | IMPLEMENTED | Browser-local array under `localStorage` key `anime_hub_watchlist`; card star toggles; watchlist page with empty state | `public/script.js` | none |
+| Watchlist (signed-in / cloud) | IMPLEMENTED | Supabase `public.watchlist` rows `(user_id, anime_id)`; per-user local cache `anime_hub_watchlist_<userId>`; hydration of uncached entries via `/api/anime/:id`; upsert with `onConflict user_id,anime_id` | `public/auth-ui.js`, `supabase-schema.sql` | Supabase Auth + Postgres + RLS |
+| Watchlist migration (guest → cloud) | IMPLEMENTED | On sign-in, if a local watchlist exists, a `confirm()` asks to sync; upsert of missing IDs, verification read-back, cache merge, then local key removal. Decline is remembered per session (`sessionStorage`); failure keeps local data and shows a toast | `public/auth-ui.js` | Supabase |
+| Authentication | IMPLEMENTED | Email/password sign-up, sign-in, password-reset email, session persistence, logout; modal with focus trap, Escape/backdrop close; verification state shown on Profile | `public/auth-ui.js`, `public/index.html` | Supabase JS CDN 2.49.1 (SRI), `/api/config` |
+| Profile | IMPLEMENTED | Email, email-verified status, Danger Zone account deletion with confirmation and server verification | `public/index.html`, `public/auth-ui.js` | Supabase, `DELETE /api/account` |
+| Account deletion | IMPLEMENTED | `DELETE /api/account`: bearer token verified against Supabase Auth, then the **verified** user is deleted through the Admin API with the service-role key; profile + watchlist removed by `ON DELETE CASCADE`. 503 when unconfigured | `server.js`, `supabase-schema.sql`, `public/auth-ui.js` | Supabase service-role key (server only) |
+| Favorites | **PLANNED** (approved 2026-10-05; **not built**) | No table, endpoint, storage key, or UI. Build requires a favourites model, RLS policies, guest storage + migration, and card/detail UI | `docs/PRD.md` §7, `docs/WATCH_SYSTEM.md` | none yet |
+| Watch History | **PLANNED** (approved 2026-10-05; **not built**) | No table, endpoint, storage key, or UI. Build requires an event table, a retention/privacy policy update, and a history page with clear-history | `docs/WATCH_SYSTEM.md` | episode model if episode-level |
+| Watch Progress | **PLANNED** (approved 2026-10-05; **not built**) | No progress/resume model anywhere. Build requires a progress table keyed by user + anime (+ episode) with own-row RLS | `docs/WATCH_SYSTEM.md` | canonical ID (settled), episode identity (open) |
+| Continue Watching | **PLANNED** (approved 2026-10-05; **not built**) | Not present in the current app. Implemented once in commit `816af2e` inside the since-deleted root `script.js`/`index.html`; nothing reads the legacy key | `docs/WATCH_SYSTEM.md` | depends on progress/history |
+| Episode-level tracking | **PLANNED** (approved 2026-10-05; **not built**) | `episodes` is a total count only; no episode identity exists anywhere | `docs/ANIME_DATA.md` §6 | episode identity decision |
+| Admin | **LATER** (deferred 2026-10-05) | No roles, routes, UI, or tables. "admin" in `server.js` refers to the Supabase Admin API used for self-deletion | `docs/ADMIN_SPEC.md` | a concrete operator purpose |
+| SEO | IMPLEMENTED | Per-page title/description/OG/Twitter/canonical via `updatePageSeo()`; dynamic JSON-LD for detail pages; `robots.txt`; `sitemap.xml`; absolute URLs via `SITE_URL` templating | `public/script.js`, `public/index.html`, `server.js` | `SITE_URL` |
+| Legal pages | IMPLEMENTED | Privacy, Terms, Contact, Copyright/DMCA with shared styling and configuration-driven email injection | `public/*.html`, `public/legal.css`, `public/legal.js` | `/api/site-config` |
+| Footer / compliance messaging | IMPLEMENTED | Non-hosting statement + legal-link navigation on the SPA and legal pages | `public/index.html`, `public/*.html` | none |
+| Toast notifications | IMPLEMENTED | Single toast element; messages inserted as text nodes (never HTML) | `public/script.js`, `public/style.css` | none |
+| Responsive layout | IMPLEMENTED | Breakpoints at 1024 px, 768 px, 480 px; `prefers-reduced-motion` honoured; mobile nav drawer | `public/style.css`, `public/script.js` | none |
+| Loading skeletons | IMPLEMENTED | Skeleton grids for trending, popular, movies, series, search, watchlist | `public/script.js`, `public/style.css` | none |
+| Empty states | IMPLEMENTED | Watchlist empty, Movies empty, Search no-results, Search filter-empty, Detail error | `public/index.html`, `public/script.js` | none |
+| Security controls | IMPLEMENTED | CORS allowlist (403 on foreign origin), `nosniff`/`DENY`/`Referrer-Policy`/`Permissions-Policy` headers, static root protection, server-side description sanitisation, HTTPS-only image URLs client-side, SRI on the CDN script | `server.js`, `public/script.js`, `public/index.html` | — |
+| Rate limiting | **MISSING** | No middleware on any endpoint, including the public AniList proxy | — | — |
+| CSP | **MISSING** | No `Content-Security-Policy` header; inline `onerror=` attributes are generated in card HTML | `server.js`, `public/script.js` | — |
+| Analytics / ads | **MISSING (by design)** | Explicitly documented as not included | README, `public/privacy.html` | — |
+| Tests | PARTIAL | `npm test` → `test-search.js`: API smoke + SEO + legal + CORS + merge-policy unit tests, and the authenticated account-deletion assertions (restored 2026-10-05). Several endpoints and failure paths remain untested | `test-search.js` | live AniList for search/popular |
+| Lint | IMPLEMENTED | `npm run lint` → ESLint (`eslint:recommended`, `no-undef: error`) — passes | `.eslintrc.json`, `package.json` | eslint 8 |
+| CI | PARTIAL | GitHub Actions: `npm ci`, lint, test on Node 18/20 — but only on `main`/`master`, so the working branch gets no signal | `.github/workflows/ci.yml` | — |
+| Documentation | CURRENT | This `docs/` set, a corrected README, and the 2026-10-05 decisions recorded in `docs/PRD.md` §7. Before that pass the only doc was README | `docs/*`, `README.md` | — |
+
+## Notes
+
+- "IMPLEMENTED" means present and verified in code; for live endpoints it was also exercised against the running app during the audit.
+- Favorites, Watch History, Watch Progress, Continue Watching, and episode tracking are **approved but not built** (decisions recorded 2026-10-05, `docs/PRD.md` §7); Admin is deferred. Nothing in the UI claims any of them exist.
+- `PLANNED` means approved (or an explicitly recorded direction) but **not implemented**; `LATER` means deliberately deferred; `MISSING` is no longer used for the approved features because the decision, not the code, has changed.

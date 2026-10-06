@@ -1,69 +1,55 @@
-# 🎌 Anime Website
+# Anime Hub
 
-This repository contains my **Anime Website project**, developed as an ongoing web development project.
+Anime Hub is a discovery catalog for anime and movies. It displays third-party metadata, lets visitors keep a local watchlist, links to trailers on YouTube when metadata provides one, and points visitors to legal viewing availability. It does not host, stream, or provide downloads of copyrighted video.
 
-The goal is to build a **full-fledged anime platform** where users can discover, explore, and **watch and enjoy anime** all in one place. The platform will cover everything from classic favorites to the latest and currently airing series.
+## Run locally
 
-## 🚀 Project Goals
+Requirements: Node.js and npm.
 
-The website is being developed step by step with the goal of becoming a complete anime platform featuring:
+```powershell
+npm install
+npm start
+```
 
-* 🎬 A large collection of anime
-* 🔥 Latest and currently airing anime
-* ▶️ Anime streaming and watching features
-* 📖 Detailed anime information
-* 🔎 Search and anime discovery
-* 📅 Latest episode and release updates
-* 🏷️ Genre and category organization
-* ⭐ Ratings and useful anime information
-* 📚 Anime seasons and episode listings
-* 🖥️ Modern, responsive, and user-friendly interface
-* 👤 User-focused features for a better viewing experience
+Open <http://localhost:3000>. `npm test` starts the server and runs the search API assertions.
 
-## 🎥 Watch & Enjoy
+## Configuration
 
-The main vision of this project is to create a platform where users can **find anime they love and enjoy watching it** without having to search across different platforms.
+The server loads a `.env` file from the project root automatically when one is present (via `dotenv`); otherwise it reads configuration from the process environment. Use `.env.example` as a reference when configuring your `.env` file, shell, or hosting provider. Values already set in the environment take precedence over `.env`.
 
-Users will eventually be able to:
+| Variable | Purpose |
+| --- | --- |
+| `PORT` | HTTP port (defaults to `3000`) |
+| `CORS_ORIGINS` | Comma-separated list of allowed browser origins; defaults to localhost on the selected port |
+| `SITE_URL` | Public site origin used when generating the sitemap and robots file |
+| `CONTACT_EMAIL` | Monitored address shown on the contact and privacy pages |
+| `DMCA_EMAIL` | Monitored copyright-notice address shown on the copyright page |
+| `SUPABASE_URL` | Supabase project URL, used by server and browser |
+| `SUPABASE_ANON_KEY` | Public Supabase anon/publishable key, returned to the browser |
+| `SUPABASE_SERVICE_ROLE_KEY` | Server-only Admin API credential for account deletion; never expose it to browser code |
 
-* 🔍 Find anime by name, genre, or category
-* 📺 Browse available episodes
-* ▶️ Watch anime directly through the platform
-* 🆕 Discover newly released episodes
-* ❤️ Explore popular and recommended anime
-* 📖 View detailed information about each series
+Before public launch, set `NODE_ENV=production`, set `SITE_URL` to the real HTTPS origin, and configure working contact and copyright addresses. Set `CORS_ORIGINS` to include the exact deployed origin. The server refuses to start in production if those values are missing or invalid. Use HTTPS at the hosting platform or reverse proxy.
 
-## 🛠️ Development
+For managed Node.js hosting instructions, production environment-variable requirements, Supabase key handling, CORS, and reverse-proxy configuration, see [DEPLOYMENT.md](./DEPLOYMENT.md).
 
-This repository will be continuously updated throughout the development process.
+## Data and privacy notes
 
-It will contain the project's:
+- Guest watchlists are stored in the visitor's browser; signed-in watchlists are stored in Supabase, with an optional verified migration from local storage.
+- Search terms are sent to this server and forwarded to AniList for catalog results.
+- Catalog pages load live, non-adult AniList data and cache it in memory for 10 minutes: Trending (live trending), Popular (top 50 by popularity), Movies (films only) and TV Series (television formats only). Each list merges in curated titles, and falls back to the last cached list or the curated catalog when AniList is unavailable.
+- Every anime is identified by its AniList ID; the older `/api/detail/:id` route now redirects to `/api/anime/:id`.
+- The Popular page displays 24 titles per page; filters apply to the complete loaded catalog, and the selected page is shareable through the URL.
+- Title details include available AniList metadata, staff and Japanese voice-actor credits, related titles, recommendations, and official YouTube trailer links; Anime Hub does not host or stream video.
+- Fonts are loaded from Google Fonts.
+- Analytics, advertisements, and video playback are not included.
 
-* 💻 Source code
-* ✨ New features
-* 🎨 UI/UX improvements
-* 🧪 Experiments and implementations
-* 🔧 Bug fixes and optimizations
-* 🚀 Future updates
+Review the privacy, terms, contact, and copyright pages against the actual deployment and applicable law before launch. The legal pages are starting drafts, not legal advice. In particular, a DMCA page does not itself register a designated agent or establish statutory safe-harbor eligibility.
 
-## 📌 Status
+For authenticated account deletion, apply `supabase-schema.sql` to the Supabase project and configure `SUPABASE_URL`, `SUPABASE_ANON_KEY`, and `SUPABASE_SERVICE_ROLE_KEY` in the server hosting environment. `DELETE /api/account` verifies the caller's bearer token with Supabase Auth and deletes only the user identified by that verified token through the Supabase Admin API. The service-role key must remain server-side. Deploy the updated server and configure those environment variables before advertising deletion as operational; the profile button cannot complete deletion when they are missing.
 
-**🚧 Currently in Development**
+## Project layout
 
-The website is actively being developed. More features, anime content, and improvements will be added as the project progresses.
-
-## 🎯 Vision
-
-The ultimate vision is to turn this project into a **complete, full-fledged anime website** where users can **discover, explore, and watch anime in one place**.
-Most likely i will add more things andd features to this website so that it should be user friendly and users should choose this web over other anime websites.
-
-ONE PIECE , NARUTO AND BLEACH ARE THE REAL DEAL IN ANIME HISTORY . 
-
-FEATURES THAT I WANT TO ADD:
-1. NO SPAMMING IN DROPPING THE RATINGS OF ANY ANIME EP OR MOVIE.
-2. DOWNLOADING ANIME IN HD SHOULD BE EASY AND SHOULD BE IN EVERY LANGUAGE.
-3. NO ADDS OR REDIRECTS.
-
-From **classic favorites and popular series to the newest releases and currently airing anime**, the platform aims to provide an enjoyable and convenient experience for every anime fan.
-
-> 🎌 **Discover. Explore. Watch. Enjoy.**
+- `public/` — static catalog UI and legal pages
+- `server.js` — Express API, metadata proxy, and sitemap/robots endpoints
+- `test-search.js` — search/SEO/CORS API assertions, catalog merge unit tests, and the unauthenticated account-deletion guard (the authenticated deletion path is currently untested — see `docs/TESTING.md`)
+- `docs/` — product and technical documentation (start with `docs/ARCHITECTURE.md`)
