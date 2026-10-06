@@ -23,7 +23,8 @@ Errors are logged to the console with the status. There is **no** error-id, requ
 - `/api/detail/:id` (retired): positive integer id → **308** redirect to `/api/anime/:id`; malformed id → **404** `Anime not found.`
 - `/api/genre/:genre`: missing or over-50-character genre → **400** `Enter a genre name of 1 to 50 characters.`; unknown genre → `[]` with **200**; adult genre → `[]` with **200**.
 - `/api/account`: missing/malformed bearer → **401**; unconfigured server → **503**; invalid/expired session → **401**; Supabase unreachable → **502**; delete failure → **502**.
-- Unknown routes fall through to Express's default 404 (HTML, not JSON).
+- Unknown routes return **404 JSON** (`{ "message": "Not found." }`) with the application security headers intact. Express's default page replaced the `Content-Security-Policy` with `default-src 'none'`, so the JSON handler also keeps the response policy consistent.
+- **Every** response — including CORS 403s, 404s, 429s and 5xx — carries `X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`, `Permissions-Policy`, the CSP and `X-Request-ID`; HSTS is added in production. The header middleware runs first, ahead of CORS.
 
 ### 1.3 Upstream failure behaviour (AniList)
 
@@ -31,8 +32,8 @@ Errors are logged to the console with the status. There is **no** error-id, requ
 | --- | --- |
 | `/api/trending`, `/api/popular`, `/api/movies`, `/api/series` | stale cache → curated catalog (or the curated format subset); warning logged; client always receives 200 with data |
 | `/api/genre/:genre`, `/api/genres` | stale cache → curated genre matches / curated genre names; warning logged; client always receives 200 with data |
-| `/api/search` | local-DB fallback mapped to the AniList shape; `console.log('❌ AniList failed, using local database fallback')` |
-| `/api/anime/:id` | **500** — no fallback; the detail page shows its error state |
+| `/api/search` | local-DB fallback mapped to the AniList shape; `console.warn('AniList search unavailable; using local catalog fallback.')`; a missing query or one containing control characters returns **400** |
+| `/api/anime/:id` | a **curated** entry is served with **200** + `X-Catalog-Source: curated`; otherwise **500** (outage), **404** (AniList has no such media) or **400** (bad ID). Live responses carry `X-Catalog-Source: anilist` |
 
 ### 1.4 Console output style (CURRENT)
 Emoji-prefixed logs (`❌`, `🔎`, `✅`, `🚀`) and `console.warn`/`console.error`. Some are user-visible only to developers. Tests assert the server prints `Server: <url>` on boot (the readiness signal).

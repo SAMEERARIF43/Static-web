@@ -7,6 +7,19 @@
 > Snapshot: 2026-10-06, branch `agents/anime-movie-website-audit-and-build`.
 > This changelog reconstructs known history from git. It is not a release changelog; no version tags exist.
 
+## 2026-10-07 — Phase 2: rate limiting, CSP and failure-path coverage
+
+Phase 2 (security + production readiness) is complete. Rate limiting, the CSP/HSTS headers, the `TRUST_PROXY` client-IP control, the AniList endpoint override and the curated detail fallback had already been built and verified; this pass closed the remaining gaps and locked the behaviour down with tests.
+
+- **Security headers now cover error responses (`server.js`):** the header middleware was moved ahead of the CORS middleware, so CORS **403** replies, rate-limit **429**s and error-handler **5xx** responses carry the full set. Verified by HTTP: a foreign-origin request to `/api/site-config` now returns 403 **with** CSP and `X-Request-ID`.
+- **Unknown routes return JSON, not Express’s HTML 404 (`server.js`):** the default page replaced the application policy with Express’s own `Content-Security-Policy: default-src 'none'`; a final `app.use` now answers `404 { "message": "Not found." }` with the application headers intact.
+- **Search input validation is real (`server.js`):** `/api/search?q=` previously carried a dead `if (query.length < 1)` branch after the empty check; it now rejects C0/DEL control characters (`codePoint < 0x20 || 0x7F`) while leaving punctuation, accents and CJK untouched. GraphQL variables stay parameterized.
+- **Live vs fallback detail responses are labelled (`server.js`):** `/api/anime/:id` returns `X-Catalog-Source: anilist` for live data and `X-Catalog-Source: curated` when a curated entry answers during an AniList outage, without changing the JSON shape.
+- **Request IDs are usable in logs (`server.js`):** `crypto` is hoisted, and the shared error handler logs `Request failed (<status>) [<request-id>]: <message>` so a response id can be correlated with a server log line.
+- **New suite `test-security.js` (Phase 2, ~460 lines):** security headers and CSP on 200/404/403/429/502 responses, HSTS absent outside production, `script-src` without `unsafe-inline`, `connect-src` scoped to the configured Supabase origin (and *not* to a cleartext origin), dotfile/traversal exposure, the AniList-outage fallback contract (`/api/anime/:id` curated 200 + header, unknown id still 500, non-numeric 400), catalog + search degradation, the three rate-limit scopes and their 429 payloads, and every `DELETE /api/account` outcome (401 unauthenticated/malformed/expired, **502** unreachable/upstream-failure/invalid-identity/admin-failure, 200 success with the IDOR guard). `npm test` now runs both suites.
+- **Verification:** `npm test` (both suites) and `npm run lint` pass. A browser check on a local production-shaped instance rendered Home, a detail page and search with **no console errors and no CSP violations**, loaded the pinned Supabase UMD build from `cdn.jsdelivr.net` (`window.supabase` present) and its AniList artwork. A `NODE_ENV=production` boot serves `Strict-Transport-Security: max-age=31536000; includeSubDomains`.
+- **Not done by design:** `.env.example` → `.gitignore`, production `.env` values, CSRF tokens, JustWatch region changes and Node version pinning were out of scope for this pass.
+
 ## 2026-10-06 — Phase 1: one canonical AniList ID and a live catalog
 
 Owner greenlit Phase 1 and resolved the three open Phase-4 sub-decisions: favourites = one `watchlist` table with a `kind` column; episodes = numbered `(anime_id, episode_number)` records first; history = derived from progress rows.
