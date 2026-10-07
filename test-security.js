@@ -153,6 +153,10 @@ function createAuthServer() {
     authRequests.push({ method: req.method, url: req.url, headers: req.headers });
     res.setHeader('Content-Type', 'application/json');
     if (req.method === 'GET' && req.url === '/auth/v1/user') {
+      if (authMode === 'hangVerify') {
+        // Deliberately never answer: the server must apply its own timeout.
+        return;
+      }
       if (authMode === 'status401') {
         res.statusCode = 401;
         res.end(JSON.stringify({ message: 'invalid token' }));
@@ -522,8 +526,20 @@ async function runAccountDeletionScenario(mockAuthUrl, port) {
       'The service-role key must never appear in a response'
     );
 
-    // Five attempts are allowed per window; the sixth must be throttled.
-    for (let attempt = 0; attempt < 3; attempt += 1) {
+    // ---- a hanging upstream exercises the verification timeout ----
+    authMode = 'hangVerify';
+    const timedOut = await request(baseURL, '/api/account', { Authorization: 'Bearer test-access-token' }, 'DELETE');
+    assert.strictEqual(timedOut.statusCode, 504, 'A Supabase verification timeout should surface as 504');
+    assert(
+      !/ECONNABORTED|127.0.0.1/.test(JSON.stringify(timedOut.body)),
+      'A timeout response must not disclose upstream connection details'
+    );
+    assertSecurityHeaders(timedOut, '504 response');
+    authMode = 'ok';
+
+    // Three of the five allowed attempts are already spent (delete failure,
+    // success, timeout): two more must still answer, the sixth must throttle.
+    for (let attempt = 0; attempt < 2; attempt += 1) {
       const unauthorized = await request(baseURL, '/api/account', {}, 'DELETE');
       assert.strictEqual(unauthorized.statusCode, 401, 'Unauthenticated deletion should stay 401 under the limit');
     }
@@ -541,6 +557,47 @@ async function runAccountDeletionScenario(mockAuthUrl, port) {
   }
 }
 
+/** 503 paths: account deletion unavailable, and never contacting an upstream. */
+async function runUnconfiguredScenario(port) {
+  const baseURL = `http://localhost:${port}`;
+  const requestsBefore = authRequests.length;
+  const server = await startServer(port, {
+    SUPABASE_URL: '',
+    SUPABASE_ANON_KEY: '',
+    SUPABASE_SERVICE_ROLE_KEY: ''
+  });
+
+  try {
+    const unconfigured = await request(
+      baseURL,
+      '/api/account',
+      { Authorization: 'Bearer test-access-token' },
+      'DELETE'
+    );
+    assert.strictEqual(
+      unconfigured.statusCode,
+      503,
+      'A server without Supabase credentials must refuse deletion with 503'
+    );
+    assert.strictEqual(
+      unconfigured.body.message,
+      'Account deletion is not configured on this server.',
+      'The 503 must use a neutral message'
+    );
+    assertSecurityHeaders(unconfigured, '503 response');
+    assert.strictEqual(
+      authRequests.length,
+      requestsBefore,
+      'An unconfigured server must never contact an upstream'
+    );
+    console.log('Account deletion returns 503 when it is not configured.');
+    await stopServer(server);
+  } catch (error) {
+    await stopServer(server);
+    throw error;
+  }
+}
+
 async function run() {
   const deadPort = await findClosedPort();
   const authServer = createAuthServer();
@@ -554,8 +611,10 @@ async function run() {
     await runOutageAndHeaderScenario(deadPort, 3011);
     await runAccountVerificationScenario(mockAuthUrl, 3012);
     await runAccountDeletionScenario(mockAuthUrl, 3013);
+    await runUnconfiguredScenario(3014);
     console.log('All Phase 2 security and resilience tests passed.');
   } finally {
+    if (typeof authServer.closeAllConnections === 'function') authServer.closeAllConnections();
     await new Promise(resolve => authServer.close(resolve));
   }
 }
