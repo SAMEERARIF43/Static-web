@@ -156,3 +156,106 @@ Needed for features currently absent (see `docs/FEATURES.md`, `docs/WATCH_SYSTEM
 - **Every list endpoint is capped** at 20–50 items and there is no pagination or `offset` support.
 - **No API versioning** and no machine-readable schema (OpenAPI) — a candidate for a future `docs/` addition.
 - **Request correlation is minimal:** every response carries an `X-Request-ID` and the shared error handler logs it, but there is no structured request logging — only ad-hoc `console.log`/`console.error`/`console.warn`.
+
+## 5. Phase 0 route/frontend audit (2026-10-07)
+
+> Added as part of Phase 0 items 1–5. Audited every `app.get/delete/use` in
+> `server.js` against every `fetch()` in `public/script.js` and `public/auth-ui.js`.
+
+### 5.1 Frontend fetch inventory
+
+`baseURL = '/api'` (relative, `script.js` line 4).
+
+| File | Line | Full URL called |
+|------|------|-----------------|
+| script.js | 21 | `GET /api/site-config` |
+| script.js | 446 | `GET /api/trending` |
+| script.js | 465 | `GET /api/popular` |
+| script.js | 610 | `GET /api/search?q=<query>` |
+| script.js | 702 | `GET /api/anime/<id>` |
+| script.js | 1029 | `GET /api/genre/<genre>[?type=series\|movies]` |
+| script.js | 1127 | `GET /api/movies` |
+| script.js | 1152 | `GET /api/series` |
+| script.js | 1374 | `GET /api/search/suggestions?q=<query>` |
+| auth-ui.js | 67 | `GET /api/anime/<id>` (cloud watchlist hydration) |
+| auth-ui.js | 246 | `GET /api/config` |
+| auth-ui.js | 373 | `DELETE /api/account` |
+
+### 5.2 Cross-reference: all frontend calls matched ✅
+
+Every one of the 11 (12 including the duplicate `/api/anime/:id` in auth-ui.js)
+frontend fetch calls has an exact matching Express route. **No mismatches.**
+
+The previously reported browser error `"Cannot GET /api/anime/search"` referred
+to a retired `POST /api/anime/search` removed in a prior phase. `test-search.js`
+line 193–194 asserts it returns 404 — confirmed passing.
+
+### 5.3 Routes not called by the frontend
+
+| Route | Reason |
+|-------|--------|
+| `GET /api/health` | Internal health check — not needed by the browser |
+| `GET /robots.txt`, `GET /sitemap.xml` | Crawlers only |
+| `GET /api/detail/:id` | Retired; frontend calls `/api/anime/:id` directly |
+| `GET /api/genres` | Genre buttons derive options from `/api/popular` data client-side |
+
+`/api/genres` is unused by the frontend by design (avoids an extra round-trip).
+The tests still exercise it.
+
+### 5.4 Rate-limit prefix note
+
+`app.use('/api/search', proxyLimiter)` is a **prefix** match — it covers both
+`/api/search` and `/api/search/suggestions`, which is intentional: both involve
+AniList quota. Express 5 route matching for `app.get(path, …)` is exact, so the
+two search routes do not conflict.
+
+### 5.5 localStorage ↔ Supabase interaction
+
+Three storage keys, all correct:
+
+| Key | Storage | Lifecycle |
+|-----|---------|-----------|
+| `anime_hub_watchlist` | localStorage | Guest watchlist array; removed after successful cloud migration |
+| `anime_hub_watchlist_<userId>` | localStorage | Per-user display cache for cloud watchlist rows |
+| `anime_hub_watchlist_migration_declined_<userId>` | **sessionStorage** | Per-tab migration decline flag; cleared when tab closes |
+
+No stale `ah_watchlist` or `ah_continue` keys exist in the current code.
+
+Guest → sign-in migration path: consent dialog → upsert missing rows → verify
+by read-back → merge display cache → remove `anime_hub_watchlist`. On failure
+local data is kept intact and a toast is shown. On decline the flag is set for
+the session only.
+
+Known design limitation: if a session expires silently the user may accumulate
+items in `anime_hub_watchlist` again; these are merged (union) on the next
+sign-in via the same dialog. No data loss.
+
+RLS enforcement: `watchlist` and `profiles` tables both have `ENABLE ROW LEVEL
+SECURITY` with `auth.uid() = user_id` policies. Account deletion is backend-only
+(`DELETE /api/account`); the browser never holds the service-role key.
+
+### 5.6 Detail page and Watch page
+
+**Detail page** (`GET /api/anime/:id`): renders title, poster/banner, genres,
+rating, format, episodes, status, season/year, studio, source, country, release
+date, episode length, staff, characters + Japanese voice actors, related titles,
+and recommendations. Trailer is an `<a>` link to
+`https://www.youtube.com/watch?v=<id>` (no iframe/embed). "Find legal viewing
+options" links to JustWatch. **Legally clean.**
+
+NOT VERIFIED end-to-end in a browser. Manual steps: `npm start` → open
+`http://localhost:3000` → click a card → confirm poster/banner/genres/rating
+displayed → confirm trailer link and JustWatch link present → add to watchlist.
+
+**Watch page: does not exist.** No `<iframe>`, `<video>`, `<embed>`, no
+page-watch SPA view, no streaming endpoint anywhere in the current codebase.
+The earlier continue-watching UI was deleted in the `public/` restructure (see
+`docs/WATCH_SYSTEM.md §3`). Legal risk is zero for the current code.
+
+### 5.7 gitignore status
+
+```
+git check-ignore -v .kiro/steering/product.md  →  exit 1, no output
+```
+
+`.kiro/` is **not** gitignored. Steering files are version-tracked.
