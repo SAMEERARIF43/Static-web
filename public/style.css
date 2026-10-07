@@ -30,6 +30,8 @@
   --font-head:    'Outfit', sans-serif;
   --font-body:    'Inter', sans-serif;
   --nav-h:        72px;
+  --bg-overlay:   0.80;
+  --bg-main-image: url("assets/images/background.png");
 }
 
 .catalog-filters {
@@ -132,9 +134,10 @@ body {
   background-image: 
     radial-gradient(circle at 15% 20%, rgba(255, 114, 0, 0.04) 0%, transparent 40%),
     radial-gradient(circle at 85% 60%, rgba(99, 102, 241, 0.03) 0%, transparent 40%),
-    url("websites picture.webp");
+    linear-gradient(rgba(9, 12, 18, var(--bg-overlay)), rgba(9, 12, 18, var(--bg-overlay))),
+    var(--bg-main-image);
   background-size: cover;
-  background-position: center;
+  background-position: center top;
   background-attachment: fixed;
   background-repeat: no-repeat;
   color: var(--text);
@@ -1821,4 +1824,27 @@ footer {
   background: var(--danger);
   color: #fff;
   border: none;
+}
+
+/* ============================================================
+   RESPONSIVE BACKGROUND & DISPLAY ADAPTATION
+   ============================================================ */
+
+/* Mobile & Tablet Devices (<= 768px):
+   Prevent fixed background attachment blur/zoom recalculations on touch viewports
+   and maintain focal point position without cropping key subjects */
+@media (max-width: 768px) {
+  body {
+    background-attachment: scroll;
+    background-position: center top;
+  }
+}
+
+/* 4K and Ultra-wide Display Preparedness (>= 1921px):
+   Maintain centered focal scaling and dark overlay integration for large screens */
+@media (min-width: 1921px) {
+  body {
+    background-position: center top;
+    background-size: cover;
+  }
 }
