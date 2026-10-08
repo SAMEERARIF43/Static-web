@@ -1560,11 +1560,12 @@ app.get('/api/anime/:id', async (req, res) => {
   }
 });
 
-// Unknown routes answer with JSON so the response keeps the application
-// security headers; Express's built-in 404 page would otherwise replace the
-// Content-Security-Policy with its own "default-src 'none'".
+// Unknown routes answer with JSON for API paths, or serve public/404.html for browser pages.
 app.use((req, res) => {
-  res.status(404).json({ message: 'Not found.' });
+  if (req.path.startsWith('/api/') || req.path === '/api') {
+    return res.status(404).json({ message: 'Not found.' });
+  }
+  res.status(404).sendFile(path.join(__dirname, 'public', '404.html'));
 });
 
 app.use((error, req, res, next) => {

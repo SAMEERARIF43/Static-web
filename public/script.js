@@ -471,6 +471,10 @@ document.addEventListener('DOMContentLoaded', () => {
       applyCatalogFilters();
     } catch (err) {
       console.error('Error loading popular:', err);
+      const grid = document.getElementById('popular-grid');
+      if (grid) grid.innerHTML = `<div style="grid-column: 1/-1; color: var(--text-muted);">Unable to load popular items.</div>`;
+      const pageGrid = document.getElementById('popular-page-grid');
+      if (pageGrid) pageGrid.innerHTML = `<div style="grid-column: 1/-1; color: var(--text-muted);">Unable to load popular items.</div>`;
     }
   }
 
@@ -1143,6 +1147,11 @@ document.addEventListener('DOMContentLoaded', () => {
       }
     } catch (err) {
       console.error('Error loading movies:', err);
+      const grid = document.getElementById('movies-grid');
+      if (grid) {
+        grid.style.display = 'grid';
+        grid.innerHTML = `<div style="grid-column: 1/-1; color: var(--text-muted);">Unable to load movies.</div>`;
+      }
     }
   }
 
@@ -1157,6 +1166,8 @@ document.addEventListener('DOMContentLoaded', () => {
       renderAnimeGrid((Array.isArray(data) ? data : []).filter(isSeriesEntry), 'series-grid');
     } catch (err) {
       console.error('Error loading series:', err);
+      const grid = document.getElementById('series-grid');
+      if (grid) grid.innerHTML = `<div style="grid-column: 1/-1; color: var(--text-muted);">Unable to load series items.</div>`;
     }
   }
 

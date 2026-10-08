@@ -255,7 +255,17 @@ async function runOutageAndHeaderScenario(deadPort, port) {
     // ---- security headers survive error responses ----
     const missing = await request(baseURL, '/api/does-not-exist');
     assert.strictEqual(missing.statusCode, 404, 'Unknown API routes should return 404');
+    assert.strictEqual(typeof missing.body, 'object', 'API 404 should return JSON');
+    assert.strictEqual(missing.body.message, 'Not found.', 'API 404 should return standard JSON message');
     assertSecurityHeaders(missing, '404 response');
+
+    const missingPage = await request(baseURL, '/unknown-browser-page');
+    assert.strictEqual(missingPage.statusCode, 404, 'Unknown non-API browser paths should return 404');
+    assertSecurityHeaders(missingPage, '404 HTML response');
+    assert(
+      typeof missingPage.body === 'string' && missingPage.body.includes('Page Not Found'),
+      'Unknown non-API browser paths should serve public/404.html'
+    );
 
     const forbiddenOrigin = await request(baseURL, '/api/site-config', {
       Origin: 'https://not-allowed.example'
