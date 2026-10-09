@@ -343,9 +343,16 @@ document.addEventListener('DOMContentLoaded', () => {
     grid.innerHTML = animes.map(renderAnimeCard).join('');
   }
 
-  let catalogItems = [];
+  // Page size and totals are reported by the server (headers); the client never
+  // guesses them from how full a page happens to look. The grid accumulates
+  // pages from /api/browse: `catalogPage` is the highest page rendered, and
+  // the seen-id set guarantees a title can never appear twice across pages.
   let catalogPage = 1;
-  const catalogPageSize = 24;
+  let catalogHasNext = false;
+  let catalogTotal = null;
+  let catalogShown = 0;
+  let catalogLoading = false;
+  const catalogSeenIds = new Set();
 
   function setSelectOptions(select, values, allLabel, ignoreCase = false) {
     if (!select) return;
@@ -368,72 +375,314 @@ document.addEventListener('DOMContentLoaded', () => {
     if (options.some(value => String(value) === previousValue)) select.value = previousValue;
   }
 
-  function populateCatalogFilters(items) {
-    setSelectOptions(document.getElementById('filter-genre'), items.flatMap(item => item.genre || item.genres || []), 'All genres');
-    setSelectOptions(document.getElementById('filter-year'), items.map(item => item.year), 'All years');
-    setSelectOptions(document.getElementById('filter-studio'), items.map(item => item.studio), 'All studios', true);
-    setSelectOptions(document.getElementById('filter-language'), items.map(item => item.language), 'All languages');
-    setSelectOptions(document.getElementById('filter-type'), items.map(item => item.type || item.format), 'All types');
+  // ============================================================
+  // ADVANCED CATALOG FILTERS (server-driven, reflected in the URL)
+  // ============================================================
+  //
+  // The Popular page owns the advanced filters. Every value is validated again
+  // by the server (/api/browse); the client only mirrors its own state into the
+  // query string, so a refresh or a shared link restores the same view and
+  // Back/Forward re-applies it through initPage(). Results load one page at a
+  // time and the Load more button appends the next page.
+
+  const CATALOG_SORT_VALUES = ['popularity', 'score', 'newest', 'title'];
+  // Form values are friendly lowercase keys; the URL and /api/browse speak the
+  // AniList enum spellings, so every sort passes through this map (and back).
+  const CATALOG_SORT_ENUMS = {
+    popularity: 'POPULARITY_DESC',
+    score: 'SCORE_DESC',
+    newest: 'START_DATE_DESC',
+    title: 'TITLE_ROMAJI'
+  };
+  const CATALOG_SEASON_VALUES = ['WINTER', 'SPRING', 'SUMMER', 'FALL'];
+  // The Popular page offers exactly the /api/browse allowlists, so a valid
+  // form can never produce a 400.
+  const CATALOG_FORMAT_VALUES = ['TV', 'MOVIE', 'OVA', 'ONA', 'SPECIAL'];
+  const CATALOG_STATUS_VALUES = ['RELEASING', 'FINISHED', 'NOT_YET_RELEASED'];
+  const CATALOG_SCORE_VALUES = ['70', '80', '90'];
+  const CATALOG_BROWSE_PER_PAGE = 30;
+  let catalogRequestId = 0;
+
+  /** Read the current filter controls into a plain object. */
+  function catalogFormValues() {
+    const genreSelect = document.getElementById('filter-genre');
+    const genres = genreSelect
+      ? Array.from(genreSelect.selectedOptions).map(option => option.value).filter(Boolean)
+      : [];
+    return {
+      genre: genres,
+      year: (document.getElementById('filter-year')?.value || '').trim(),
+      season: document.getElementById('filter-season')?.value || '',
+      format: document.getElementById('filter-format')?.value || '',
+      status: document.getElementById('filter-status')?.value || '',
+      minScore: document.getElementById('filter-score')?.value || '',
+      sort: document.getElementById('filter-sort')?.value || 'popularity'
+    };
   }
 
-  function applyCatalogFilters() {
-    const genre = document.getElementById('filter-genre')?.value || '';
-    const year = document.getElementById('filter-year')?.value || '';
-    const minRating = Number(document.getElementById('filter-rating')?.value || 0);
-    const studio = document.getElementById('filter-studio')?.value || '';
-    const language = document.getElementById('filter-language')?.value || '';
-    const type = document.getElementById('filter-type')?.value || '';
-    const sortBy = document.getElementById('filter-sort')?.value || 'popularity';
+  /** Append the active filters (in /api/browse vocabulary) to any params. */
+  function appendFilterParams(params, values) {
+    if (values.genre.length) params.set('genre', values.genre.join(','));
+    if (values.year) params.set('year', values.year);
+    if (values.season) params.set('season', values.season);
+    if (values.format) params.set('format', values.format);
+    if (values.status) params.set('status', values.status);
+    if (values.minScore) params.set('minScore', values.minScore);
+    // The sort is written as the browse enum so a shared link reads exactly
+    // like the API contract; legacy `sort=score` links still rehydrate. The
+    // default (popularity) stays out of the URL, as before.
+    if (values.sort && values.sort !== 'popularity' && CATALOG_SORT_ENUMS[values.sort]) {
+      params.set('sort', CATALOG_SORT_ENUMS[values.sort]);
+    }
+    return params;
+  }
 
-    const filtered = catalogItems.filter(item => {
-      const genres = item.genre || item.genres || [];
-      const itemType = item.type || item.format || '';
-      return (!genre || genres.includes(genre)) &&
-        (!year || String(item.year || item.seasonYear || '') === year) &&
-        (!minRating || Number(item.rating || (item.averageScore || 0) / 10) >= minRating) &&
-        (!studio || String(item.studio || '').toLowerCase() === studio.toLowerCase()) &&
-        (!language || item.language === language) &&
-        (!type || itemType === type);
-    });
+  /** Mirror the filter state into the shareable page URL. */
+  function buildCatalogParams(values) {
+    const params = new URLSearchParams();
+    params.set('page', 'popular');
+    return appendFilterParams(params, values);
+  }
 
-    // Apply sorting
-    if (sortBy === 'rating') {
-      filtered.sort((a, b) => Number(b.rating || (b.averageScore || 0) / 10) - Number(a.rating || (a.averageScore || 0) / 10));
-    } else if (sortBy === 'year') {
-      filtered.sort((a, b) => Number(b.year || b.seasonYear || 0) - Number(a.year || a.seasonYear || 0));
-    } else if (sortBy === 'title') {
-      filtered.sort((a, b) => String(getAnimeTitle(a)).localeCompare(String(getAnimeTitle(b))));
+  /**
+   * Build the /api/browse query. The SPA's `page=popular` route marker never
+   * reaches the API — browse validates `page` as 1..50 and would reject it.
+   */
+  function buildBrowseParams(values, page) {
+    const params = appendFilterParams(new URLSearchParams(), values);
+    params.set('page', String(page));
+    params.set('perPage', String(CATALOG_BROWSE_PER_PAGE));
+    return params;
+  }
+
+  /** Rehydrate the filter controls from the URL. Unknown values are ignored. */
+  function applyCatalogFiltersFromUrl() {
+    const params = new URLSearchParams(window.location.search);
+
+    const genreSelect = document.getElementById('filter-genre');
+    if (genreSelect) {
+      const wanted = (params.get('genre') || '')
+        .split(',')
+        .map(value => value.trim().toLowerCase())
+        .filter(Boolean);
+      Array.from(genreSelect.options).forEach(option => {
+        option.selected = wanted.includes(option.value.toLowerCase());
+      });
     }
 
-    const totalPages = Math.max(1, Math.ceil(filtered.length / catalogPageSize));
-    catalogPage = Math.min(Math.max(catalogPage, 1), totalPages);
-    const urlParams = new URLSearchParams(window.location.search);
-    const requestedPage = Number.parseInt(urlParams.get('catalogPage') || '1', 10);
-    if (urlParams.get('page') === 'popular' && requestedPage !== catalogPage) {
-      if (catalogPage === 1) urlParams.delete('catalogPage');
-      else urlParams.set('catalogPage', String(catalogPage));
-      window.history.replaceState({}, '', `?${urlParams.toString()}`);
-    }
-    const startIndex = (catalogPage - 1) * catalogPageSize;
-    renderAnimeGrid(filtered.slice(startIndex, startIndex + catalogPageSize), 'popular-page-grid');
+    const setEnumValue = (id, allowed) => {
+      const element = document.getElementById(id);
+      if (!element) return;
+      const key = id.replace('filter-', '');
+      const raw = (params.get(key) || '').toUpperCase().replace(/[\s-]+/g, '_');
+      element.value = allowed.includes(raw) ? raw : '';
+    };
+    setEnumValue('filter-season', CATALOG_SEASON_VALUES);
+    setEnumValue('filter-format', CATALOG_FORMAT_VALUES);
+    setEnumValue('filter-status', CATALOG_STATUS_VALUES);
 
+    const yearElement = document.getElementById('filter-year');
+    if (yearElement) {
+      // Mirror the server's 1960..current+1 range so a hand-edited URL is
+      // ignored instead of triggering a 400 round-trip.
+      const year = params.get('year') || '';
+      const parsedYear = /^\d{4}$/.test(year) ? Number(year) : 0;
+      const maxYear = new Date().getFullYear() + 1;
+      yearElement.value = parsedYear >= 1960 && parsedYear <= maxYear ? year : '';
+    }
+    const scoreElement = document.getElementById('filter-score');
+    if (scoreElement) {
+      scoreElement.value = CATALOG_SCORE_VALUES.includes(params.get('minScore') || '')
+        ? params.get('minScore')
+        : '';
+    }
+    const sortElement = document.getElementById('filter-sort');
+    if (sortElement) {
+      // Read both spellings: browse enums (`SCORE_DESC`) in new links and the
+      // legacy friendly keys (`score`) in links shared before Task 2A.
+      const rawSort = (params.get('sort') || '').toUpperCase();
+      const fromEnum = Object.keys(CATALOG_SORT_ENUMS)
+        .find(key => CATALOG_SORT_ENUMS[key] === rawSort);
+      const fromLegacy = CATALOG_SORT_VALUES.includes(rawSort.toLowerCase())
+        ? rawSort.toLowerCase()
+        : '';
+      sortElement.value = fromEnum || fromLegacy || 'popularity';
+    }
+  }
+
+  /** Populate the genre multi-select from the server's genre list. */
+  async function loadCatalogGenreOptions() {
+    const genreSelect = document.getElementById('filter-genre');
+    if (!genreSelect || genreSelect.options.length) return;
+    try {
+      const res = await fetch(`${baseURL}/genres`);
+      if (!res.ok) throw new Error(`Genres request failed: ${res.status}`);
+      const genres = await res.json();
+      genreSelect.innerHTML = (Array.isArray(genres) ? genres : [])
+        .map(genre => `<option value="${escapeHtml(String(genre))}">${escapeHtml(String(genre))}</option>`)
+        .join('');
+    } catch (error) {
+      console.error('Could not load the genre list:', error);
+    }
+  }
+
+  /**
+   * Fetch page 1 of the filtered catalog from /api/browse and render it. The
+   * URL always mirrors the current filter state; `push` records a history
+   * entry for a user-initiated change so Back restores the previous filters,
+   * while `replace` (used when rehydrating from the URL) keeps the history
+   * clean. Any pages accumulated by Load more are cleared first.
+   */
+  async function refreshCatalogPage(historyMode = 'replace', allowReset = true) {
+    const grid = document.getElementById('popular-page-grid');
+    if (!grid) return;
+
+    const requestId = ++catalogRequestId;
+    const values = catalogFormValues();
+    const nextUrl = `?${buildCatalogParams(values).toString()}`;
+    if (window.location.search !== nextUrl) {
+      window.history[historyMode === 'push' ? 'pushState' : 'replaceState']({}, '', nextUrl);
+    }
+
+    catalogPage = 1;
+    catalogHasNext = false;
+    catalogTotal = null;
+    catalogShown = 0;
+    catalogSeenIds.clear();
+
+    renderSkeletonGrid('popular-page-grid', 12);
     const count = document.getElementById('catalog-result-count');
-    const firstTitle = filtered.length ? startIndex + 1 : 0;
-    const lastTitle = Math.min(startIndex + catalogPageSize, filtered.length);
-    if (count) count.textContent = `Showing ${firstTitle}-${lastTitle} of ${filtered.length} titles`;
+    if (count) count.textContent = 'Loading catalog…';
+    setLoadMoreVisible(false);
 
-    const pagination = document.getElementById('catalog-pagination');
-    const previousButton = document.getElementById('catalog-previous-page');
-    const nextButton = document.getElementById('catalog-next-page');
-    const pageIndicator = document.getElementById('catalog-page-indicator');
-    if (pagination) pagination.hidden = totalPages <= 1;
-    if (previousButton) previousButton.disabled = catalogPage === 1;
-    if (nextButton) nextButton.disabled = catalogPage === totalPages;
-    if (pageIndicator) pageIndicator.textContent = `Page ${catalogPage} of ${totalPages}`;
+    try {
+      const res = await fetch(`${baseURL}/browse?${buildBrowseParams(values, 1).toString()}`);
+      if (requestId !== catalogRequestId) return;
+      if (!res.ok) {
+        const payload = await res.json().catch(() => null);
+        const error = new Error(payload?.message || 'Catalog request failed.');
+        error.status = res.status;
+        throw error;
+      }
+      const items = await res.json();
+      if (requestId !== catalogRequestId) return;
 
-    document.querySelectorAll('#popular-genre-filter .genre-btn').forEach(button => {
-      button.classList.toggle('active', button.dataset.genre === (genre || 'All'));
-    });
+      const list = (Array.isArray(items) ? items : []).filter(anime => !catalogSeenIds.has(anime.id));
+      list.forEach(anime => catalogSeenIds.add(anime.id));
+
+      // Pagination metadata comes from the server (AniList pageInfo), so a
+      // partial page is never mistaken for the last page.
+      catalogHasNext = res.headers.get('x-catalog-has-next') === 'true';
+      const parsedTotal = Number.parseInt(res.headers.get('x-catalog-total') || '', 10);
+      catalogTotal = Number.isInteger(parsedTotal) && parsedTotal >= 0 ? parsedTotal : null;
+      catalogShown = list.length;
+
+      renderAnimeGrid(list, 'popular-page-grid');
+      updateCatalogCount();
+      setLoadMoreVisible(catalogHasNext);
+
+      const selectedGenres = values.genre.map(value => value.toLowerCase());
+      document.querySelectorAll('#popular-genre-filter .genre-btn').forEach(button => {
+        const genre = button.dataset.genre;
+        button.classList.toggle('active', genre === 'All'
+          ? selectedGenres.length === 0
+          : selectedGenres.includes(genre.toLowerCase()));
+      });
+    } catch (error) {
+      if (requestId !== catalogRequestId) return;
+      console.error('Error loading the filtered catalog:', error);
+      // A 400 means the client sent something the server rejected: clear the
+      // filters and rebuild the URL so the page recovers instead of sticking.
+      if (error.status === 400 && allowReset) {
+        // Recover once: clear the rejected filters and rebuild the URL. The
+        // guard stops a rejected request from retrying itself forever.
+        showToast('Those filters were not valid, so they were cleared.', 'error');
+        document.getElementById('catalog-filter-form')?.reset();
+        await refreshCatalogPage('replace', false);
+        return;
+      }
+      if (error.status === 400) {
+        if (count) count.textContent = 'Those filters are not valid.';
+        return;
+      }
+      grid.innerHTML = `<div style="grid-column: 1/-1; color: var(--text-muted);">Unable to load the catalog. Please try again.</div>`;
+      if (count) count.textContent = '';
+    }
+  }
+
+  /** Refresh the result counter under the filter form. */
+  function updateCatalogCount() {
+    const count = document.getElementById('catalog-result-count');
+    if (!count) return;
+    if (!catalogShown) {
+      count.textContent = 'No titles match these filters';
+      return;
+    }
+    count.textContent = catalogTotal !== null
+      ? `Showing ${catalogShown} of ${catalogTotal} titles`
+      : `Showing ${catalogShown} titles`;
+  }
+
+  /** Show or hide the Load more control under the grid. */
+  function setLoadMoreVisible(visible) {
+    const wrap = document.getElementById('catalog-load-more');
+    if (wrap) wrap.hidden = !visible;
+  }
+
+  /**
+   * Fetch the next /api/browse page and append it to the grid. Titles already
+   * rendered are skipped, so a shifting result set can never show a duplicate,
+   * and a filter change mid-flight discards the stale page.
+   */
+  async function loadMoreCatalog() {
+    if (catalogLoading || !catalogHasNext) return;
+    const requestId = catalogRequestId;
+    const nextPage = catalogPage + 1;
+    const values = catalogFormValues();
+
+    catalogLoading = true;
+    const button = document.getElementById('catalog-load-more-btn');
+    if (button) {
+      button.disabled = true;
+      button.textContent = 'Loading…';
+    }
+
+    try {
+      const res = await fetch(`${baseURL}/browse?${buildBrowseParams(values, nextPage).toString()}`);
+      if (requestId !== catalogRequestId) return;
+      if (!res.ok) {
+        const payload = await res.json().catch(() => null);
+        const error = new Error(payload?.message || 'Catalog request failed.');
+        error.status = res.status;
+        throw error;
+      }
+      const items = await res.json();
+      if (requestId !== catalogRequestId) return;
+
+      const fresh = (Array.isArray(items) ? items : []).filter(anime => !catalogSeenIds.has(anime.id));
+      fresh.forEach(anime => catalogSeenIds.add(anime.id));
+      catalogPage = nextPage;
+      catalogShown += fresh.length;
+      catalogHasNext = res.headers.get('x-catalog-has-next') === 'true';
+
+      if (fresh.length) {
+        document.getElementById('popular-page-grid')
+          ?.insertAdjacentHTML('beforeend', fresh.map(renderAnimeCard).join(''));
+      }
+      updateCatalogCount();
+      setLoadMoreVisible(catalogHasNext);
+    } catch (error) {
+      if (requestId !== catalogRequestId) return;
+      // Keep what is already rendered; the button stays available to retry.
+      console.error('Error loading more catalog titles:', error);
+      showToast('Unable to load more titles. Please try again.', 'error');
+    } finally {
+      catalogLoading = false;
+      if (button) {
+        button.disabled = false;
+        button.textContent = 'Load more';
+      }
+    }
   }
 
   // ============================================================
@@ -460,21 +709,17 @@ document.addEventListener('DOMContentLoaded', () => {
 
   async function loadPopular() {
     renderSkeletonGrid('popular-grid', 10);
-    renderSkeletonGrid('popular-page-grid', 12);
     try {
       const res = await fetch(`${baseURL}/popular`);
       if (!res.ok) throw new Error(`Popular request failed: ${res.status}`);
       const data = await res.json();
-      catalogItems = data;
-      populateCatalogFilters(catalogItems);
+      // The home page shows a five-title strip; the Popular page's full grid is
+      // served by /api/browse through refreshCatalogPage (filters + Load more).
       renderAnimeGrid(data.slice(0, 5), 'popular-grid');
-      applyCatalogFilters();
     } catch (err) {
       console.error('Error loading popular:', err);
       const grid = document.getElementById('popular-grid');
       if (grid) grid.innerHTML = `<div style="grid-column: 1/-1; color: var(--text-muted);">Unable to load popular items.</div>`;
-      const pageGrid = document.getElementById('popular-page-grid');
-      if (pageGrid) pageGrid.innerHTML = `<div style="grid-column: 1/-1; color: var(--text-muted);">Unable to load popular items.</div>`;
     }
   }
 
@@ -1006,10 +1251,15 @@ document.addEventListener('DOMContentLoaded', () => {
 
       if (activePage.id === 'page-home') targetGridId = 'trending-grid';
       else if (activePage.id === 'page-popular') {
+        // A chip is a single-genre shortcut: it replaces any multi-select state.
         const genreSelect = document.getElementById('filter-genre');
-        if (genreSelect) genreSelect.value = genre === 'All' ? '' : genre;
+        if (genreSelect) {
+          Array.from(genreSelect.options).forEach(option => {
+            option.selected = genre !== 'All' && option.value.toLowerCase() === String(genre).toLowerCase();
+          });
+        }
         catalogPage = 1;
-        applyCatalogFilters();
+        refreshCatalogPage('push');
         return;
       }
       else if (activePage.id === 'page-movies') {
@@ -1092,6 +1342,11 @@ document.addEventListener('DOMContentLoaded', () => {
         url: '/?page=popular'
       });
       loadPopular();
+      // Filter state comes from the URL so a refresh, a shared link and
+      // Back/Forward all reproduce the same catalog view.
+      await loadCatalogGenreOptions();
+      applyCatalogFiltersFromUrl();
+      await refreshCatalogPage('replace');
     } else if (navName === 'movies') {
       updatePageSeo({
         title: 'Anime Movies Catalog — AnimeHub',
@@ -1223,10 +1478,9 @@ document.addEventListener('DOMContentLoaded', () => {
     const query = urlParams.get('q');
     const id = urlParams.get('id');
     const page = urlParams.get('page');
-    const requestedCatalogPage = Number.parseInt(urlParams.get('catalogPage') || '1', 10);
-    catalogPage = Number.isInteger(requestedCatalogPage) && requestedCatalogPage > 0
-      ? requestedCatalogPage
-      : 1;
+    // Legacy `catalogPage` links predate Load more: their filters are still
+    // rehydrated below, and paging restarts at page 1 (the next URL write
+    // normalises the stale parameter away).
 
     if (id) {
       await loadAnimeDetails(id, false);
@@ -1451,11 +1705,12 @@ document.addEventListener('DOMContentLoaded', () => {
   const filterForm = document.getElementById('catalog-filter-form');
   filterForm?.addEventListener('change', () => {
     catalogPage = 1;
-    applyCatalogFilters();
+    refreshCatalogPage('push');
   });
   filterForm?.addEventListener('reset', () => {
     catalogPage = 1;
-    setTimeout(applyCatalogFilters, 0);
+    // Wait for the form controls to actually reset before reading them back.
+    setTimeout(() => refreshCatalogPage('push'), 0);
   });
 
   const searchFilterForm = document.getElementById('search-filter-form');
@@ -1467,21 +1722,8 @@ document.addEventListener('DOMContentLoaded', () => {
     searchFilterForm?.reset();
   });
 
-  function setCatalogPage(page) {
-    catalogPage = page;
-    const params = new URLSearchParams(window.location.search);
-    params.set('page', 'popular');
-    params.set('catalogPage', String(catalogPage));
-    window.history.pushState({}, '', `?${params.toString()}`);
-    applyCatalogFilters();
-    document.getElementById('popular-page-grid')?.scrollIntoView({ block: 'start', behavior: 'smooth' });
-  }
-
-  document.getElementById('catalog-previous-page')?.addEventListener('click', () => {
-    setCatalogPage(catalogPage - 1);
-  });
-  document.getElementById('catalog-next-page')?.addEventListener('click', () => {
-    setCatalogPage(catalogPage + 1);
+  document.getElementById('catalog-load-more-btn')?.addEventListener('click', () => {
+    loadMoreCatalog();
   });
 
   // Navbar Search Trigger Toggle

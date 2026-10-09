@@ -56,12 +56,16 @@
 .catalog-filter-grid label {
   display: grid;
   gap: 6px;
+  /* Keep every control at its own height instead of stretching it to match a
+     taller neighbour such as the multi-select genre list. */
+  align-content: start;
   color: var(--text-muted);
   font-size: 13px;
   font-weight: 600;
 }
 
-.catalog-filter-grid select {
+.catalog-filter-grid select,
+.catalog-filter-grid input {
   width: 100%;
   min-height: 42px;
   padding: 8px 34px 8px 12px;
@@ -70,6 +74,13 @@
   background: var(--surface-2);
   color: var(--text);
   font: inherit;
+}
+
+/* A multi-select list needs room for several visible options and no dropdown
+   arrow padding. */
+.catalog-filter-grid select[multiple] {
+  min-height: 132px;
+  padding-right: 12px;
 }
 
 .catalog-filter-actions {
@@ -83,7 +94,7 @@
   color: var(--text-muted);
 }
 
-.catalog-pagination {
+.catalog-load-more {
   display: flex;
   align-items: center;
   justify-content: center;
@@ -91,18 +102,11 @@
   margin: 28px 0;
 }
 
-.catalog-pagination[hidden] {
+.catalog-load-more[hidden] {
   display: none;
 }
 
-.catalog-pagination span {
-  min-width: 100px;
-  color: var(--text-muted);
-  text-align: center;
-  font-size: 14px;
-}
-
-.catalog-pagination button:disabled {
+.catalog-load-more button:disabled {
   opacity: 0.5;
   cursor: not-allowed;
 }
@@ -1614,7 +1618,7 @@ footer {
   .tag,
   .genre-btn,
   .catalog-filter-actions button,
-  .catalog-pagination button,
+  .catalog-load-more button,
   .detail-actions .cta-btn,
   .cta-group .cta-btn {
     min-height: 44px;
@@ -1658,15 +1662,9 @@ footer {
     padding-inline: 16px;
   }
   .catalog-filter-actions button,
-  .catalog-pagination button {
+  .catalog-load-more button {
     width: 100%;
     justify-content: center;
-  }
-  .catalog-pagination {
-    gap: 8px;
-  }
-  .catalog-pagination span {
-    min-width: 0;
   }
   .toast {
     right: 12px;

@@ -227,34 +227,53 @@
           <section class="catalog-filters" aria-labelledby="catalog-filters-title">
             <h3 id="catalog-filters-title" class="filter-heading">Filter catalog</h3>
             <form id="catalog-filter-form" class="catalog-filter-grid">
-              <label for="filter-genre">Genre
-                <select id="filter-genre" name="genre"></select>
+              <label for="filter-genre">Genre (select one or more)
+                <select id="filter-genre" name="genre" multiple size="5" aria-describedby="filter-genre-hint"></select>
+                <span id="filter-genre-hint" class="sr-only">Hold Ctrl or Command to select more than one genre.</span>
               </label>
               <label for="filter-year">Release year
-                <select id="filter-year" name="year"></select>
+                <input id="filter-year" name="year" type="number" inputmode="numeric" min="1960" max="2099" step="1" placeholder="Any year">
               </label>
-              <label for="filter-rating">Minimum rating
-                <select id="filter-rating" name="rating">
-                  <option value="">Any rating</option>
-                  <option value="7">7.0 and up</option>
-                  <option value="8">8.0 and up</option>
-                  <option value="9">9.0 and up</option>
+              <label for="filter-season">Season
+                <select id="filter-season" name="season">
+                  <option value="">Any season</option>
+                  <option value="WINTER">Winter</option>
+                  <option value="SPRING">Spring</option>
+                  <option value="SUMMER">Summer</option>
+                  <option value="FALL">Fall</option>
                 </select>
               </label>
-              <label for="filter-studio">Studio
-                <select id="filter-studio" name="studio"></select>
+              <label for="filter-format">Format
+                <select id="filter-format" name="format">
+                  <option value="">All formats</option>
+                  <option value="TV">TV</option>
+                  <option value="MOVIE">Movie</option>
+                  <option value="OVA">OVA</option>
+                  <option value="ONA">ONA</option>
+                  <option value="SPECIAL">Special</option>
+                </select>
               </label>
-              <label for="filter-language">Language
-                <select id="filter-language" name="language"></select>
+              <label for="filter-status">Status
+                <select id="filter-status" name="status">
+                  <option value="">Any status</option>
+                  <option value="RELEASING">Airing</option>
+                  <option value="FINISHED">Completed</option>
+                  <option value="NOT_YET_RELEASED">Upcoming</option>
+                </select>
               </label>
-              <label for="filter-type">Type
-                <select id="filter-type" name="type"></select>
+              <label for="filter-score">Minimum score
+                <select id="filter-score" name="minScore">
+                  <option value="">Any score</option>
+                  <option value="70">7.0 and up</option>
+                  <option value="80">8.0 and up</option>
+                  <option value="90">9.0 and up</option>
+                </select>
               </label>
               <label for="filter-sort">Sort by
                 <select id="filter-sort" name="sort">
-                  <option value="popularity">Most Popular</option>
-                  <option value="rating">Highest Rating</option>
-                  <option value="year">Newest Year</option>
+                  <option value="popularity">Popularity</option>
+                  <option value="score">Score</option>
+                  <option value="newest">Newest</option>
                   <option value="title">Title (A-Z)</option>
                 </select>
               </label>
@@ -264,12 +283,10 @@
               </div>
             </form>
           </section>
-          <nav class="catalog-pagination" id="catalog-pagination" aria-label="Catalog pages" hidden>
-            <button type="button" class="cta-btn secondary-btn" id="catalog-previous-page">Previous</button>
-            <span id="catalog-page-indicator" aria-live="polite"></span>
-            <button type="button" class="cta-btn secondary-btn" id="catalog-next-page">Next</button>
-          </nav>
           <div class="anime-grid large-grid" id="popular-page-grid"></div>
+          <div class="catalog-load-more" id="catalog-load-more" hidden>
+            <button type="button" class="cta-btn secondary-btn" id="catalog-load-more-btn">Load more</button>
+          </div>
         </div>
       </div>
     </div>
