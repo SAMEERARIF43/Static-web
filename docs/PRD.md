@@ -25,7 +25,7 @@ Every legal page and the site footer repeat this non-hosting statement. **AnimeH
 | Page | Route form | Purpose |
 | --- | --- | --- |
 | Home | `/` | Hero + search + Top Searches + genre bar + Trending Now + Most Popular preview |
-| Most Popular | `/?page=popular` | Full catalog with 7 filters, 4 sort modes, pagination (24/page), shareable `catalogPage` URL |
+| Most Popular | `/?page=popular` | Full catalog with 6 filters (genre multi-select, year, season, format, status, min score), 4 sort modes, Load more (30/page), shareable filter URL |
 | Movies | `/?page=movies` | Movies filtered from the live catalog |
 | TV Series | `/?page=series` | Catalog view — **currently unfiltered** (see Product limitations) |
 | Watchlist | `/?page=watchlist` | Saved titles (guest-local or cloud) |

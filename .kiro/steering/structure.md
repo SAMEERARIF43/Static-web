@@ -5,6 +5,7 @@ Static-web/                     ← project root (git repo)
 ├── server.js                   ← Express 5 backend (single file, CommonJS)
 ├── search-utils.js             ← search, ranking, fuzzy match helpers (shared by server + tests)
 ├── catalog-utils.js            ← AniList → catalog mapping, merge policy (shared by server + tests)
+├── catalog-filters.js          ← catalog filter parsing/validation + GraphQL query builder (shared by server + tests)
 ├── package.json
 ├── package-lock.json
 ├── .env                        ← local secrets (gitignored, never committed)
@@ -63,6 +64,7 @@ Static-web/                     ← project root (git repo)
 | `GET /api/site-config` | siteUrl, contactEmail, dmcaEmail, justWatchRegion |
 | `GET /api/trending` | Live AniList → curated fallback |
 | `GET /api/popular` | Live AniList → curated fallback |
+| `GET /api/browse` | Strict filters (allowlists, page 1–50, perPage ≤30) + Load more paging; AniList variables → curated fallback; 5-min cache, max 100 entries |
 | `GET /api/movies` | Live AniList (MOVIE format) → curated fallback |
 | `GET /api/series` | Live AniList (TV/TV_SHORT) → curated fallback |
 | `GET /api/genres` | Live AniList genre list + curated genres |

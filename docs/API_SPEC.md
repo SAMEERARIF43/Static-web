@@ -21,6 +21,7 @@
 | GET | `/api/popular` | Merged popular catalog | AniList `POPULARITY_DESC` + curated | none | 10-min in-memory |
 | GET | `/api/movies` | Anime films (live) | AniList `format_in: [MOVIE]` + curated | none | 10-min in-memory |
 | GET | `/api/series` | TV series (live) | AniList `format_in: [TV, TV_SHORT]` + curated | none | 10-min in-memory |
+| GET | `/api/browse?…` | Strict browse backing the Popular page + **Load more**: `genre`, `year` (1960…current+1), `season`, `format` (TV/MOVIE/OVA/ONA/SPECIAL), `status` (RELEASING/FINISHED/NOT_YET_RELEASED), `minScore` 0–100, `sort` (MediaSort enums), `page` 1–50, `perPage` ≤30; repeated params rejected | AniList filtered page → curated fallback | none | 5-min in-memory (≤100, single-flight) | ⚪ |
 | GET | `/api/search?q=` | Title search (10 results); 1-100 characters, empty or control-character query → **400** | AniList → curated fallback | none | ⚫ ⚪ |
 | GET | `/api/genre/:genre` | Genre filter (optional `?type=series\|movies`) | AniList genre query → curated fallback | none | 10-min in-memory (≤30 genres) |
 | GET | `/api/detail/:id` | **Retired** — permanent redirect to `/api/anime/:id` | — | none | n/a | 🟡 |
@@ -117,7 +118,29 @@ Those security headers apply to **every** response, including the JSON 404 for u
 
 ### `GET /api/genres` 🟡
 - **Response:** alphabetically sorted union of AniList's `GenreCollection` (with adult genres removed) and genres present only in the curated catalog. **Observed 19 items** including `Comedy` and `Shounen`, excluding `Hentai`.
-- **Unused:** the frontend derives the catalog page's genre options client-side from `/api/popular`.
+- **Used by:** the Popular page's genre multi-select (`loadCatalogGenreOptions()` in `public/script.js`) fetches this list on first visit, so the options are not derived client-side from `/api/popular`.
+
+### `GET /api/catalog` — removed (Task 2A follow-up, 2026-10-08)
+Superseded by `GET /api/browse`, which the Popular page had already switched to and which validates strictly (fixed enums, `page` 1–50, `perPage` ≤30, repeated params rejected). Nothing called this route — not the frontend, and no test after their migration — so the route, its `proxyLimiter` mount, its private cache and `parseCatalogFilters` were removed before any commit. The historical contract lives in git history and in the Feature 1–2 entries of `docs/CHANGELOG.md`.
+
+### `GET /api/browse` (Task 2A, 2026-10-08)
+- **Purpose:** the strict browse endpoint behind the Popular page's filter form and **Load more** button: fixed enum spellings, a tight year range, a small page window, and repeated parameters rejected outright.
+- **Parameters** (all optional; each has an allowlist or a numeric range — the first violation answers **400** `{ message }`):
+  - `genre` — comma-separated multi-select (max 10, each ≤50 chars, letters/digits/`'.-` charset), allowlisted against the live+curated genre list with adult genres excluded from that list, so `genre=Hentai` → **400** `Unknown genre: "Hentai".`
+  - `year` — whole number **1960 … (current year + 1)**; otherwise **400**.
+  - `season` — `WINTER | SPRING | SUMMER | FALL` (case-normalized); otherwise **400**.
+  - `format` — `TV | MOVIE | OVA | ONA | SPECIAL` (case-normalized); otherwise **400**.
+  - `status` — `RELEASING | FINISHED | NOT_YET_RELEASED` (case-normalized); otherwise **400**.
+  - `minScore` — whole number **0–100**; otherwise **400**.
+  - `sort` — `POPULARITY_DESC | SCORE_DESC | START_DATE_DESC | TITLE_ROMAJI` (default `POPULARITY_DESC`, case-normalized). The catalog's friendly keys (`score` …) are **not** accepted here; otherwise **400**.
+  - `page` — whole number **1–50** (default 1); otherwise **400**. The SPA's `?page=popular` is an unknown *value* and answers **400** — the client builds its API query separately and never sends the route marker.
+  - `perPage` — whole number **1–30** (default 30); otherwise **400**.
+  - A parameter supplied more than once (`?year=2020&year=2021`) → **400** `year must not be provided more than once.` Unrelated parameter names are ignored.
+- **Response / headers:** a plain list body; `X-Catalog-Source: anilist | curated`, `X-Catalog-Page` (AniList `pageInfo.currentPage`), `X-Catalog-Per-Page`, `X-Catalog-Total-Pages`, `X-Catalog-Has-Next` (AniList `pageInfo.hasNextPage`, or the curated fallback's local arithmetic), `X-Catalog-Total` when known. Adult content is excluded (`isAdult: false`) and every user value is bound as a GraphQL **variable**.
+- **Rate limiting:** the AniList-proxy limit (`60;w=60`, same as `/api/search`) in addition to the global `/api` limit.
+- **Caching:** **5-minute** in-memory TTL, **max 100 entries**, single-flight, keyed by a **normalized** `browseCacheKey` (genres lowercased + sorted, all filters, `page`, `perPage`) — `?genre=Comedy,Action&sort=POPULARITY_DESC` and `?genre=action,comedy&sort=popularity_desc` share one entry. Fallback chain: fresh cache → AniList → stale cache → curated catalog filtered and paged locally with the requested `perPage`; a fallback is never cached, so the next request retries AniList.
+- **Frontend:** the Popular page fetches this route; filters are mirrored into the shareable URL (`?page=popular&genre=…&sort=SCORE_DESC`), the **Load more** button appends `page + 1` with client-side dedupe by `id`, and the Previous/Next control is gone. Legacy `sort=score`-style links still rehydrate; out-of-range URL values (e.g. `year=2100`, `format=TV_SHORT`) are dropped client-side before the request.
+- **Verified 2026-10-08:** default → 30 items, `X-Catalog-Source: anilist`, `X-Catalog-Total: 5000` (AniList caps `pageInfo.total`), `RateLimit-Policy: 60;w=60` · `?page=2` → no overlap with page 1 · `?perPage=10` → 10 items · `?format=MOVIE` → films only · `?year=2024` → all 2024 · `?page=popular`, `?perPage=31`, `?page=51`, `?year=1959`, `?sort=score`, `?genre=Hentai`, `?year=2020&year=2021` → **400** · AniList outage → curated list with `X-Catalog-Source: curated`, `?page=2` → empty + `X-Catalog-Has-Next: false` · browser: Load more 30 → 60 cards with 0 duplicate ids.
 
 ### `GET /api/anime/:id`
 - **Parameters:** `id` — positive decimal AniList `Int` (1–2,147,483,647); non-numeric or non-integer path values → **400**. IDs above 100,000 are accepted; the former arbitrary cap incorrectly rejected catalog titles such as AniList ID `206949`.
@@ -135,7 +158,7 @@ Returns JSON `{ message }`:
 | Conflict | Resolution |
 | --- | --- |
 | `/api/detail/:id` vs `/api/anime/:id` (two ID spaces) | The local id space is gone: `ANIME_DB` entries carry `anilistId` only, every catalog item leaves with `id === anilistId`, and `/api/detail/:id` is a 308 redirect to `/api/anime/:id`. |
-| `/api/genre/:genre` + `/api/genres` vs client-side filtering | `/api/genre/:genre` and `/api/genres` are now live-backed from the same AniList source the client filters. Genre buttons on Home/Series use the endpoint; the Popular page still filters client-side over `/api/popular` (same live data). |
+| `/api/genre/:genre` + `/api/genres` vs client-side filtering | `/api/genre/:genre` and `/api/genres` are live-backed from the same AniList source the client filters. Genre buttons on Home/Series use the endpoint. As of Phase 2 (2026-10-08) the Popular page's catalog form no longer filters client-side: it uses `GET /api/browse` (Task 2A), which validates every filter server-side, binds each value as a GraphQL variable and paginates from AniList `pageInfo`. |
 | `/api/trending` vs `/api/popular` | `/api/trending` is now a real AniList `TRENDING_DESC` query, so the name matches the behaviour. |
 
 ## 3. Missing endpoints 🆕
@@ -152,8 +175,8 @@ Needed for features currently absent (see `docs/FEATURES.md`, `docs/WATCH_SYSTEM
 ## 4. Cross-cutting gaps
 
 - **Rate limiting is process-local:** counters reset on restart and are not shared across instances; configure `TRUST_PROXY` to match the actual production proxy topology.
-- **No server-side caching** for `/api/search` and `/api/anime/:id` (the four catalog lists and genre queries are cached for 10 minutes).
-- **Every list endpoint is capped** at 20–50 items and there is no pagination or `offset` support.
+- **No server-side caching** for `/api/search` and `/api/anime/:id` (the four catalog lists and genre queries are cached for 10 minutes; `/api/browse` for 5 minutes).
+- **Fixed-size list endpoints** return 20–50 items; `/api/browse` pages 30 titles at a time (`page` 1–50, `perPage` ≤30), but no endpoint supports `offset`.
 - **No API versioning** and no machine-readable schema (OpenAPI) — a candidate for a future `docs/` addition.
 - **Request correlation is minimal:** every response carries an `X-Request-ID` and the shared error handler logs it, but there is no structured request logging — only ad-hoc `console.log`/`console.error`/`console.warn`.
 
@@ -197,10 +220,8 @@ line 193–194 asserts it returns 404 — confirmed passing.
 | `GET /api/health` | Internal health check — not needed by the browser |
 | `GET /robots.txt`, `GET /sitemap.xml` | Crawlers only |
 | `GET /api/detail/:id` | Retired; frontend calls `/api/anime/:id` directly |
-| `GET /api/genres` | Genre buttons derive options from `/api/popular` data client-side |
 
-`/api/genres` is unused by the frontend by design (avoids an extra round-trip).
-The tests still exercise it.
+All remaining API routes are called by the frontend or exercised by the tests.
 
 ### 5.4 Rate-limit prefix note
 
