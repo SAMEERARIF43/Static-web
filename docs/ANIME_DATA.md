@@ -78,7 +78,7 @@ There is **no** database of anime titles, no CMS, no scraper, no local JSON cata
 | Popular (home preview + catalog page) | `/api/popular` | live merge; 10-min cached |
 | Movies page | `/api/movies` | `format_in: [MOVIE]`, films only. **Verified 50 films** (was 3) |
 | TV Series page | `/api/series` | `format_in: [TV, TV_SHORT]`, television only, plus a client-side format check. **Verified 51 titles, 0 films** (previously rendered every type) |
-| Genre buttons (home / series) | `/api/genre/:genre` (+ `?type=series` on the Series page) | live genre query; `Comedy` → 30 (was 0). Popular page still filters client-side over live data |
+| Genre buttons (home / series) | `/api/genre/:genre` (+ `?type=series` on the Series page) | live genre query; `Comedy` → 30 (was 0). The Popular page's catalog form filters server-side through `/api/browse` (Task 2A, 2026-10-08) |
 | Search results | AniList → curated fallback | live; 10 results; client-side filters/sort |
 | Detail page | AniList | live per view; no cache |
 

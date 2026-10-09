@@ -1,11 +1,11 @@
 # UI_SPEC — user interface (current)
 
 > Snapshot: 2026-10-05. Documents the UI as built. **No redesign is proposed here.**
-> Sources: `public/index.html` (475 lines), `public/style.css` (1687 lines), `public/script.js`, `public/auth-ui.js`, `public/legal.css`.
+> Sources: `public/index.html` (493 lines), `public/style.css` (1687 lines), `public/script.js`, `public/auth-ui.js`, `public/legal.css`.
 
 ## 1. Structure and navigation (CURRENT)
 
-- Single-page application: one HTML document containing eight `.page` sections; exactly one has `.active` at a time. Page switching is done in `navigateToPage()`; URLs are updated with `?page=`, `?q=`, `?id=`, `?catalogPage=`, and browser Back/Forward re-runs `initPage()`.
+- Single-page application: one HTML document containing eight `.page` sections; exactly one has `.active` at a time. Page switching is done in `navigateToPage()`; URLs are updated with `?page=`, `?q=`, `?id=` (the Popular page additionally mirrors its filter parameters), and browser Back/Forward re-runs `initPage()`.
 - Pages: `#page-home`, `#page-popular`, `#page-movies`, `#page-series`, `#page-watchlist`, `#page-search`, `#page-detail`, `#page-profile`.
 - Navbar (`.topnav`, `#navbar`): brand logo (Anime**Hub**), mobile menu toggle (hamburger, ARIA-expanded), links — Profile (hidden unless signed in), Log In, Log Out (hidden unless signed in), Home, Movies, TV Series, Most Popular, My Watchlist — plus a search icon that toggles a drop-down search overlay with autocomplete.
 - Navbar gains a `scrolled` class past 30 px of scroll (glassmorphism effect).
@@ -28,10 +28,10 @@
 
 ## 4. Popular page (CURRENT)
 
-- Heading, a quick genre bar (All, Action, Adventure, Fantasy, Supernatural, Drama), then the **Filter catalog** panel: genre, release year, minimum rating, studio, language, type, and sort (Most Popular / Highest Rating / Newest Year / Title A–Z), with "Clear filters" and a live result count.
-- Pagination bar (Previous / "Page X of Y" / Next), hidden when a single page exists.
+- Heading, a quick genre bar (All, Action, Adventure, Fantasy, Supernatural, Drama), then the **Filter catalog** panel: multi-select genre (populated from `/api/genres`), release year (1960+), season, format, status, minimum score (7.0 / 8.0 / 9.0), and sort (Popularity / Score / Newest / Title A–Z), with a **Clear filters** reset and a live result count.
+- Results load from `GET /api/browse` one 30-title page at a time; a **Load more** button below the grid (hidden when the server reports no next page) appends the next page, deduplicating by id so no card repeats. The old Previous / "Page X of Y" / Next bar is gone.
 - The filter form is a real `<form>`: `change` re-applies filters immediately and `reset` re-applies after clearing.
-- URL state: `?page=popular&catalogPage=n`; changing pages scrolls the grid into view.
+- URL state: `?page=popular&genre=…&year=…&sort=SCORE_DESC` (default values omitted). Refreshing, sharing the link and Back/Forward all restore the same view; invalid or legacy URL values (`sort=score`, `year=2100`, `catalogPage`) are normalized or dropped safely.
 
 ## 5. Movies / TV Series pages (CURRENT)
 
