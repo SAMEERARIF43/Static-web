@@ -370,6 +370,100 @@ async function runOutageAndHeaderScenario(deadPort, port) {
     );
     console.log('AniList outage falls back to curated data with honest status codes.');
 
+    // Score on the 0-100 scale, used by the browse assertions below.
+    const scoreOf = item => (Number.isFinite(item.averageScore) && item.averageScore > 0
+      ? item.averageScore
+      : Number(item.rating || 0) * 10);
+
+    // ---- /api/browse: strict validation and honest curated fallback ----
+    const browseFallback = await request(baseURL, '/api/browse');
+    assert.strictEqual(browseFallback.statusCode, 200, 'The browse endpoint should answer during an outage');
+    assert.strictEqual(
+      browseFallback.headers['x-catalog-source'],
+      'curated',
+      'A browse fallback response must be labelled as curated'
+    );
+    assert.strictEqual(
+      browseFallback.headers['ratelimit-policy'],
+      '60;w=60',
+      'The browse endpoint should carry the AniList-proxy limit'
+    );
+    assert(Array.isArray(browseFallback.body) && browseFallback.body.length > 0, 'The curated catalog should answer browse');
+    assert(
+      browseFallback.body.every(anime => anime.id === anime.anilistId),
+      'Browse fallback entries must keep the AniList ID as their only id'
+    );
+    assert.strictEqual(browseFallback.headers['x-catalog-page'], '1', 'The browse page number must be reported');
+    assert.strictEqual(browseFallback.headers['x-catalog-per-page'], '30', 'The browse page size must be reported');
+    assert.strictEqual(browseFallback.headers['x-catalog-total-pages'], '1', 'The curated catalog fits one browse page');
+    assert.strictEqual(browseFallback.headers['x-catalog-has-next'], 'false', 'The curated catalog has no next browse page');
+
+    // Load more stops honestly on the curated fallback.
+    const browseSecondPage = await request(baseURL, '/api/browse?page=2');
+    assert.strictEqual(browseSecondPage.statusCode, 200, 'A second browse page must still answer');
+    assert.deepStrictEqual(browseSecondPage.body, [], 'The curated catalog has no second browse page');
+    assert.strictEqual(browseSecondPage.headers['x-catalog-has-next'], 'false', 'There is no next browse page');
+
+    // Filters, sort and composition on the fallback.
+    const browseCombined = await request(baseURL, '/api/browse?genre=Action&sort=SCORE_DESC&minScore=80');
+    assert.strictEqual(browseCombined.statusCode, 200, 'Browse filters should compose');
+    assert(browseCombined.body.length > 0, 'The combined browse filter should match curated titles');
+    assert(
+      browseCombined.body.every(anime =>
+        (anime.genre || []).map(g => g.toLowerCase()).includes('action') && scoreOf(anime) >= 80),
+      'Combined browse filters must all be enforced'
+    );
+    for (let index = 1; index < browseCombined.body.length; index += 1) {
+      assert(
+        scoreOf(browseCombined.body[index - 1]) >= scoreOf(browseCombined.body[index]),
+        'Browse SCORE_DESC sort must be descending'
+      );
+    }
+
+    const browseStatus = await request(baseURL, '/api/browse?status=RELEASING');
+    assert.strictEqual(browseStatus.statusCode, 200, 'A browse status filter should be accepted');
+    assert(browseStatus.body.length > 0, 'The airing filter should match curated titles');
+    assert(
+      browseStatus.body.every(anime => ['Airing', 'RELEASING'].includes(String(anime.status))),
+      'Browse status must be enforced on the fallback results'
+    );
+
+    // Formats no curated title satisfies return an honest empty list.
+    const browseMovies = await request(baseURL, '/api/browse?format=MOVIE');
+    assert.strictEqual(browseMovies.statusCode, 200, 'A browse format filter should be accepted');
+    assert.deepStrictEqual(browseMovies.body, [], 'No curated title is a film, so the browse result must be empty');
+
+    // ---- invalid browse parameters are rejected during the outage too ----
+    const invalidBrowseQueries = [
+      'genre=NotARealGenre',
+      'genre=%3Cscript%3E',
+      'season=MONSOON',
+      'format=HOLOGRAM',
+      'format=TV_SHORT',
+      'status=HIATUS',
+      'minScore=101',
+      'minScore=-5',
+      'year=1959',
+      'sort=DROP_TABLE',
+      'sort=score', // /api/browse only accepts the four enum spellings
+      'page=popular',
+      'page=51',
+      'perPage=31',
+      'year=2020&year=2021'
+    ];
+    for (const query of invalidBrowseQueries) {
+      const invalid = await request(baseURL, `/api/browse?${query}`);
+      assert.strictEqual(invalid.statusCode, 400, `Invalid browse filter "${query}" must be rejected`);
+      assert.strictEqual(typeof invalid.body.message, 'string', `Invalid "${query}" must explain the error`);
+      assert(
+        !/ECONNREFUSED|127\.0\.0\.1|stack/i.test(JSON.stringify(invalid.body)),
+        `Invalid "${query}" must not leak upstream details`
+      );
+      assertSecurityHeaders(invalid, `browse 400 for ${query}`);
+    }
+
+    console.log('Browse validates strictly, falls back to the curated catalog and paginates honestly.');
+
     // ---- rate limits advertise their scope and do not throttle config ----
     const health = await request(baseURL, '/api/health');
     assert.strictEqual(health.statusCode, 200, 'The health endpoint should answer');

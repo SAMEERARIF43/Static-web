@@ -9,6 +9,14 @@ const {
   searchAnimeLocalFuzzy
 } = require('./search-utils');
 const { mapAniListMediaToCatalogItem, mergeAniListCatalog, withCanonicalId } = require('./catalog-utils');
+const {
+  boundedCacheSet,
+  browseCacheKey,
+  buildCatalogGraphQL,
+  filterCatalogLocally,
+  normalizeStatus,
+  parseBrowseFilters
+} = require('./catalog-filters');
 
 const TEST_PORT = process.env.TEST_PORT || 3001;
 const baseURL = `http://localhost:${TEST_PORT}`;
@@ -75,7 +83,254 @@ function waitForServer(server) {
   });
 }
 
+/**
+ * Unit checks for the pieces `/api/browse` shares with the catalog pipeline:
+ * the query builder (GraphQL variables, pageInfo, unset-argument rules),
+ * status normalization and the curated fallback filter.
+ * Pure functions only — no server and no network.
+ */
+function assertSharedCatalogHelpers() {
+  const genres = ['Action', 'Adventure', 'Sci-Fi', 'Drama', 'Comedy'];
+  const options = { knownGenres: genres };
+
+  const valid = parseBrowseFilters(
+    {
+      genre: 'Action,Adventure',
+      year: '2026',
+      season: 'summer',
+      format: 'tv',
+      status: 'releasing',
+      minScore: '80',
+      sort: 'score_desc',
+      page: '3',
+      perPage: '20'
+    },
+    options
+  );
+  assert.deepStrictEqual(valid.errors, [], 'A valid filter set should parse without errors');
+
+  // Deduplication is case-insensitive and keeps the canonical AniList spelling.
+  const dedupe = parseBrowseFilters({ genre: 'sci-fi,SCI-FI, Action' }, options);
+  assert.deepStrictEqual(dedupe.filters.genres, ['Sci-Fi', 'Action'], 'Genres should dedupe and keep canonical casing');
+
+  // The document binds values as variables; no user value is interpolated.
+  const { query, variables } = buildCatalogGraphQL(valid.filters, { perPage: valid.perPage });
+  assert(query.includes('$genre_in'), 'The genre filter must be a GraphQL variable');
+  assert(query.includes('sort: $sort'), 'The sort must be a GraphQL variable');
+  assert(!query.includes('Action'), 'No user-supplied genre may be interpolated into the document');
+  assert(!query.includes('SCORE_DESC'), 'No user-supplied sort may be interpolated into the document');
+  assert(query.includes('pageInfo'), 'The query must request pageInfo so pagination totals are real');
+  assert(query.includes('hasNextPage'), 'The query must request hasNextPage');
+  assert.deepStrictEqual(variables.sort, ['SCORE_DESC'], 'Sort should map to a whitelisted AniList enum list');
+  assert.deepStrictEqual(variables.genre_in, ['Action', 'Adventure'], 'Genres should be bound as a variable');
+  assert.strictEqual(variables.seasonYear, 2026, 'The year should be bound as a variable');
+  assert.strictEqual(variables.minScore, 80, 'The minimum score should be bound as a variable');
+  assert.strictEqual(variables.page, 3, 'The page should be bound as a variable');
+
+  // Unset filters must be omitted: AniList rejects some null arguments
+  // ("Illegal operator and value combination") and treats others as a filter.
+  const bare = buildCatalogGraphQL(parseBrowseFilters({}, options).filters);
+  assert(!bare.query.includes('averageScore_greater'), 'An unset minimum score must not be sent');
+  assert(!bare.query.includes('genre_in'), 'An unset genre filter must not be sent');
+  assert(!bare.query.includes('season: $season'), 'An unset season must not be sent');
+  assert(!bare.query.includes('seasonYear: $seasonYear'), 'An unset year must not be sent');
+  assert(!bare.query.includes('status: $status'), 'An unset status must not be sent');
+  assert(!bare.query.includes('format: $format'), 'An unset format must not be sent');
+  assert(!Object.hasOwn(bare.variables, 'minScore'), 'Unset variables must be omitted from the payload');
+  assert(!Object.hasOwn(bare.variables, 'season'), 'Unset season variables must be omitted');
+  assert.deepStrictEqual(bare.variables.sort, ['POPULARITY_DESC'], 'The default sort should be popularity');
+
+  // Status normalization understands both AniList enums and curated labels.
+  assert.strictEqual(normalizeStatus('RELEASING'), 'RELEASING');
+  assert.strictEqual(normalizeStatus('Airing'), 'RELEASING');
+  assert.strictEqual(normalizeStatus('Completed'), 'FINISHED');
+  assert.strictEqual(normalizeStatus('not yet released'), 'NOT_YET_RELEASED');
+  assert.strictEqual(normalizeStatus('bogus'), '');
+
+  // Local fallback filtering mirrors the AniList query semantics.
+  const items = [
+    { id: 1, title: 'Alpha', genre: ['Action'], rating: 9.1, type: 'TV', year: 2024, status: 'Completed', season: 'SUMMER' },
+    { id: 2, title: 'Beta', genre: ['Drama'], rating: 7.2, type: 'TV', year: 2019, status: 'Airing', season: 'FALL' },
+    { id: 3, title: 'Gamma', genre: ['Action', 'Drama'], rating: 8.5, type: 'MOVIE', year: 2015, status: 'Upcoming', season: 'SUMMER' }
+  ];
+  const ids = (filters) => filterCatalogLocally(items, filters).map(item => item.id);
+  assert.deepStrictEqual(ids({ genres: ['Action'] }), [1, 3], 'Genre filter should match any selected genre');
+  assert.deepStrictEqual(ids({ genres: ['Drama'], format: 'MOVIE' }), [3], 'Format should narrow the genre match');
+  assert.deepStrictEqual(ids({ status: 'RELEASING' }), [2], 'Status should match via the curated label');
+  assert.deepStrictEqual(ids({ minScore: 85 }), [1, 3], 'Minimum score should use the 0-100 scale');
+  assert.deepStrictEqual(ids({ season: 'SUMMER' }), [1, 3], 'Season should filter case-insensitively');
+  assert.deepStrictEqual(ids({ year: 2024 }), [1], 'Year should filter exactly');
+  assert.deepStrictEqual(ids({ sort: 'score' }), [1, 3, 2], 'Score sort should be descending');
+  assert.deepStrictEqual(ids({ sort: 'newest' }), [1, 2, 3], 'Newest sort should be year descending');
+  assert.deepStrictEqual(ids({ sort: 'title' }), [1, 2, 3], 'Title sort should be alphabetical');
+  assert.deepStrictEqual(ids({ genres: ['Action'], sort: 'score' }), [1, 3], 'Filter and sort should compose');
+  assert.deepStrictEqual(filterCatalogLocally(null, { genres: ['Action'] }), [], 'A missing list should filter to empty');
+  console.log('Shared query builder, status normalization and local fallback verified.');
+}
+
+/**
+ * Unit checks for the stricter `/api/browse` parser and its cache key.
+ * Pure functions only — no server and no network.
+ */
+function assertBrowseFilterParsing() {
+  const genres = ['Action', 'Adventure', 'Sci-Fi', 'Drama', 'Comedy'];
+  const options = { knownGenres: genres };
+
+  // ---- a complete, valid filter set ----
+  const valid = parseBrowseFilters(
+    {
+      genre: 'Action,Adventure',
+      year: '2026',
+      season: 'spring',
+      format: 'tv',
+      status: 'releasing',
+      minScore: '80',
+      sort: 'score_desc',
+      page: '3',
+      perPage: '20'
+    },
+    options
+  );
+  assert.deepStrictEqual(valid.errors, [], 'A valid browse filter set should parse without errors');
+  assert.deepStrictEqual(valid.filters.genres, ['Action', 'Adventure'], 'Multiple browse genres should be accepted');
+  assert.strictEqual(valid.filters.year, 2026, 'A valid browse year should be accepted');
+  assert.strictEqual(valid.filters.season, 'SPRING', 'Browse seasons should normalize to the AniList enum');
+  assert.strictEqual(valid.filters.format, 'TV', 'Browse formats should normalize to the AniList enum');
+  assert.strictEqual(valid.filters.status, 'RELEASING', 'Browse status should normalize to the AniList enum');
+  assert.strictEqual(valid.filters.minScore, 80, 'A valid browse minimum score should be accepted');
+  assert.strictEqual(valid.filters.sort, 'score', 'Browse sorts should map to the shared sort keys');
+  assert.strictEqual(valid.filters.page, 3, 'A valid browse page should be accepted');
+  assert.strictEqual(valid.perPage, 20, 'perPage should be parsed alongside the filters');
+
+  // ---- defaults ----
+  const empty = parseBrowseFilters({}, options);
+  assert.deepStrictEqual(empty.errors, [], 'An empty browse query should be valid');
+  assert.strictEqual(empty.filters.page, 1, 'The default browse page should be 1');
+  assert.strictEqual(empty.perPage, 30, 'The default browse page size should be 30');
+  assert.strictEqual(empty.filters.sort, 'popularity', 'The default browse sort should be POPULARITY_DESC');
+
+  // ---- every allowlist or range violation is rejected with an explanation ----
+  const rejected = [
+    [{ genre: 'NotAGenre' }, /Unknown genre/],
+    [{ genre: 'Hentai' }, /Unknown genre/], // adult genres are not in the allowlist
+    [{ genre: 'Action,Hentai' }, /Unknown genre/],
+    [{ season: 'MONSOON' }, /Season must be/],
+    [{ format: 'HOLOGRAM' }, /Format must be/],
+    [{ format: 'TV_SHORT' }, /Format must be/], // not in the browse allowlist
+    [{ status: 'HIATUS' }, /Status must be/],
+    [{ minScore: '101' }, /Minimum score/],
+    [{ minScore: '-1' }, /Minimum score/],
+    [{ minScore: 'high' }, /Minimum score/],
+    [{ year: '1959' }, /Year must be/], // 1960 is the floor
+    [{ year: 'soon' }, /Year must be/],
+    [{ year: '99999999999999999999' }, /whole number/], // oversized numbers are not safe integers
+    [{ sort: 'DROP_TABLE' }, /Sort must be/],
+    [{ sort: 'score' }, /Sort must be/], // only the four enum spellings
+    [{ page: '0' }, /Page must be/],
+    [{ page: '51' }, /Page must be/],
+    [{ page: 'abc' }, /Page must be/],
+    [{ page: 'popular' }, /Page must be/], // the SPA route marker is not a page
+    [{ perPage: '31' }, /perPage must be/],
+    [{ perPage: '0' }, /perPage must be/],
+    [{ perPage: 'lots' }, /perPage must be/],
+    [{ genre: 'Action,<script>' }, /not allowed/],
+    [{ genre: `Action,${'x'.repeat(51)}` }, /characters or fewer/],
+    [{ genre: 'A,B,C,D,E,F,G,H,I,J,K' }, /at most/]
+  ];
+  for (const [query, expected] of rejected) {
+    const result = parseBrowseFilters(query, options);
+    assert(result.errors.length > 0, `Invalid browse input ${JSON.stringify(query)} should be rejected`);
+    assert(
+      expected.test(result.errors[0]),
+      `Invalid browse input ${JSON.stringify(query)} should explain why, got: ${result.errors[0]}`
+    );
+  }
+
+  // ---- repeated (array-valued) parameters are rejected, never truncated ----
+  const repeated = [
+    { year: ['2020', '2021'] },
+    { page: ['1', '2'] },
+    { sort: ['SCORE_DESC', 'TITLE_ROMAJI'] },
+    { perPage: ['10', '20'] }
+  ];
+  for (const query of repeated) {
+    const result = parseBrowseFilters(query, options);
+    assert(result.errors.length > 0, `Repeated browse param ${JSON.stringify(query)} should be rejected`);
+    assert(
+      /must not be provided more than once/.test(result.errors[0]),
+      `Repeated browse param ${JSON.stringify(query)} should say so, got: ${result.errors[0]}`
+    );
+  }
+  // URLSearchParams exposes repeats through getAll().
+  const repeatedUrl = parseBrowseFilters(new URLSearchParams('genre=Action&genre=Comedy'), options);
+  assert(
+    /must not be provided more than once/.test(repeatedUrl.errors[0] || ''),
+    'Repeated URL parameters must be rejected'
+  );
+
+  // Unrelated parameter names stay ignored (the SPA query string shares the URL).
+  const unrelated = parseBrowseFilters({ foo: 'bar', q: 'naruto' }, options);
+  assert.deepStrictEqual(unrelated.errors, [], 'Unrelated browse parameters must be ignored');
+
+  // ---- cache-key normalization ----
+  const orderA = parseBrowseFilters({ genre: 'Comedy,Action', sort: 'POPULARITY_DESC', page: '2' }, options);
+  const orderB = parseBrowseFilters({ genre: 'action,comedy', sort: 'popularity_desc', page: '2' }, options);
+  assert.strictEqual(
+    browseCacheKey(orderA.filters, orderA.perPage),
+    browseCacheKey(orderB.filters, orderB.perPage),
+    'Genre order and case must normalize to one cache entry'
+  );
+  const otherPage = parseBrowseFilters({ genre: 'comedy,action', page: '3' }, options);
+  assert.notStrictEqual(
+    browseCacheKey(orderB.filters, orderB.perPage),
+    browseCacheKey(otherPage.filters, otherPage.perPage),
+    'Different pages must not share a cache entry'
+  );
+  const otherSize = parseBrowseFilters({ genre: 'comedy,action', page: '2', perPage: '10' }, options);
+  assert.notStrictEqual(
+    browseCacheKey(orderB.filters, orderB.perPage),
+    browseCacheKey(otherSize.filters, otherSize.perPage),
+    'Different page sizes must not share a cache entry'
+  );
+  const extraFilter = parseBrowseFilters({ genre: 'comedy,action', page: '2', minScore: '80' }, options);
+  assert.notStrictEqual(
+    browseCacheKey(orderB.filters, orderB.perPage),
+    browseCacheKey(extraFilter.filters, extraFilter.perPage),
+    'An extra filter must not reuse the unfiltered cache entry'
+  );
+
+  // ---- cache limit: bounded insertion evicts the oldest entry (FIFO) ----
+  // This is the exact helper `cacheBrowseQuery` delegates to in server.js,
+  // so the browse cache's "max 100 entries, no unbounded growth" guarantee is
+  // covered without booting the server.
+  const bounded = new Map();
+  for (let index = 0; index < 99; index += 1) {
+    boundedCacheSet(bounded, `key-${index}`, index, 100);
+    assert.strictEqual(bounded.size, index + 1, 'Inserts below the limit must not evict');
+  }
+  boundedCacheSet(bounded, 'key-99', 99, 100);
+  assert.strictEqual(bounded.size, 100, 'The browse cache must hold exactly 100 entries at capacity');
+  boundedCacheSet(bounded, 'key-100', 100, 100);
+  assert.strictEqual(bounded.size, 100, 'Inserting past the limit must evict, not grow');
+  assert(!bounded.has('key-0'), 'The oldest entry must be evicted first (FIFO)');
+  assert(bounded.has('key-100'), 'The newest entry must be kept');
+
+  // ---- the shared query builder still binds every value as a variable ----
+  const { query, variables } = buildCatalogGraphQL(valid.filters, { perPage: valid.perPage });
+  assert(query.includes('isAdult: false'), 'The browse query must exclude adult content');
+  assert(query.includes('$genre_in'), 'The browse genre filter must be a GraphQL variable');
+  assert(!query.includes('Action'), 'No user-supplied genre may be interpolated into the browse document');
+  assert.deepStrictEqual(variables.sort, ['SCORE_DESC'], 'The browse sort should reach AniList as an enum variable');
+  assert.strictEqual(variables.perPage, 20, 'The requested page size should be bound as a variable');
+  assert.strictEqual(variables.page, 3, 'The requested page should be bound as a variable');
+
+  console.log('Browse filter parsing, ranges, repeated params and cache-key normalization verified.');
+}
+
 async function run() {
+  assertSharedCatalogHelpers();
+  assertBrowseFilterParsing();
+
   const authServer = http.createServer((req, res) => {
     authRequests.push({ method: req.method, url: req.url, headers: req.headers });
     res.setHeader('Content-Type', 'application/json');
@@ -227,6 +482,109 @@ async function run() {
     assert(!homePage.body.includes('4K Ultra HD'), 'Home page should not claim 4K streaming capability');
     assert(!homePage.body.includes('data-nav="account"'), 'Catalog should not include account navigation');
     assert(!homePage.body.includes('page-account'), 'Catalog should not include account or signup forms');
+
+    // ---- strict browse endpoint: filters, sort and Load more paging ----
+    const browseFirst = await request('/api/browse?sort=POPULARITY_DESC');
+    assert.strictEqual(browseFirst.statusCode, 200, 'The browse endpoint should answer');
+    assert(Array.isArray(browseFirst.body), 'The browse endpoint should return a list');
+    assert(browseFirst.body.length > 0, 'The browse endpoint should return titles');
+    assert(browseFirst.body.every(anime => anime.id === anime.anilistId), 'Browse entries must keep the canonical id');
+    assert.strictEqual(
+      new Set(browseFirst.body.map(anime => anime.id)).size,
+      browseFirst.body.length,
+      'A browse page must not repeat a title'
+    );
+    assert.strictEqual(browseFirst.headers['x-catalog-source'], 'anilist', 'Browse should report the live source');
+    assert.strictEqual(browseFirst.headers['x-catalog-page'], '1', 'Browse should report pageInfo.currentPage');
+    assert.strictEqual(browseFirst.headers['x-catalog-per-page'], '30', 'Browse should default to 30 per page');
+    assert.strictEqual(browseFirst.headers['x-catalog-has-next'], 'true', 'A full browse page should have a next page');
+    assert(
+      Number.parseInt(browseFirst.headers['x-catalog-total'], 10) > browseFirst.body.length,
+      'The browse total should exceed a single page'
+    );
+    assert.strictEqual(
+      browseFirst.headers['ratelimit-policy'],
+      '60;w=60',
+      'Browse should carry the AniList-proxy rate limit like /api/search'
+    );
+
+    // Load more: page 2 continues page 1 without repeating titles.
+    const browseSecond = await request('/api/browse?sort=POPULARITY_DESC&page=2');
+    assert.strictEqual(browseSecond.statusCode, 200, 'A second browse page should answer');
+    assert.strictEqual(browseSecond.headers['x-catalog-page'], '2', 'The second browse page number should be reported');
+    assert(browseSecond.body.length > 0, 'The second browse page should return titles');
+    const browseFirstIds = new Set(browseFirst.body.map(anime => anime.id));
+    assert(
+      browseSecond.body.every(anime => !browseFirstIds.has(anime.id)),
+      'Browse page 2 must not repeat a title from page 1'
+    );
+
+    // perPage is honored up to its cap of 30.
+    const smallPage = await request('/api/browse?perPage=10&sort=SCORE_DESC');
+    assert.strictEqual(smallPage.statusCode, 200, 'A smaller page size should be accepted');
+    assert(smallPage.body.length > 0 && smallPage.body.length <= 10, 'perPage=10 should return at most 10 titles');
+    assert.strictEqual(smallPage.headers['x-catalog-per-page'], '10', 'The requested page size should be reported');
+
+    // Valid filters are enforced by AniList.
+    const browseMovies = await request('/api/browse?format=MOVIE&perPage=10');
+    assert.strictEqual(browseMovies.statusCode, 200, 'A browse format filter should be accepted');
+    assert(browseMovies.body.length > 0, 'The film filter should return titles');
+    assert(
+      browseMovies.body.every(anime => String(anime.type || anime.format || '').toUpperCase() === 'MOVIE'),
+      'Browse must return only films for format=MOVIE'
+    );
+
+    const browseYear = await request('/api/browse?year=2024&perPage=10&sort=START_DATE_DESC');
+    assert.strictEqual(browseYear.statusCode, 200, 'A browse year filter should be accepted');
+    assert(browseYear.body.length > 0, 'The year filter should return titles');
+    assert(
+      browseYear.body.every(anime => anime.year === 2024),
+      'Every browse title should carry the requested release year'
+    );
+
+    // ---- invalid browse parameters are rejected, never coerced ----
+    const invalidBrowseQueries = [
+      'genre=NotARealGenre',
+      'genre=Hentai',
+      'genre=%3Cscript%3E',
+      'format=HOLOGRAM',
+      'format=TV_SHORT',
+      'status=HIATUS',
+      'minScore=101',
+      'year=1959',
+      'sort=DROP_TABLE',
+      'page=51',
+      'page=popular',
+      'perPage=31',
+      'year=2020&year=2021'
+    ];
+    for (const query of invalidBrowseQueries) {
+      const invalid = await request(`/api/browse?${query}`);
+      assert.strictEqual(invalid.statusCode, 400, `Invalid browse filter "${query}" must be rejected`);
+      assert.strictEqual(typeof invalid.body.message, 'string', `Invalid "${query}" must explain the error`);
+      assert(
+        !/ECONNREFUSED|127\.0\.0\.1|stack/i.test(JSON.stringify(invalid.body)),
+        `Invalid "${query}" must not leak upstream details`
+      );
+    }
+
+    // Cache normalization: differently spelled but equivalent requests are
+    // served as the same entry — same bodies and same metadata.
+    const normalizedA = await request('/api/browse?genre=Comedy,Action&sort=POPULARITY_DESC&perPage=10');
+    const normalizedB = await request('/api/browse?genre=action,comedy&sort=popularity_desc&perPage=10');
+    assert.strictEqual(normalizedA.statusCode, 200, 'The first normalized browse request should answer');
+    assert.strictEqual(normalizedB.statusCode, 200, 'The second normalized browse request should answer');
+    assert.deepStrictEqual(normalizedB.body, normalizedA.body, 'Equivalent browse requests must return the same page');
+    assert.strictEqual(
+      normalizedB.headers['x-catalog-total'],
+      normalizedA.headers['x-catalog-total'],
+      'Equivalent browse requests must report the same total'
+    );
+
+    // The top of the allowed page window answers honestly (200 + list).
+    const browseFar = await request('/api/browse?page=50');
+    assert.strictEqual(browseFar.statusCode, 200, 'Page 50 is within the allowed window');
+    assert(Array.isArray(browseFar.body), 'An out-of-range-window browse page should still return a list');
 
     const health = await request('/api/health');
     assert.strictEqual(health.statusCode, 200, 'Health check should return HTTP 200');

@@ -18,6 +18,15 @@ const {
   deduplicateMediaList
 } = require('./search-utils');
 const { mergeAniListCatalog, withCanonicalId } = require('./catalog-utils');
+const {
+  boundedCacheSet,
+  browseCacheKey,
+  CATALOG_MEDIA_FIELDS,
+  CATALOG_PER_PAGE,
+  buildCatalogGraphQL,
+  filterCatalogLocally,
+  parseBrowseFilters
+} = require('./catalog-filters');
 
 const app = express();
 
@@ -305,6 +314,7 @@ const accountDeletionLimiter = rateLimit({
 
 app.use('/api', globalApiLimiter);
 app.use('/api/search', proxyLimiter);
+app.use('/api/browse', proxyLimiter);
 app.use('/api/anime/:id', proxyLimiter);
 app.use('/api/account', accountDeletionLimiter);
 
@@ -770,36 +780,6 @@ const genreListCache = {
   pending: null
 };
 
-const CATALOG_MEDIA_FIELDS = `
-  id
-  title {
-    romaji
-    english
-    native
-  }
-  coverImage {
-    large
-    extraLarge
-  }
-  bannerImage
-  description
-  episodes
-  status
-  averageScore
-  genres
-  seasonYear
-  startDate {
-    year
-  }
-  format
-  countryOfOrigin
-  studios(isMain: true) {
-    nodes {
-      name
-    }
-  }
-`;
-
 /**
  * Build a catalog query. Sort, per-page and format are server-defined
  * constants; the genre is the only user-supplied value and is always passed as
@@ -819,8 +799,12 @@ function buildCatalogQuery({ perPage, sort, formatIn, genre = false }) {
 }`;
 }
 
-/** Fetch one live AniList catalog page, sanitized and merged with curation. */
-async function fetchLiveCatalog(query, variables = {}) {
+/**
+ * Fetch one AniList media page and sanitize it. An empty list is a legitimate
+ * answer for a filtered query, so only a malformed response or a GraphQL error
+ * throws here.
+ */
+async function fetchAniListPage(query, variables = {}) {
   const response = await axios.post(
     ANILIST_GRAPHQL_URL,
     { query, variables },
@@ -834,14 +818,30 @@ async function fetchLiveCatalog(query, variables = {}) {
   }
 
   const media = safe(response, 'data.data.Page.media', null);
-  if (!Array.isArray(media) || media.length === 0) {
-    throw new Error('AniList returned no catalog entries.');
+  if (!Array.isArray(media)) {
+    throw new Error('AniList returned an invalid catalog response.');
   }
 
-  const sanitizedMedia = media.map(anime => ({
-    ...anime,
-    description: sanitizeDescription(anime.description)
-  }));
+  const pageInfo = safe(response, 'data.data.Page.pageInfo', null);
+  return {
+    media: media.map(anime => ({
+      ...anime,
+      description: sanitizeDescription(anime.description)
+    })),
+    pageInfo: pageInfo && typeof pageInfo === 'object' ? pageInfo : null
+  };
+}
+
+async function fetchAniListMedia(query, variables = {}) {
+  return (await fetchAniListPage(query, variables)).media;
+}
+
+/** Fetch one live AniList catalog page, sanitized and merged with curation. */
+async function fetchLiveCatalog(query, variables = {}) {
+  const sanitizedMedia = await fetchAniListMedia(query, variables);
+  if (sanitizedMedia.length === 0) {
+    throw new Error('AniList returned no catalog entries.');
+  }
   return mergeAniListCatalog(ANIME_DB, sanitizedMedia);
 }
 
@@ -1039,6 +1039,133 @@ app.get('/api/series', async (req, res) => {
 app.get('/api/popular', async (req, res) => {
   const popular = await getPopularCatalog();
   res.json(popular);
+});
+
+
+// ============================================================
+// PAGINATION METADATA (shared by /api/browse and its fallback)
+// ============================================================
+
+/**
+ * Normalize AniList's pageInfo (or a length-only fallback) into the pagination
+ * metadata the response headers carry.
+ */
+function pageMeta(pageInfo, page, itemCount, fallbackPerPage = CATALOG_PER_PAGE) {
+  const total = Number.isInteger(pageInfo?.total) ? pageInfo.total : null;
+  const lastPage = Number.isInteger(pageInfo?.lastPage) ? pageInfo.lastPage : null;
+  const hasNext = typeof pageInfo?.hasNextPage === 'boolean'
+    ? pageInfo.hasNextPage
+    : itemCount >= fallbackPerPage;
+  return {
+    page,
+    perPage: Number.isInteger(pageInfo?.perPage) ? pageInfo.perPage : fallbackPerPage,
+    total,
+    totalPages: lastPage !== null ? Math.max(1, lastPage) : Math.max(1, page + (hasNext ? 1 : 0)),
+    hasNext
+  };
+}
+
+
+// ============================================================
+// BROWSE — strict filters + Load more pagination (Task 2A)
+// ============================================================
+//
+// Backs the Popular page's Load more flow: fixed enum allowlists, page 1..50,
+// perPage 1..30, repeated params rejected, and a shorter five-minute cache
+// (max 100 entries). Validation lives in `catalog-filters.js`; on an AniList
+// outage the curated catalog answers with the same semantics, and
+// `X-Catalog-Source` keeps naming the answering source.
+
+const BROWSE_CACHE_TTL_MS = 5 * 60 * 1000;
+const BROWSE_CACHE_LIMIT = 100;
+const browseQueryCache = new Map();
+
+function cacheBrowseQuery(key, entry) {
+  // FIFO eviction lives in catalog-filters.js so a unit test can cover the
+  // "max 100 entries" guarantee without booting the server.
+  boundedCacheSet(browseQueryCache, key, entry, BROWSE_CACHE_LIMIT);
+}
+
+/** Resolve one validated browse page as `{ data, source, meta }`. */
+async function getBrowsePage(filters, perPage) {
+  const key = browseCacheKey(filters, perPage);
+  const cached = browseQueryCache.get(key);
+  if (cached?.pending) return cached.pending;
+  // A warm entry is returned whole, `meta` included — the same crash the
+  // catalog cache once had on its fresh-hit path.
+  if (cached && Date.now() < cached.expiresAt) {
+    return { data: cached.data, source: cached.source, meta: cached.meta };
+  }
+
+  const stale = cached && cached.data ? cached : null;
+  const pending = (async () => {
+    const { query, variables } = buildCatalogGraphQL(filters, { perPage });
+    try {
+      const { media, pageInfo } = await fetchAniListPage(query, variables);
+      // AniList already applied the filters, the sort and the paging; merging
+      // with an empty local catalog only normalizes the item shape and the
+      // canonical `id === anilistId`, so a page can never exceed perPage or
+      // repeat a title. Curated data still answers when AniList is down.
+      const catalog = mergeAniListCatalog([], media);
+      const entry = {
+        data: catalog,
+        source: 'anilist',
+        meta: pageMeta(pageInfo, filters.page, catalog.length, perPage),
+        expiresAt: Date.now() + BROWSE_CACHE_TTL_MS,
+        pending: null
+      };
+      cacheBrowseQuery(key, entry);
+      return { data: entry.data, source: entry.source, meta: entry.meta };
+    } catch (error) {
+      console.warn(`AniList browse unavailable; using ${stale ? 'cached' : 'curated'} catalog: ${error.message}`);
+      // Clear the in-flight marker so the next request can retry AniList.
+      if (browseQueryCache.get(key)?.pending === pending) browseQueryCache.delete(key);
+      if (stale) return { data: stale.data, source: stale.source, meta: stale.meta };
+      // The curated fallback pages locally with the requested page size, so
+      // Load more keeps honest boundaries while AniList is unavailable.
+      const matches = filterCatalogLocally(CURATED_CATALOG, filters);
+      const start = (filters.page - 1) * perPage;
+      return {
+        data: matches.slice(start, start + perPage),
+        source: 'curated',
+        meta: {
+          page: filters.page,
+          perPage,
+          total: matches.length,
+          totalPages: Math.max(1, Math.ceil(matches.length / perPage)),
+          hasNext: start + perPage < matches.length
+        }
+      };
+    }
+  })();
+
+  cacheBrowseQuery(key, { data: null, source: null, meta: null, expiresAt: 0, pending });
+  return pending;
+}
+
+app.get('/api/browse', async (req, res) => {
+  const knownGenres = new Set([...(await getGenreList()), ...curatedGenres()]);
+  const { filters, perPage, errors } = parseBrowseFilters(req.query, {
+    knownGenres,
+    maxYear: new Date().getFullYear() + 1
+  });
+
+  if (errors.length) {
+    return res.status(400).json({ message: errors[0] });
+  }
+
+  const { data, source, meta } = await getBrowsePage(filters, perPage);
+  res.setHeader('X-Catalog-Source', source);
+  // Pagination metadata travels in headers so the response body stays a plain
+  // list, exactly like every other catalog endpoint. `X-Catalog-Page` is
+  // AniList's `pageInfo.currentPage` and `X-Catalog-Has-Next` its
+  // `pageInfo.hasNextPage` (or the curated fallback's local arithmetic).
+  res.setHeader('X-Catalog-Page', String(meta.page));
+  res.setHeader('X-Catalog-Per-Page', String(meta.perPage));
+  res.setHeader('X-Catalog-Total-Pages', String(meta.totalPages));
+  res.setHeader('X-Catalog-Has-Next', meta.hasNext ? 'true' : 'false');
+  if (meta.total !== null) res.setHeader('X-Catalog-Total', String(meta.total));
+  res.json(data);
 });
 
 
