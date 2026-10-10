@@ -4,6 +4,11 @@ let authReady = false;
 let watchlistMigration = null;
 let authReturnFocus = null;
 
+const {
+  normalizeWatchProgress
+} = window.AnimeHubWatchlistUtils;
+const { migrateWatchlistItems } = window.AnimeHubWatchlistUtils;
+
 let resolveAuthReady;
 window.animeHubAuthReady = new Promise(resolve => {
   resolveAuthReady = resolve;
@@ -21,12 +26,46 @@ function declinedWatchlistMigrationKey(userId) {
   return `anime_hub_watchlist_migration_declined_${userId}`;
 }
 
+// The per-user watchlist cache is DERIVED data: every item in it can be
+// rebuilt from the watchlist table plus the catalog endpoint. Unreadable cache
+// content is therefore discarded rather than treated as a fatal error, so a
+// single corrupted value cannot keep a user signed out of their watchlist or
+// make an already-committed cloud write look like it failed (AH-003).
 function readWatchlistCache(userId) {
-  const raw = localStorage.getItem(watchlistCacheKey(userId));
+  const key = watchlistCacheKey(userId);
+  let raw;
+  try {
+    raw = localStorage.getItem(key);
+  } catch (error) {
+    console.warn('Could not read the saved watchlist cache; treating it as empty.', error);
+    return [];
+  }
   if (!raw) return [];
-  const parsed = JSON.parse(raw);
-  if (!Array.isArray(parsed)) throw new Error('The saved cloud watchlist cache is invalid.');
+
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (error) {
+    console.warn('The saved watchlist cache is not valid JSON; discarding it.', error);
+    discardWatchlistCache(key);
+    return [];
+  }
+  if (!Array.isArray(parsed)) {
+    console.warn('The saved watchlist cache is not an array; discarding it.');
+    discardWatchlistCache(key);
+    return [];
+  }
   return parsed;
+}
+
+// Best-effort cleanup of unusable cache content. A storage failure here must
+// not replace one error with another, so it is only logged.
+function discardWatchlistCache(key) {
+  try {
+    localStorage.removeItem(key);
+  } catch (error) {
+    console.warn('Could not discard the unusable watchlist cache.', error);
+  }
 }
 
 function writeWatchlistCache(userId, items) {
@@ -38,7 +77,7 @@ function normalizeWatchlistItem(item) {
   if (!Number.isSafeInteger(id) || id < 1) {
     throw new Error('A watchlist item has an invalid anime ID.');
   }
-  return { ...item, id };
+  return { ...item, id, ...normalizeWatchProgress(item) };
 }
 
 async function getCloudWatchlist() {
@@ -47,7 +86,7 @@ async function getCloudWatchlist() {
 
   const { data, error } = await window.supabaseClient
     .from('watchlist')
-    .select('anime_id')
+    .select('anime_id, watch_status, current_episode, total_episodes, added_at, updated_at')
     .eq('user_id', session.user.id);
   if (error) throw error;
 
@@ -55,15 +94,35 @@ async function getCloudWatchlist() {
   const cachedById = new Map(cache.map(item => [String(item.id), item]));
   const items = [];
   const missingIds = [];
+  const rowsById = new Map();
   for (const row of data || []) {
     const id = Number(row.anime_id);
     if (!Number.isSafeInteger(id) || id < 1) continue;
+    rowsById.set(String(id), row);
     const cached = cachedById.get(String(id));
-    if (cached) items.push(cached);
+    let progress;
+    try {
+      progress = normalizeWatchProgress({
+        watchStatus: row.watch_status,
+        currentEpisode: row.current_episode,
+        totalEpisodes: row.total_episodes ?? cached?.totalEpisodes ?? cached?.episodes
+      });
+    } catch (error) {
+      // One malformed row or poisoned cached total must not discard the rest of
+      // the watchlist (AH-004b). The row is dropped from the cache rewrite, so a
+      // later load re-fetches it from the catalog and recovers it.
+      console.warn(`Ignoring watchlist row for anime ${id}: ${error.message}`);
+      continue;
+    }
+    if (cached) items.push({ ...cached, ...progress });
     else missingIds.push(id);
   }
 
-  const fetched = await Promise.all(missingIds.map(async id => {
+  // allSettled so a single unhydratable title (missing from the catalog, a bad
+  // response, invalid progress) drops just that row instead of rejecting the
+  // whole list (AH-004b). Order is preserved: results stay aligned with
+  // missingIds, and only fulfilled rows are kept.
+  const settled = await Promise.allSettled(missingIds.map(async id => {
     const response = await fetch(`/api/anime/${encodeURIComponent(id)}`);
     if (!response.ok) throw new Error(`Could not load anime ${id} for your cloud watchlist.`);
     const media = await response.json();
@@ -71,6 +130,7 @@ async function getCloudWatchlist() {
       throw new Error(`The catalog returned invalid details for anime ${id}.`);
     }
     const poster = media.coverImage?.extraLarge || media.coverImage?.large || '';
+    const row = rowsById.get(String(id));
     return normalizeWatchlistItem({
       id,
       title: media.title?.english || media.title?.romaji || media.title?.native || `Anime ${id}`,
@@ -80,10 +140,19 @@ async function getCloudWatchlist() {
       type: media.format || 'TV',
       status: media.status || 'Unknown',
       episodes: media.episodes || 0,
+      totalEpisodes: row?.total_episodes ?? media.episodes ?? null,
+      currentEpisode: row?.current_episode ?? 0,
+      watchStatus: row?.watch_status || 'plan_to_watch',
       genre: media.genres || [],
       genres: media.genres || []
     });
   }));
+
+  const fetched = [];
+  settled.forEach((result, index) => {
+    if (result.status === 'fulfilled') fetched.push(result.value);
+    else console.warn(`Could not hydrate anime ${missingIds[index]} for your cloud watchlist: ${result.reason?.message || result.reason}`);
+  });
 
   const merged = new Map(items.map(item => [String(item.id), item]));
   fetched.forEach(item => merged.set(String(item.id), item));
@@ -96,7 +165,13 @@ async function addCloudWatchlistItem(item) {
   if (!session) throw new Error('A login session is required to update the cloud watchlist.');
   const normalized = normalizeWatchlistItem(item);
   const { error } = await window.supabaseClient.from('watchlist').upsert(
-    { user_id: session.user.id, anime_id: normalized.id },
+    {
+      user_id: session.user.id,
+      anime_id: normalized.id,
+      watch_status: normalized.watchStatus,
+      current_episode: normalized.currentEpisode,
+      total_episodes: normalized.totalEpisodes
+    },
     { onConflict: 'user_id,anime_id', ignoreDuplicates: true }
   );
   if (error) throw error;
@@ -105,6 +180,31 @@ async function addCloudWatchlistItem(item) {
   const next = cache.filter(saved => String(saved.id) !== String(normalized.id));
   next.push(normalized);
   writeWatchlistCache(session.user.id, next);
+}
+
+async function updateCloudWatchlistItem(id, changes) {
+  const session = currentSession;
+  if (!session) throw new Error('A login session is required to update the cloud watchlist.');
+  const animeId = Number(id);
+  if (!Number.isSafeInteger(animeId) || animeId < 1) {
+    throw new Error('A watchlist item has an invalid anime ID.');
+  }
+  const normalized = normalizeWatchProgress(changes, { rejectOverflow: true });
+  const { error } = await window.supabaseClient.from('watchlist')
+    .update({
+      watch_status: normalized.watchStatus,
+      current_episode: normalized.currentEpisode,
+      total_episodes: normalized.totalEpisodes
+    })
+    .eq('user_id', session.user.id)
+    .eq('anime_id', animeId);
+  if (error) throw error;
+
+  const cache = readWatchlistCache(session.user.id);
+  writeWatchlistCache(session.user.id, cache.map(item =>
+    Number(item.id) === animeId ? { ...item, ...normalized } : item
+  ));
+  return normalized;
 }
 
 async function removeCloudWatchlistItem(id) {
@@ -128,6 +228,7 @@ async function removeCloudWatchlistItem(id) {
 window.getAnimeHubAuthState = getAnimeHubAuthState;
 window.animeHubCloudWatchlist = {
   add: addCloudWatchlistItem,
+  update: updateCloudWatchlistItem,
   list: getCloudWatchlist,
   remove: removeCloudWatchlistItem
 };
@@ -158,37 +259,53 @@ async function syncLocalWatchlistToCloud(session) {
     ).values()];
     const { data: existing, error: readError } = await window.supabaseClient
       .from('watchlist')
-      .select('anime_id')
+      .select('anime_id, watch_status, current_episode, total_episodes')
       .eq('user_id', session.user.id);
     if (readError) throw readError;
 
     const existingIds = new Set((existing || []).map(row => String(row.anime_id)));
-    const inserts = uniqueItems
-      .filter(item => !existingIds.has(String(item.id)))
-      .map(item => ({ user_id: session.user.id, anime_id: item.id }));
-    if (inserts.length) {
-      const { error } = await window.supabaseClient.from('watchlist').upsert(inserts, {
-        onConflict: 'user_id,anime_id',
-        ignoreDuplicates: true
-      });
-      if (error) throw error;
-    }
-
-    const { data: verified, error: verifyError } = await window.supabaseClient
-      .from('watchlist')
-      .select('anime_id')
-      .eq('user_id', session.user.id);
-    if (verifyError) throw verifyError;
-    const verifiedIds = new Set((verified || []).map(row => String(row.anime_id)));
-    if (!uniqueItems.every(item => verifiedIds.has(String(item.id)))) {
-      throw new Error('The cloud watchlist could not be verified; your local watchlist was kept.');
-    }
-
     const cache = readWatchlistCache(session.user.id);
     const mergedCache = new Map(cache.map(item => [String(item.id), item]));
-    uniqueItems.forEach(item => mergedCache.set(String(item.id), item));
-    writeWatchlistCache(session.user.id, [...mergedCache.values()]);
-    localStorage.removeItem('anime_hub_watchlist');
+    await migrateWatchlistItems({
+      items: uniqueItems,
+      existingIds,
+      insert: async inserts => {
+        const { error } = await window.supabaseClient.from('watchlist').upsert(
+          inserts.map(item => ({
+            user_id: session.user.id,
+            anime_id: item.id,
+            watch_status: item.watchStatus,
+            current_episode: item.currentEpisode,
+            total_episodes: item.totalEpisodes
+          })),
+          { onConflict: 'user_id,anime_id', ignoreDuplicates: true }
+        );
+        if (error) throw error;
+      },
+      verify: async () => {
+        const { data, error } = await window.supabaseClient.from('watchlist')
+          .select('anime_id, watch_status, current_episode, total_episodes')
+          .eq('user_id', session.user.id);
+        if (error) throw error;
+        return data || [];
+      },
+      onVerified: async verified => {
+        const verifiedById = new Map(verified.map(row => [String(row.anime_id), row]));
+        uniqueItems.forEach(item => {
+          const row = verifiedById.get(String(item.id));
+          mergedCache.set(String(item.id), {
+            ...item,
+            ...(row ? normalizeWatchProgress({
+              watchStatus: row.watch_status,
+              currentEpisode: row.current_episode,
+              totalEpisodes: row.total_episodes ?? item.totalEpisodes
+            }) : {})
+          });
+        });
+        writeWatchlistCache(session.user.id, [...mergedCache.values()]);
+        localStorage.removeItem('anime_hub_watchlist');
+      }
+    });
     return true;
   })();
 
