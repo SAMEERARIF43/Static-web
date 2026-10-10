@@ -8,7 +8,7 @@
 
 ### 1.1 Database access — Supabase RLS
 - RLS is enabled on both tables.
-- `watchlist`: SELECT / INSERT / DELETE are restricted to `auth.uid() = user_id` (`TO authenticated`). No UPDATE policy.
+- `watchlist`: SELECT, INSERT, UPDATE, and DELETE are restricted to the owning user with `auth.uid() = user_id` (`TO authenticated`). The local schema defines all four ownership policies; the incremental migration also adds the UPDATE policy. Applying either file to a live database is not verified here.
 - `profiles`: SELECT restricted to the owner; rows are created only by a `SECURITY DEFINER` trigger with fixed `search_path`.
 - The browser uses the **anon key** for all user-data operations, so RLS is the only boundary protecting one user's rows from another's.
 

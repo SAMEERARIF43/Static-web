@@ -21,7 +21,8 @@ const {
 const TEST_PORT = process.env.TEST_PORT || 3001;
 const baseURL = `http://localhost:${TEST_PORT}`;
 const verifiedUserId = '01234567-89ab-cdef-0123-456789abcdef';
-// The AniList IDs of the curated catalog, used to prove the catalog endpoints
+const _anilistTestScenario = process.env.ANILIST_TEST_SCENARIO || 'success';
+ // The AniList IDs of the curated catalog, used to prove the catalog endpoints
 // are served from live AniList data rather than from that curated list.
 const CURATED_ANILIST_IDS = new Set([113415, 151807, 21, 101922, 16498, 20, 1535, 5114, 269, 101348, 9253, 11061]);
 const authRequests = [];
@@ -350,6 +351,141 @@ async function run() {
     authServer.listen(0, '127.0.0.1', resolve);
   });
   const authUrl = `http://127.0.0.1:${authServer.address().port}`;
+
+  // Start a deterministic local AniList GraphQL replacement.  Every operation
+  // exercised below is answered from the same realistic fixture set, so this
+  // suite never depends on the public AniList service.
+  const mockAniList = {
+    port: 18987,
+    server: null
+  };
+  const poster = id => `https://s4.anilist.co/file/anilistcdn/media/anime/cover/large/bx${id}.jpg`;
+  const media = (id, title, format = 'TV', genres = ['Action'], year = 2024, score = 80) => ({
+    id,
+    title: { english: title, romaji: title, native: title },
+    coverImage: { large: poster(id), extraLarge: poster(id) },
+    bannerImage: `https://s4.anilist.co/file/anilistcdn/media/anime/banner/${id}.jpg`,
+    description: `${title} is a deterministic AniList fixture.`,
+    episodes: format === 'MOVIE' ? null : 12,
+    status: year >= 2025 ? 'RELEASING' : 'FINISHED',
+    averageScore: score,
+    genres,
+    season: year >= 2025 ? 'WINTER' : null,
+    seasonYear: year,
+    startDate: { year, month: 1, day: 1 },
+    format,
+    countryOfOrigin: 'JP',
+    studios: { nodes: [{ name: title === 'Jujutsu Kaisen' ? 'MAPPA' : 'Studio Fixture' }] },
+    staff: { edges: [] }, characters: { edges: [] }, trailer: null,
+    relations: { edges: [] }, recommendations: { edges: [] }
+  });
+  const fixtureMedia = [
+    media(900001, 'Fixture Popular One', 'TV', ['Action', 'Comedy'], 2024, 91),
+    media(900002, 'Fixture Popular Two', 'TV', ['Drama'], 2023, 90),
+    media(900003, 'Fixture Comedy Movie', 'MOVIE', ['Comedy'], 2024, 88),
+    media(900004, 'Fixture Comedy Series', 'TV', ['Comedy', 'Drama'], 2024, 87),
+    media(900005, 'Fixture Adventure Film', 'MOVIE', ['Adventure'], 2022, 86),
+    media(900006, 'Fixture Sci-Fi Series', 'TV', ['Sci-Fi'], 2021, 85),
+    media(900007, 'Fixture Drama', 'TV', ['Drama'], 2020, 84),
+    media(900008, 'Fixture Action Film', 'MOVIE', ['Action'], 2019, 83),
+    media(900009, 'Fixture Fantasy', 'TV', ['Fantasy'], 2018, 82),
+    media(900010, 'Fixture Mystery', 'TV', ['Mystery'], 2017, 81),
+    media(900011, 'Fixture Comedy Special', 'TV_SHORT', ['Comedy'], 2016, 80),
+    media(900012, 'Fixture Shounen', 'TV', ['Action'], 2015, 79),
+    media(900013, 'Fixture Historical', 'TV', ['Drama'], 2014, 78),
+    media(900014, 'Fixture Romance Film', 'MOVIE', ['Romance'], 2013, 77),
+    media(900015, 'Fixture Thriller', 'TV', ['Thriller'], 2012, 76),
+    media(900016, 'Fixture Space', 'TV', ['Sci-Fi'], 2011, 75),
+    media(900017, 'Fixture Sports', 'TV', ['Sports'], 2010, 74),
+    media(900018, 'Fixture Slice', 'TV', ['Comedy'], 2009, 73),
+    media(900019, 'Fixture Finale', 'MOVIE', ['Drama'], 2008, 72),
+    media(900020, 'Fixture Classic', 'TV', ['Adventure'], 2007, 71),
+    media(900021, 'One Piece', 'TV', ['Action', 'Adventure', 'Fantasy'], 1999, 90),
+    media(900022, 'Naruto', 'TV', ['Action', 'Adventure'], 2002, 83),
+    media(900023, 'One Piece Film: Red', 'MOVIE', ['Action', 'Comedy'], 2022, 82),
+    ...Array.from({ length: 35 }, (_, index) => media(
+      901000 + index,
+      `Fixture Catalog ${index + 1}`,
+      index % 5 === 0 ? 'MOVIE' : 'TV',
+      index % 3 === 0 ? ['Comedy', 'Action'] : ['Action'],
+      index % 2 === 0 ? 2024 : 2023,
+      70 + (index % 20)
+    ))
+  ];
+  const detailMedia = new Map([
+    [1, media(1, 'Cowboy Bebop', 'TV', ['Action', 'Sci-Fi'], 1998, 88)],
+    [206949, media(206949, 'The Fixture Chronicle', 'TV', ['Fantasy'], 2025, 81)]
+  ]);
+  mockAniList.server = http.createServer(async (req, res) => {
+    try {
+      if (req.method !== 'POST') {
+        res.writeHead(405, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Method not allowed' }));
+        return;
+      }
+      let body = '';
+      req.on('data', (chunk) => { body += chunk; });
+      req.on('end', () => {
+        let _json;
+        try { _json = body ? JSON.parse(body) : {}; } catch (e) { _json = { __invalid_json: true }; }
+        const query = String(_json.query || '');
+        const variables = _json.variables || {};
+        const json = payload => {
+           res.writeHead(200, { 'Content-Type': 'application/json' });
+           res.end(JSON.stringify({ data: payload }));
+        };
+        if (_anilistTestScenario === 'success') {
+          if (query.includes('GenreCollection')) return json({ GenreCollection: ['Action', 'Adventure', 'Comedy', 'Drama', 'Sci-Fi', 'Hentai'] });
+          if (query.includes('Media(id:')) return json({ Media: detailMedia.get(Number(variables.id)) || null });
+          let results = fixtureMedia;
+          if (Object.hasOwn(variables, 'search')) {
+            const wanted = String(variables.search).toLowerCase().replace(/\s+/g, '');
+            results = fixtureMedia.filter(item => [item.title.english, item.title.romaji].some(t => t.toLowerCase().replace(/\s+/g, '').includes(wanted)));
+          }
+          if (Object.hasOwn(variables, 'genre')) results = results.filter(item => item.genres.includes(variables.genre));
+          if (variables.format_in) results = results.filter(item => variables.format_in.includes(item.format));
+          if (variables.format) results = results.filter(item => item.format === variables.format);
+          if (query.includes('pageInfo')) {
+            const page = Number(variables.page || 1);
+            const perPage = Number(variables.perPage || 30);
+            if (variables.genre_in) results = results.filter(item => variables.genre_in.some(g => item.genres.includes(g)));
+            if (variables.seasonYear) results = results.filter(item => item.seasonYear === variables.seasonYear);
+            const total = results.length + 30;
+            const start = (page - 1) * perPage;
+            results = results.slice(start, start + perPage);
+            return json({ Page: { pageInfo: { total, perPage, currentPage: page, lastPage: Math.ceil(total / perPage), hasNextPage: page * perPage < total }, media: results } });
+          }
+          return json({ Page: { media: results } });
+        } else if (_anilistTestScenario === '429') {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ errors: [{ message: 'AniList rate limit exceeded.' }] }));
+        } else if (_anilistTestScenario === '502') {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ errors: [{ message: 'Network error: ECONNREFUSED' }] }));
+        } else if (_anilistTestScenario === 'timeout') {
+          // Simulate a timeout by not responding within the client's timeout window
+          setTimeout(() => {
+            res.writeHead(500, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: 'request timeout simulated' }));
+          }, 10000); // 10 second delay exceeds typical client timeouts
+        } else if (_anilistTestScenario === 'malformed') {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ __malformed: true, raw: 'shape mismatch' }));
+        } else {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ default: true }));
+        }
+      });
+    } catch (e) {
+      res.writeHead(500);
+      res.end(JSON.stringify({ error: e.message }));
+    }
+  });
+  await new Promise((resolve, reject) => {
+    mockAniList.server.once('error', reject);
+    mockAniList.server.listen(mockAniList.port, '127.0.0.1', resolve);
+  });
+
   const server = spawn(process.execPath, [path.join(__dirname, 'server.js')], {
     cwd: __dirname,
     stdio: ['ignore', 'pipe', 'inherit'],
@@ -359,6 +495,7 @@ async function run() {
       PORT: String(TEST_PORT),
       SITE_URL: 'https://animehub.example',
       CORS_ORIGINS: `http://localhost:${TEST_PORT}`,
+      ANILIST_GRAPHQL_URL: `http://127.0.0.1:${mockAniList.port}`,
       SUPABASE_URL: authUrl,
       SUPABASE_ANON_KEY: 'test-public-anon-key',
       SUPABASE_SERVICE_ROLE_KEY: 'test-server-only-service-role-key'
@@ -1041,6 +1178,7 @@ async function run() {
   } finally {
     server.kill();
     await new Promise(resolve => authServer.close(resolve));
+    mockAniList.server.close();
   }
 }
 

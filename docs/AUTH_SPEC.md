@@ -65,10 +65,11 @@
 
 - Signing in triggers `syncLocalWatchlistToCloud(session)` when a guest watchlist exists.
 - The user is asked by `confirm('We found an offline watchlist. Do you want to sync it to your account?')`.
-- Accepting: items are normalised (valid IDs only), missing rows are upserted with `onConflict: 'user_id,anime_id'`, results are **verified by read-back**, then the local key is removed.
+- Accepting: items are normalised (valid IDs and watch-progress fields), missing rows are upserted with `onConflict: 'user_id,anime_id'`, results are **verified by read-back**, then the local key is removed.
 - Declining: remembered in `sessionStorage` under `anime_hub_watchlist_migration_declined_<userId>` so the prompt does not reappear in that session; the local watchlist is kept.
 - Failure (network/validation): local data is kept untouched, an error is logged, and a toast "Watchlist sync failed. Your local watchlist was kept." is dispatched.
 - Signing out restores the guest watchlist view (`loadLocalWatchlist()`).
+- Watch status and title-level episode progress use the same ownership boundary: browser writes are filtered by the current session user and protected by the Supabase watchlist UPDATE policy. The browser never supplies another user's identity.
 
 ## 11. UI/accessibility behaviour of the auth modal (CURRENT)
 

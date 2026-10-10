@@ -8,7 +8,7 @@
   },
   "scripts": {
     "start": "node server.js",
-    "test": "node test-search.js && node test-security.js",
+    "test": "node test-search.js && node test-security.js && node test-watchlist.js",
     "lint": "eslint .",
     "audit": "npm audit --omit=dev"
   },

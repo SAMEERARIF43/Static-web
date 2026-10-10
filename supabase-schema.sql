@@ -13,10 +13,37 @@ CREATE TABLE IF NOT EXISTS public.watchlist (
         REFERENCES auth.users(id)
         ON DELETE CASCADE,
     anime_id INT NOT NULL,
+    watch_status TEXT NOT NULL DEFAULT 'plan_to_watch',
+    current_episode INTEGER NOT NULL DEFAULT 0,
+    total_episodes INTEGER,
     added_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 
     CONSTRAINT watchlist_user_anime_unique
-        UNIQUE (user_id, anime_id)
+        UNIQUE (user_id, anime_id),
+
+    CONSTRAINT watchlist_watch_status_check
+        CHECK (
+            watch_status IN (
+                'watching',
+                'completed',
+                'plan_to_watch',
+                'on_hold',
+                'dropped'
+            )
+        ),
+
+    CONSTRAINT watchlist_episode_progress_check
+        CHECK (
+            current_episode >= 0
+            AND (
+                total_episodes IS NULL
+                OR (
+                    total_episodes >= 0
+                    AND current_episode <= total_episodes
+                )
+            )
+        )
 );
 
 -- Enable Row Level Security
@@ -47,6 +74,17 @@ TO authenticated
 WITH CHECK (auth.uid() = user_id);
 
 
+DROP POLICY IF EXISTS "Users can update their own watchlist"
+ON public.watchlist;
+
+CREATE POLICY "Users can update their own watchlist"
+ON public.watchlist
+FOR UPDATE
+TO authenticated
+USING (auth.uid() = user_id)
+WITH CHECK (auth.uid() = user_id);
+
+
 DROP POLICY IF EXISTS "Users can delete their own watchlist items"
 ON public.watchlist;
 
@@ -58,7 +96,32 @@ USING (auth.uid() = user_id);
 
 
 -- ------------------------------------------------------------
--- 3. USER PROFILES TABLE
+-- 3. WATCHLIST UPDATED_AT TRIGGER
+-- ------------------------------------------------------------
+
+CREATE OR REPLACE FUNCTION public.set_watchlist_updated_at()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SET search_path = public
+AS $watchlist_updated_at_function$
+BEGIN
+    NEW.updated_at = NOW();
+    RETURN NEW;
+END;
+$watchlist_updated_at_function$;
+
+
+DROP TRIGGER IF EXISTS set_watchlist_updated_at
+ON public.watchlist;
+
+CREATE TRIGGER set_watchlist_updated_at
+BEFORE UPDATE ON public.watchlist
+FOR EACH ROW
+EXECUTE FUNCTION public.set_watchlist_updated_at();
+
+
+-- ------------------------------------------------------------
+-- 4. USER PROFILES TABLE
 -- ------------------------------------------------------------
 
 CREATE TABLE IF NOT EXISTS public.profiles (
@@ -76,7 +139,7 @@ ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
 
 
 -- ------------------------------------------------------------
--- 4. PROFILE RLS POLICIES
+-- 5. PROFILE RLS POLICIES
 -- ------------------------------------------------------------
 
 DROP POLICY IF EXISTS "Users can view their own profile"
@@ -90,7 +153,7 @@ USING (auth.uid() = id);
 
 
 -- ------------------------------------------------------------
--- 5. AUTOMATIC PROFILE CREATION ON SIGNUP
+-- 6. AUTOMATIC PROFILE CREATION ON SIGNUP
 -- ------------------------------------------------------------
 
 CREATE OR REPLACE FUNCTION public.handle_new_user()
@@ -109,7 +172,7 @@ $$;
 
 
 -- ------------------------------------------------------------
--- 6. SIGNUP TRIGGER
+-- 7. SIGNUP TRIGGER
 -- ------------------------------------------------------------
 
 DROP TRIGGER IF EXISTS on_auth_user_created
@@ -122,7 +185,7 @@ EXECUTE FUNCTION public.handle_new_user();
 
 
 -- ------------------------------------------------------------
--- 7. ACCOUNT DELETION
+-- 8. ACCOUNT DELETION
 -- ------------------------------------------------------------
 --
 -- Account deletion is NOT performed directly from the browser.

@@ -13,7 +13,11 @@
 | `id` | `uuid` | Primary key, `DEFAULT gen_random_uuid()` |
 | `user_id` | `uuid` | `NOT NULL`, FK → `auth.users(id)` `ON DELETE CASCADE` |
 | `anime_id` | `int` | `NOT NULL` (AniList anime ID — see `docs/ANIME_DATA.md` §3) |
+| `watch_status` | `text` | `NOT NULL`, one of `watching`, `completed`, `plan_to_watch`, `on_hold`, `dropped`; defaults to `plan_to_watch` |
+| `current_episode` | `integer` | `NOT NULL`, defaults to `0`, non-negative and no greater than a known total |
+| `total_episodes` | `integer` | Nullable AniList total; when present it must be non-negative |
 | `added_at` | `timestamptz` | `DEFAULT NOW()` |
+| `updated_at` | `timestamptz` | `NOT NULL DEFAULT NOW()`, maintained by a database trigger |
 
 Table constraint: `watchlist_user_anime_unique UNIQUE (user_id, anime_id)` — a title can be saved once per user; the client upserts with `onConflict: 'user_id,anime_id'`.
 
@@ -23,9 +27,10 @@ Table constraint: `watchlist_user_anime_unique UNIQUE (user_id, anime_id)` — a
 | --- | --- | --- |
 | "Users can view their own watchlist" | SELECT | `USING (auth.uid() = user_id)` |
 | "Users can insert into their own watchlist" | INSERT | `WITH CHECK (auth.uid() = user_id)` |
+| "Users can update their own watchlist" | UPDATE | `USING (auth.uid() = user_id)` and `WITH CHECK (auth.uid() = user_id)` |
 | "Users can delete their own watchlist items" | DELETE | `USING (auth.uid() = user_id)` |
 
-No UPDATE policy (nothing updates rows; add/remove is insert/delete). No `last_modified`/ordering column beyond `added_at`.
+The `set_watchlist_updated_at` trigger updates `updated_at` on every row update. `added_at` remains the original membership timestamp.
 
 ### 1.2 `public.profiles`
 
@@ -62,7 +67,7 @@ AFTER INSERT ON auth.users FOR EACH ROW EXECUTE FUNCTION public.handle_new_user(
 | Data | Owner | Notes |
 | --- | --- | --- |
 | Anime metadata | **AniList** (not stored in the database at all) | No anime table exists |
-| Watchlist membership | Supabase `watchlist` (AniList IDs only) | Display data (title/poster/rating) is cached in the browser |
+| Watchlist membership and title-level progress | Supabase `watchlist` (AniList IDs plus status/progress) | Display data is cached in the browser |
 | Watchlist display cache | Browser `localStorage` | `anime_hub_watchlist_<userId>` |
 | Guest watchlist | Browser `localStorage` | `anime_hub_watchlist` |
 | Profile | Supabase `profiles` | id + email only |
@@ -72,13 +77,13 @@ AFTER INSERT ON auth.users FOR EACH ROW EXECUTE FUNCTION public.handle_new_user(
 ```text
 Favorites:              NOT IMPLEMENTED  (no table, no endpoint, no UI)
 Watch History:          NOT IMPLEMENTED  (no table, no endpoint, no UI)
-Watch Progress:         NOT IMPLEMENTED  (no table, no endpoint, no UI)
+Watch Progress:         IMPLEMENTED  (status/current episode in `watchlist`; no playback position)
 Continue Watching:      NOT IMPLEMENTED  (no table, no endpoint, no UI)
 Episode data:           NOT IMPLEMENTED  (episodes exist only as a count from AniList)
 Admin tables / roles:   NOT IMPLEMENTED  (no roles, no admin users, no moderation tables)
 ```
 
-Do **not** create these tables until the product decisions and the canonical ID model in `docs/WATCH_SYSTEM.md` / `docs/TASKS.md` are settled.
+The title-level watch status and episode progress are implemented as columns on `watchlist`; playback-position history and favorites remain separate future decisions.
 
 ## 6. Operational notes (CURRENT)
 

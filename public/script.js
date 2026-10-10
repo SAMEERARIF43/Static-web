@@ -1,4 +1,10 @@
 document.addEventListener('DOMContentLoaded', () => {
+  const {
+    WATCH_STATUS_VALUES,
+    normalizeWatchProgress,
+    shouldActivateCardFromTarget,
+    updateWatchlistState
+  } = window.AnimeHubWatchlistUtils;
 
   // Use relative URL so it works regardless of host/port
   const baseURL = '/api';
@@ -149,6 +155,17 @@ document.addEventListener('DOMContentLoaded', () => {
     localStorage.setItem('anime_hub_watchlist', JSON.stringify(watchlist));
   }
 
+  const WATCH_STATUS_LABELS = {
+    watching: 'Watching',
+    completed: 'Completed',
+    plan_to_watch: 'Plan to Watch',
+    on_hold: 'On Hold',
+    dropped: 'Dropped'
+  };
+  function withWatchProgress(item) {
+    return { ...item, ...normalizeWatchProgress(item) };
+  }
+
   async function toggleWatchlistItem(item) {
     const id = String(item.id);
     const index = watchlist.findIndex(saved => String(saved.id) === id);
@@ -160,10 +177,25 @@ document.addEventListener('DOMContentLoaded', () => {
       else await window.animeHubCloudWatchlist.remove(item.id);
     }
 
-    if (adding) watchlist.push(item);
+    if (adding) watchlist.push(withWatchProgress(item));
     else watchlist.splice(index, 1);
     saveWatchlist();
     return adding;
+  }
+
+  async function updateWatchlistItem(item, changes) {
+    const index = watchlist.findIndex(saved => String(saved.id) === String(item.id));
+    return updateWatchlistState({
+      watchlist,
+      index,
+      changes,
+      hasSession: !!getWatchlistAuthState().session,
+      cloudUpdate: async (id, next) => {
+        if (!window.animeHubCloudWatchlist?.update) throw new Error('Cloud watchlist is unavailable.');
+        await window.animeHubCloudWatchlist.update(id, next);
+      },
+      save: saveWatchlist
+    });
   }
 
   window.addEventListener('animehub:toast', event => {
@@ -218,6 +250,72 @@ document.addEventListener('DOMContentLoaded', () => {
   const POSTER_FALLBACK = 'https://placehold.co/300x450/0f172a/ff7200?text=No+Poster';
   const BANNER_FALLBACK = 'https://placehold.co/1920x420/0b0e14/2d3748?text=Anime+Hub';
 
+  function renderWatchProgressControls(anime, { compact = false } = {}) {
+    const progress = normalizeWatchProgress(anime);
+    const id = escapeHtml(String(anime.id));
+    const isMovie = isMovieEntry(anime);
+    const totalEpisodes = progress.totalEpisodes;
+    const currentEpisode = progress.currentEpisode;
+    const hasKnownTotal = totalEpisodes !== null && totalEpisodes > 0;
+    const totalLabel = totalEpisodes === null ? 'episodes' : `of ${totalEpisodes}`;
+
+    const statusOptions = WATCH_STATUS_VALUES.map(value =>
+      `<option value="${value}" ${value === progress.watchStatus ? 'selected' : ''}>${WATCH_STATUS_LABELS[value]}</option>`
+    ).join('');
+
+    // For movies, only show status selector - no episode controls or progress summary
+    if (isMovie) {
+      const statusOptionsMovie = WATCH_STATUS_VALUES.map(value =>
+        `<option value="${value}" ${value === progress.watchStatus ? 'selected' : ''}>${WATCH_STATUS_LABELS[value]}</option>`
+      ).join('');
+      return `
+        <div class="watch-progress-controls${compact ? ' compact' : ''}" data-watch-controls data-watch-id="${escapeHtml(String(anime.id))}">
+          <label>
+            <span>Status</span>
+            <select data-watch-status aria-label="Watch status for ${escapeHtml(getAnimeTitle(anime))}">${statusOptions}</select>
+          </label>
+        </div>
+      `;
+    }
+
+    // For series, show full episode controls
+    let episodeControl;
+    if (progress.totalEpisodes !== null && progress.totalEpisodes > 0) {
+      const episodeOptions = Array.from({ length: progress.totalEpisodes + 1 }, (_, i) => i)
+        .map(ep => `<option value="${ep}" ${ep === progress.currentEpisode ? 'selected' : ''}>${ep === 0 ? 'Not started' : `Episode ${ep}`}</option>`)
+        .join('');
+      episodeControl = `
+        <div class="episode-selector" data-episode-selector data-watch-id="${id}">
+          <label>
+            <span>Episode</span>
+            <div class="episode-selector-wrapper">
+              <select data-watch-episode aria-label="Episode for ${escapeHtml(getAnimeTitle(anime))}">${episodeOptions}</select>
+              <button type="button" class="episode-selector-search" aria-label="Search episodes" title="Search episodes">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
+              </button>
+            </div>
+          </label>
+        `;
+    } else {
+      episodeControl = `
+        <label>
+          <span>Episode</span>
+          <input data-watch-episode type="number" min="0" value="${progress.currentEpisode}" inputmode="numeric" aria-label="Current episode for ${escapeHtml(getAnimeTitle(anime))}" placeholder="Episode number">
+        </label>
+      `;
+    }
+    return `
+      <div class="watch-progress-controls${compact ? ' compact' : ''}" data-watch-controls data-watch-id="${escapeHtml(String(anime.id))}">
+        <label>
+          <span>Status</span>
+          <select data-watch-status aria-label="Watch status for ${escapeHtml(getAnimeTitle(anime))}">${statusOptions}</select>
+        </label>
+        ${episodeControl}
+        <span class="watch-progress-summary">${progress.currentEpisode} ${totalLabel}</span>
+      </div>
+    `;
+  }
+
   // Bind the fallback for every image the app renders (cards, detail views,
   // recommendations) without inline event attributes, keeping the CSP
   // free of 'unsafe-inline' for scripts.
@@ -231,7 +329,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }).observe(document.body, { childList: true, subtree: true });
 
-  function renderAnimeCard(anime) {
+  function renderAnimeCard(anime, containerId = '') {
     const rating =
       typeof anime.rating === 'number'
         ? anime.rating
@@ -259,6 +357,9 @@ document.addEventListener('DOMContentLoaded', () => {
     const isSaved = watchlist.some(w => String(w.id) === String(animeId));
     const metaText = `${type}${episodesText ? ` • ${episodesText}` : ''}`;
     const cardId = escapeHtml(String(animeId));
+    const watchProgressHtml = containerId === 'watchlist-grid'
+      ? renderWatchProgressControls({ ...anime, id: animeId }, { compact: true })
+      : '';
 
     return `
       <article class="anime-card" data-id="${cardId}" tabindex="0" role="button" aria-label="View details for ${safeTitle}">
@@ -281,7 +382,7 @@ document.addEventListener('DOMContentLoaded', () => {
               </svg>
             </div>
 
-            <button type="button" class="card-watchlist-btn ${isSaved ? 'saved' : ''}" data-bookmark-id="${cardId}" title="${isSaved ? 'Remove from Watchlist' : 'Add to Watchlist'}" aria-label="${isSaved ? 'Remove from Watchlist' : 'Add to Watchlist'}">
+            <button type="button" class="card-watchlist-btn ${isSaved ? 'saved' : ''}" data-bookmark-id="${cardId}" data-episodes="${anime.episodes || 0}" title="${isSaved ? 'Remove from Watchlist' : 'Add to Watchlist'}" aria-label="${isSaved ? 'Remove from Watchlist' : 'Add to Watchlist'}">
               ${isSaved ? '★' : '☆'}
             </button>
 
@@ -305,6 +406,7 @@ document.addEventListener('DOMContentLoaded', () => {
               <span>${rating > 0 ? rating.toFixed(1) : 'N/A'}</span>
             </div>
           </div>
+          ${watchProgressHtml}
         </div>
 
       </article>
@@ -340,7 +442,7 @@ document.addEventListener('DOMContentLoaded', () => {
       return;
     }
 
-    grid.innerHTML = animes.map(renderAnimeCard).join('');
+    grid.innerHTML = animes.map(anime => renderAnimeCard(anime, containerId)).join('');
   }
 
   // Page size and totals are reported by the server (headers); the client never
@@ -1128,7 +1230,11 @@ document.addEventListener('DOMContentLoaded', () => {
         }
       }
 
-      const isAnimeSaved = watchlist.some(w => String(w.id) === String(anime.id));
+      const savedAnime = watchlist.find(w => String(w.id) === String(anime.id));
+      const isAnimeSaved = !!savedAnime;
+      const detailWatchControls = savedAnime
+        ? renderWatchProgressControls({ ...savedAnime, totalEpisodes: totalEpisodes ?? savedAnime.totalEpisodes, id: anime.id })
+        : '<p class="watch-progress-hint">Add this title to your watchlist to track status and episode progress.</p>';
 
       detailContent.innerHTML = `
         <div class="detail-banner">
@@ -1168,6 +1274,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 </button>
                 ${trailerHtml}
               </div>
+              ${detailWatchControls}
               <div class="detail-description">
                 ${description}
               </div>
@@ -1198,6 +1305,9 @@ document.addEventListener('DOMContentLoaded', () => {
             type: anime.format || anime.type || 'TV',
             status: anime.status || 'Unknown',
             episodes: totalEpisodes,
+            totalEpisodes,
+            currentEpisode: 0,
+            watchStatus: 'plan_to_watch',
             genres: anime.genres || []
           };
 
@@ -1208,6 +1318,7 @@ document.addEventListener('DOMContentLoaded', () => {
               detailWatchlistBtn.innerText = '✓ In Watchlist';
               detailWatchlistBtn.setAttribute('aria-pressed', 'true');
               showToast('Added to Watchlist!', 'success');
+              await loadAnimeDetails(anime.id, false);
             } else {
               detailWatchlistBtn.className = 'cta-btn secondary-btn';
               detailWatchlistBtn.innerText = '+ Add to Watchlist';
@@ -1241,10 +1352,13 @@ document.addEventListener('DOMContentLoaded', () => {
   // GENRE FILTER
   // ============================================================
 
+  let genreRequestId = 0;
+
   async function filterByGenre(genre) {
+    const requestId = ++genreRequestId;
+    let targetGridId = 'trending-grid';
     try {
       const activePage = document.querySelector('.page.active');
-      let targetGridId = 'trending-grid';
       let typeKey = null;
 
       if (!activePage) return;
@@ -1282,8 +1396,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
       const genreUrl = `${baseURL}/genre/${encodeURIComponent(genre)}${typeKey ? `?type=${typeKey}` : ''}`;
       const res = await fetch(genreUrl);
+      if (requestId !== genreRequestId) return;
       if (!res.ok) throw new Error(`Genre request failed: ${res.status}`);
       const data = await res.json();
+      if (requestId !== genreRequestId) return;
+      if (!Array.isArray(data)) throw new Error('Genre request returned an invalid response.');
 
       // The genre endpoint honours `type`, but filtering again here means the
       // wrong format can never reach the grid.
@@ -1295,7 +1412,26 @@ document.addEventListener('DOMContentLoaded', () => {
       );
 
     } catch (err) {
+      if (requestId !== genreRequestId) return;
       console.error('Error filtering by genre:', err);
+      const grid = document.getElementById(targetGridId);
+      if (!grid) return;
+
+      const errorState = document.createElement('div');
+      errorState.className = 'genre-load-error';
+      errorState.setAttribute('role', 'alert');
+      const message = document.createElement('p');
+      message.textContent = 'Unable to load this genre. Check your connection and try again.';
+      const retryButton = document.createElement('button');
+      retryButton.type = 'button';
+      retryButton.className = 'cta-btn secondary-btn';
+      retryButton.textContent = 'Try again';
+      retryButton.addEventListener('click', () => {
+        void filterByGenre(genre);
+      });
+      errorState.append(message, retryButton);
+      grid.replaceChildren(errorState);
+      grid.style.display = 'grid';
     }
   }
 
@@ -1440,6 +1576,21 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
+  // Inline error state for a failed cloud watchlist load. Built with DOM APIs
+  // rather than an innerHTML string so no markup is interpolated, and it clears
+  // the skeletons renderSkeletonGrid left behind (AH-004a).
+  function renderWatchlistError() {
+    const grid = document.getElementById('watchlist-grid');
+    const emptyState = document.getElementById('watchlist-empty');
+    if (emptyState) emptyState.style.display = 'none';
+    if (!grid) return;
+    const message = document.createElement('p');
+    message.className = 'watch-progress-hint';
+    message.textContent = 'Unable to load your watchlist. Please try again.';
+    grid.replaceChildren(message);
+    grid.style.display = 'grid';
+  }
+
   async function loadWatchlist() {
     const authState = getWatchlistAuthState();
     if (authState.ready && authState.session && window.animeHubCloudWatchlist) {
@@ -1449,6 +1600,7 @@ document.addEventListener('DOMContentLoaded', () => {
       } catch (error) {
         console.error('Could not load cloud watchlist:', error);
         showToast('Could not load your cloud watchlist. Please try again.', 'error');
+        renderWatchlistError();
         return;
       }
     }
@@ -1790,8 +1942,144 @@ document.addEventListener('DOMContentLoaded', () => {
     filterByGenre(btn.dataset.genre);
   });
 
+  document.addEventListener('change', async event => {
+    const control = event.target.closest?.('[data-watch-controls]');
+    if (!control) return;
+    const id = control.dataset.watchId;
+    const item = watchlist.find(saved => String(saved.id) === String(id));
+    if (!item) return;
+    const isMovie = isMovieEntry(item);
+    const status = control.querySelector('[data-watch-status]')?.value;
+
+    // For movies, episode is optional (they don't have episodes)
+    let episode = 0;
+    if (!isMovie) {
+      const episodeInput = control.querySelector('[data-watch-episode]')?.value?.trim();
+      const parsedEpisode = episodeInput === '' || episodeInput == null ? NaN : Number(episodeInput);
+      if (!Number.isSafeInteger(parsedEpisode) || parsedEpisode < 0) {
+        showToast('Enter a valid episode number.', 'error');
+        return;
+      }
+      episode = parsedEpisode;
+      const knownTotal = item.totalEpisodes ?? item.episodes;
+      const total = knownTotal != null ? Number(knownTotal) : null;
+      if (total !== null && episode > total) {
+        showToast(`Current episode cannot exceed the known total of ${total}.`, 'error');
+        return;
+      }
+    }
+
+    if (!WATCH_STATUS_VALUES.includes(status)) {
+      showToast('Enter a valid watch status.', 'error');
+      return;
+    }
+
+    const button = control.querySelector('[data-watch-status]');
+    if (button) button.disabled = true;
+    try {
+      await updateWatchlistItem(item, { watchStatus: status, currentEpisode: episode });
+      showToast('Watch progress saved.', 'success');
+      const activePage = document.querySelector('.page.active')?.id;
+      if (activePage === 'page-watchlist') await loadWatchlist();
+      else if (activePage === 'page-detail') await loadAnimeDetails(id, false);
+    } catch (error) {
+      console.error('Could not update watch progress:', error);
+      showToast(error instanceof RangeError ? error.message : 'Could not save watch progress. Please try again.', 'error');
+    } finally {
+      if (button) button.disabled = false;
+    }
+  });
+
+  // Episode selector search button
+  document.addEventListener('click', async event => {
+    const searchBtn = event.target.closest?.('.episode-selector-search');
+    if (!searchBtn) return;
+    event.preventDefault();
+    event.stopPropagation();
+
+    const selector = searchBtn.closest('.episode-selector');
+    if (!selector) return;
+    const select = selector.querySelector('[data-watch-episode]');
+    if (!select) return;
+
+    // Toggle search mode
+    const isSearchMode = select.classList.toggle('episode-selector-searching');
+    searchBtn.setAttribute('aria-label', isSearchMode ? 'Close search' : 'Search episodes');
+    searchBtn.title = isSearchMode ? 'Close search' : 'Search episodes';
+
+    if (isSearchMode) {
+      // Create search input
+      const searchInput = document.createElement('input');
+      searchInput.type = 'search';
+      searchInput.className = 'episode-search-input';
+      searchInput.placeholder = 'Search episode...';
+      searchInput.setAttribute('aria-label', 'Search episode number');
+      searchInput.setAttribute('autocomplete', 'off');
+      searchInput.setAttribute('inputmode', 'numeric');
+
+      // Insert search input before the select
+      select.parentNode.insertBefore(searchInput, select);
+      searchInput.focus();
+
+      // Filter options as user types
+      const options = select.querySelectorAll('option');
+      searchInput.addEventListener('input', () => {
+        const query = searchInput.value.trim().toLowerCase();
+        options.forEach(option => {
+          const text = option.textContent.toLowerCase();
+          const value = option.value;
+          const match = query === '' || text.includes(query) || value.includes(query);
+          option.style.display = match ? '' : 'none';
+        });
+      });
+
+      // Handle keyboard navigation
+      searchInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') {
+          select.classList.remove('episode-selector-searching');
+          searchBtn.setAttribute('aria-label', 'Search episodes');
+          searchBtn.title = 'Search episodes';
+          searchInput.remove();
+        } else if (e.key === 'Enter') {
+          // Select the first visible option
+          const visibleOptions = Array.from(select.options).filter(o => o.style.display !== 'none');
+          if (visibleOptions.length > 0) {
+            select.value = visibleOptions[0].value;
+            select.dispatchEvent(new Event('change', { bubbles: true }));
+          }
+          select.classList.remove('episode-selector-searching');
+          searchBtn.setAttribute('aria-label', 'Search episodes');
+          searchBtn.title = 'Search episodes';
+          searchInput.remove();
+        }
+      });
+
+      // Close search when clicking outside
+      const closeSearch = (e) => {
+        if (!selector.contains(e.target) && e.target !== searchBtn) {
+          select.classList.remove('episode-selector-searching');
+          searchBtn.setAttribute('aria-label', 'Search episodes');
+          searchBtn.title = 'Search episodes';
+          const searchInput = selector.querySelector('.episode-search-input');
+          if (searchInput) searchInput.remove();
+          document.removeEventListener('click', closeSearch);
+        }
+      document.addEventListener('click', closeSearch);
+    }
+    } else {
+      // Clean up search input if it exists
+      const searchInput = selector.querySelector('.episode-search-input');
+      if (searchInput) searchInput.remove();
+    }
+  });
+
   // Global Anime Card Click & Watchlist Toggle
   document.addEventListener('click', async (e) => {
+    if (e.target.closest?.('[data-watch-controls]')) {
+      e.stopPropagation();
+      return;
+    }
+
     // Watchlist Bookmark Button
     const bookmarkBtn = e.target.closest('.card-watchlist-btn');
     if (bookmarkBtn) {
@@ -1803,8 +2091,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
       const title = card.querySelector('.card-title')?.innerText || 'Anime';
       const poster = card.querySelector('.card-image')?.src || '';
+      const episodes = Number(bookmarkBtn.dataset.episodes) || 0;
       try {
-        const adding = await toggleWatchlistItem({ id, title, poster, image: poster });
+        const adding = await toggleWatchlistItem({ id, title, poster, image: poster, episodes });
         bookmarkBtn.classList.toggle('saved', adding);
         bookmarkBtn.innerText = adding ? '★' : '☆';
         bookmarkBtn.setAttribute('aria-label', adding ? 'Remove from Watchlist' : 'Add to Watchlist');
@@ -1889,8 +2178,10 @@ document.addEventListener('DOMContentLoaded', () => {
       closeMobileNav(true);
       return;
     }
+    if (event.key !== 'Enter' && event.key !== ' ') return;
+    if (!shouldActivateCardFromTarget(event.target)) return;
     const card = event.target.closest?.('.anime-card');
-    if (!card || event.target.closest('button') || (event.key !== 'Enter' && event.key !== ' ')) return;
+    if (!card) return;
     event.preventDefault();
     card.click();
   });
