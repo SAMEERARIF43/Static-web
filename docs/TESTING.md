@@ -7,19 +7,19 @@
 
 | Command | What it runs |
 | --- | --- |
-| `npm test` | `node test-search.js` (search/catalog/SEO/legal/CORS + account-deletion success) **then** `node test-security.js` (Phase 2: headers/CSP, rate limits, AniList-outage fallback, account-deletion failure codes) — each starts its own server, runs its assertions and exits non-zero on failure |
+| `npm test` | `node test-search.js && node test-security.js && node test-watchlist.js` — search/catalog/SEO/legal/CORS and account-deletion success, Phase 2 headers/CSP/rate-limit/outage/account-deletion failure checks, then watchlist contract checks; the sequence stops on the first failure |
 | `npm run lint` | `eslint .` with `.eslintrc.json` (`eslint:recommended`, `no-undef: error`, `no-unused-vars: warn`) |
 | `npm start` | `node server.js` (development/manual use) |
 
 - The test harness spawns `server.js` on `TEST_PORT` (default **3001**, or `process.env.TEST_PORT`) and waits for `AnimeHub server listening on port <PORT>.` on stdout before asserting, with a 10-second timeout. `test-security.js` runs its scenarios on ports 3011-3014, one server each, so an exhausted rate-limit window cannot leak between scenarios.
-- Environment for the spawned server: `PORT=TEST_PORT`, `SITE_URL=https://animehub.example`, `CORS_ORIGINS=http://localhost:<TEST_PORT>`, and Supabase keys pointing at the in-process **mock Supabase auth server** created in `run()`. `test-security.js` additionally points `ANILIST_GRAPHQL_URL` or `SUPABASE_URL` at a closed local port so failures happen immediately instead of waiting for a real timeout.
+- Environment for the spawned server: `PORT=TEST_PORT`, `SITE_URL=https://animehub.example`, `CORS_ORIGINS=http://localhost:<TEST_PORT>`, `ANILIST_GRAPHQL_URL=http://127.0.0.1:18987`, and Supabase keys pointing at the in-process **mock Supabase auth server** created in `run()`. `test-search.js` starts and awaits a deterministic local AniList GraphQL fixture server before spawning the application; it does not use the live AniList API. `test-security.js` additionally points `ANILIST_GRAPHQL_URL` or `SUPABASE_URL` at a closed local port so failure paths happen immediately instead of waiting for a real timeout.
 - The harness kills the server in a `finally` block; failures set `process.exitCode = 1`.
 
 ## 2. Coverage — what is asserted today (CURRENT)
 
 | Area | Assertions |
 | --- | --- |
-| Search API | `One Piece` and `Naruto` return 200 with at least one title-matching result (uses the **live AniList API**) |
+| Search API | `One Piece` and `Naruto` return 200 with at least one title-matching result using the deterministic local AniList fixtures; this does not verify compatibility with the live AniList service |
 | Search validation | Empty query → 400 with the exact message; 101-character query → 400 |
 | Retired route | `POST /api/anime/search` → 404 |
 | Robots / sitemap | 200; robots points at the sitemap; sitemap includes privacy and DMCA URLs |
@@ -76,13 +76,13 @@
 - DONE `DELETE /api/account` failure paths — **503** (server booted without Supabase credentials), **504** (a mock Supabase that never answers, exercising the 10-second verification timeout), **502** (unreachable Supabase, upstream 500, invalid identity, Admin API failure), **401** (missing/malformed/expired session) and the account **429** are all covered by `test-security.js`. The only branch still unexercised is the 15-second **Admin API** timeout (the same code path as the tested verification timeout).
 - DONE `/api/search` **offline fallback path** is covered (curated fallback, validation, punctuation). The `/api/popular` AniList-failure fallback is still only unit-tested.
 - Unknown-route **404 JSON** is covered; the error middleware 413 payload and the `/api/search/suggestions` 502 path remain untested.
-- Frontend behaviour end-to-end: still no automated browser tests. The CSP surface was verified manually on 2026-10-07 — Home, a detail page and search rendered from live data with an **empty console** and no CSP violations, and the pinned Supabase UMD build loaded from `cdn.jsdelivr.net`.
+- Frontend behaviour end-to-end: still no automated browser tests. Passing the Node suites does not establish browser UI behaviour. The CSP surface was verified manually on 2026-10-07 — Home, a detail page and search rendered from live data with an **empty console** and no CSP violations, and the pinned Supabase UMD build loaded from `cdn.jsdelivr.net`.
 
 ## 5. Brittleness and dependencies (CURRENT)
 
 | Issue | Detail |
 | --- | --- |
-| **Live AniList dependency** | Search assertions and `/api/popular` expectations call the real AniList API; network outages or AniList changes make `npm test` flaky or failing. No mocks/fixtures for these paths |
+| **Live AniList compatibility** | The normal `test-search.js` success path uses deterministic local AniList fixtures. Compatibility with live AniList responses is not established by `npm test`; outage behavior is covered separately by `test-security.js` |
 | **Source string matching** | Several client tests assert substrings of `script.js` (e.g. exact listener text, `link[rel="canonical"]`). Harmless refactors break tests even when behaviour is correct |
 | **No unit-test runner** | Tests are a single imperative script using `node:assert`; no test framework, no per-test isolation, no coverage report |
 | **Implicit ordering** | Assertions run sequentially against one shared server instance; a single failure aborts the rest |
@@ -101,7 +101,7 @@
 
 - Frontend/E2E tests (Playwright/Cypress/etc.).
 - Test coverage measurement.
-- Fixture/mocked AniList server for deterministic tests.
+- Live AniList compatibility/contract tests.
 - Contract/schema tests for API responses.
 - Performance tests.
 - Accessibility automated checks.
