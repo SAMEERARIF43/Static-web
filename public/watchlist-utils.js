@@ -25,11 +25,16 @@
   }
 
   function normalizeWatchProgress(item, { rejectOverflow = false } = {}) {
-    const totalEpisodes = normalizeEpisodeValue(
+    // A total of 0 is not a real episode count. AniList reports unknown totals
+    // as null, but the card bookmark path coerces a missing count to 0, so 0 is
+    // treated as UNKNOWN here. Otherwise every episode > 0 would be rejected as
+    // overflow and Completed would reset the episode to 0.
+    let totalEpisodes = normalizeEpisodeValue(
       item.totalEpisodes ?? item.episodes,
       'total episode count',
       { allowNull: true }
     );
+    if (totalEpisodes === 0) totalEpisodes = null;
     let currentEpisode = normalizeEpisodeValue(item.currentEpisode ?? 0, 'current episode');
     const watchStatus = normalizeWatchStatus(item.watchStatus);
     if (watchStatus === 'completed' && totalEpisodes !== null) {

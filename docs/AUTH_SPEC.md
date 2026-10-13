@@ -1,7 +1,7 @@
 # AUTH_SPEC — authentication and account lifecycle (current)
 
 > Implementation: `public/auth-ui.js` (471 lines) + `DELETE /api/account` in `server.js`.
-> Snapshot: 2026-10-05. Describes what exists — no changes proposed here.
+> Snapshot: 2026-10-12. Describes the current implementation and deterministic local regression coverage.
 > Legend: **CURRENT** · **NOT IMPLEMENTED** · **NOT FOUND / NEEDS CONFIRMATION**.
 
 ## 1. Provider and initialisation (CURRENT)
@@ -57,7 +57,7 @@
 2. Requires a live session; otherwise "Please sign in again before deleting your account."
 3. `DELETE /api/account` with `Authorization: Bearer <access_token>`.
 4. Server verifies the token with Supabase Auth and deletes **only that verified user** with the Admin API (see `docs/API_SPEC.md` §`DELETE /api/account`).
-5. On success the client removes `anime_hub_watchlist` and the per-user cache, signs out locally, navigates home, and alerts confirmation.
+5. On success the client removes only the deleted user's per-user cache, preserves the shared guest key `anime_hub_watchlist`, signs out locally, navigates home, and alerts confirmation.
 6. On failure the button re-enables and the error is shown; nothing is deleted client-side.
 7. If the server is not configured with Supabase credentials, deletion returns 503 and the UI reports the failure message.
 
@@ -69,6 +69,7 @@
 - Declining: remembered in `sessionStorage` under `anime_hub_watchlist_migration_declined_<userId>` so the prompt does not reappear in that session; the local watchlist is kept.
 - Failure (network/validation): local data is kept untouched, an error is logged, and a toast "Watchlist sync failed. Your local watchlist was kept." is dispatched.
 - Signing out restores the guest watchlist view (`loadLocalWatchlist()`).
+- Auth-state watchlist loads carry a generation and current-user check; a delayed response from a previous account is discarded after account switching or logout.
 - Watch status and title-level episode progress use the same ownership boundary: browser writes are filtered by the current session user and protected by the Supabase watchlist UPDATE policy. The browser never supplies another user's identity.
 
 ## 11. UI/accessibility behaviour of the auth modal (CURRENT)

@@ -45,6 +45,7 @@ Emoji-prefixed logs (`❌`, `🔎`, `✅`, `🚀`) and `console.warn`/`console.e
 | Area | Handling |
 | --- | --- |
 | Search | Skeleton grid → results; **error state** with message "Could not load search results…" and a **Retry** button; separate no-results and filter-empty states; result-count live region |
+| Main catalog sections | Trending, Popular, Movies, Series, and filtered Popular results render a section-level alert with a **Try again** button instead of leaving skeleton cards on screen |
 | Search autocomplete | Aborts stale requests; on failure shows "Suggestions unavailable. Press Enter to search." |
 | Detail page | Full-page loading text → content; **error state** "Failed to load anime details." with "Back to Home" |
 | Watchlist | Unreadable local data is logged and treated as empty; cloud load failure → toast "Could not load your cloud watchlist…"; toggle failure → toast "Could not update your watchlist…" |
@@ -52,26 +53,22 @@ Emoji-prefixed logs (`❌`, `🔎`, `✅`, `🚀`) and `console.warn`/`console.e
 | Toast | Text-only messages, auto-dismiss after 3 s, single element |
 | SEO/site-config | `legal.js` failure only logs to console |
 
-## 3. Silent failures (GAP — no user-visible state)
+## 3. Remaining silent or limited failure paths
 
 | Location | Behaviour today |
 | --- | --- |
-| `loadPopular()` (`script.js`) | `catch` logs to console only. If `/api/popular` fails, **skeleton cards remain on screen** and the catalog stays empty; no message, no retry |
-| `loadMovies()` | `catch` logs to console only → page can stay on skeletons |
-| `loadSeries()` | Same as movies |
-| `filterByGenre()` | `catch` logs to console only → grid can stay on skeletons after a genre click |
-| `loadTrending()` | Renders "Unable to load trending items." inside the grid (partial handling) |
+| Main catalog loaders | Fixed: failures now render a retryable section-level alert |
+| `refreshCatalogPage()` | Fixed for upstream failures; invalid 400 filters still reset safely |
 | `legal.js` (contact/DMCA) | Falls back to the "not configured" text silently |
 | `updatePageSeo()` schema injection | No failure path; runs inline |
 
 ## 4. What is missing (NOT IMPLEMENTED)
 
-- No retry/backoff for AniList calls; no circuit breaker.
-- No user-visible error for the main catalog path (the most important silent failure).
-- No error boundaries/section-level fallback beyond the search and detail pages.
+- No circuit breaker. Safe GET catalog/search/detail requests use one bounded retry with exponential backoff and jitter; mutations and autocomplete do not auto-retry.
+- No error boundaries beyond section-level fallbacks, search, and detail pages.
 - No telemetry of client errors (no error reporting service).
 - No standard error payload documented in a schema (only `{ message }` by convention).
-- No timeouts documented for client fetches (browser defaults apply).
+- Frontend timeouts are bounded: site configuration 5s, autocomplete 6s, search 12s, catalog 12s, and detail/hydration 15s. Authentication configuration uses 5s and account deletion uses 15s. Timed-out requests use the same safe user-facing error/retry states as network failures.
 
 ## 5. NOT FOUND / NEEDS CONFIRMATION
 

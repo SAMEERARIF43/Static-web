@@ -33,7 +33,7 @@ Approved and implemented in one pass (owner greenlit 2026-10-06). `npm test` and
 | --- | --- | --- |
 | P3.1 | Are Favorites in scope? | **YES** — approved to build |
 | P3.2 | Is Watch History in scope, and derived or separate? | **YES** — approved; derived-vs-append-only still open (Phase 4) |
-| P3.3 | Is Continue Watching in scope? | **YES** — approved to build after progress/history |
+| P3.3 | Is Continue Watching in scope? | **YES** — title-level progress shelf implemented; playback/history extension remains approved after progress/history |
 | P3.3b | Is episode-level progress in scope? | **YES** — approved; requires an episode identity that does not exist yet |
 | P3.4 | Is an Admin system in scope, and for what purpose? | **LATER** — deferred; no admin work (`docs/ADMIN_SPEC.md`) |
 | P3.5 | Region strategy for legal-availability links (currently US-only) | Still open |

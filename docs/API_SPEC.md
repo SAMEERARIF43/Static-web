@@ -1,6 +1,6 @@
 # API_SPEC — HTTP API reference (current implementation)
 
-> Snapshot: 2026-10-06 — **Phase 1 landed** (single canonical AniList ID; the catalog endpoints are live-backed). Documents `server.js` exactly as it behaves today.
+> Snapshot: 2026-10-12 — current implementation. Documents `server.js` exactly as it behaves today.
 > Legend: **CURRENT** — implemented and reachable in `server.js` today · **NOT IMPLEMENTED** — absent (§3) ·
 > **PLANNED** — recorded in `docs/ROADMAP.md`, not built · **NOT FOUND / NEEDS CONFIRMATION** — cannot be determined from the repository.
 > Endpoints are **not** fixed, renamed, or removed by this document.
@@ -14,6 +14,7 @@
 | GET | `/*` | Static files from `public/` | filesystem | none | `public, max-age=0`; ETag/Last-Modified validators |
 | GET | `/robots.txt` | Crawler rules + sitemap URL | generated | none | none |
 | GET | `/sitemap.xml` | 5-URL sitemap | generated | none | none |
+| GET | `/api/health` | Liveness check | local process | none | no external calls |
 | GET | `/api/site-config` | Public site settings | env | none | `no-store` |
 | GET | `/api/config` | Public Supabase client config | env | none | `no-store` |
 | DELETE | `/api/account` | Self-service account deletion | Supabase Auth + Admin API | Bearer token (Supabase) | n/a | ⚪ |
@@ -59,6 +60,12 @@ Those security headers apply to **every** response, including the JSON 404 for u
 ### `GET /api/site-config`
 - **Response:** `{ siteUrl, contactEmail, dmcaEmail, justWatchRegion }`; `Cache-Control: no-store`.
 - **Guarantee:** never exposes Supabase settings (asserted by tests).
+
+### `GET /api/health`
+- **Purpose:** fast liveness check for a host or reverse proxy.
+- **Response:** `200 { "status": "ok" }`.
+- **External dependencies:** none; the handler does not contact AniList or Supabase.
+- **Authentication:** none.
 
 ### `GET /api/config`
 - **Response:** exactly `{ SUPABASE_URL, SUPABASE_ANON_KEY }`; `Cache-Control: no-store`.
@@ -166,11 +173,10 @@ Returns JSON `{ message }`:
 Needed for features currently absent (see `docs/FEATURES.md`, `docs/WATCH_SYSTEM.md`) — **none exist today**:
 
 - Episodes: list/numbering/air dates per title.
-- Watch progress / continue watching (per user, per title, per episode).
+- Playback-position and per-episode watch-history endpoints. Continue Watching is a client-derived shelf from existing watchlist progress, not a separate API.
 - Watch history.
 - Favorites.
 - Admin/management endpoints.
-- Health/readiness endpoint.
 
 ## 4. Cross-cutting gaps
 

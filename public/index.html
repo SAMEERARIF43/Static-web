@@ -92,12 +92,12 @@
     </div>
 
     <!-- Search Overlay (drops down from navbar) -->
-    <div class="search-overlay" id="search-overlay">
+    <div class="search-overlay" id="search-overlay" hidden>
       <div class="search-overlay-inner">
         <div class="search-bar-wrapper">
           <svg class="search-icon-inner" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
           <input class="search-overlay-input" id="search-overlay-input" type="search" placeholder="Search anime by title, genre, studio..." autocomplete="off" maxlength="100" aria-label="Search titles" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="nav-search-options">
-          <button class="search-close-btn" id="search-close-btn" aria-label="Close search">✕</button>
+          <button type="button" class="search-close-btn" id="search-close-btn" aria-label="Close search">✕</button>
           <div class="search-suggestions" id="nav-search-suggestions" hidden>
             <ul id="nav-search-options" role="listbox" aria-label="Search suggestions"></ul>
             <p id="nav-search-status" class="search-suggestion-status" aria-live="polite"></p>
@@ -187,6 +187,20 @@
         </div>
       </section>
 
+      <!-- CONTINUE WATCHING -->
+      <section class="content-section" id="section-continue-watching" style="display:none" aria-labelledby="continue-watching-title">
+        <div class="section-container">
+          <div class="section-header">
+            <div>
+              <h2 class="section-title" id="continue-watching-title">▶ Continue Watching</h2>
+              <p class="section-subtitle">Pick up where you left off.</p>
+            </div>
+            <a href="/?page=watchlist" class="view-all" data-nav="watchlist">View Watchlist <span>→</span></a>
+          </div>
+          <div class="anime-grid" id="continue-watching-grid"></div>
+        </div>
+      </section>
+
       <!-- TRENDING -->
       <section class="content-section" id="section-trending">
         <div class="section-container">
@@ -215,7 +229,7 @@
     <div class="page" id="page-popular">
       <div class="inner-page-container">
         <div class="section-container">
-          <h2 class="page-heading">Most Popular Anime</h2>
+          <h1 class="page-heading">Most Popular Anime</h1>
           <div class="genre-filter-bar" id="popular-genre-filter" role="group" aria-label="Filter by genre">
             <button class="genre-btn active" data-genre="All">All</button>
             <button class="genre-btn" data-genre="Action">Action</button>
@@ -295,7 +309,7 @@
     <div class="page" id="page-movies">
       <div class="inner-page-container">
         <div class="section-container">
-          <h2 class="page-heading">Anime Movies</h2>
+          <h1 class="page-heading">Anime Movies</h1>
           <div class="anime-grid large-grid" id="movies-grid"></div>
           <div class="empty-state" id="movies-empty" style="display:none">
             <div class="empty-icon">🎬</div>
@@ -310,7 +324,7 @@
     <div class="page" id="page-series">
       <div class="inner-page-container">
         <div class="section-container">
-          <h2 class="page-heading">TV Series</h2>
+          <h1 class="page-heading">TV Series</h1>
           <div class="genre-filter-bar" id="series-genre-filter" role="group" aria-label="Filter by genre">
             <button class="genre-btn active" data-genre="All">All</button>
             <button class="genre-btn" data-genre="Action">Action</button>
@@ -326,7 +340,7 @@
     <div class="page" id="page-watchlist">
       <div class="inner-page-container">
         <div class="section-container">
-          <h2 class="page-heading">My Watchlist</h2>
+          <h1 class="page-heading">My Watchlist</h1>
           <div class="anime-grid large-grid" id="watchlist-grid"></div>
           <div class="empty-state" id="watchlist-empty" style="display:none">
             <div class="empty-icon">📚</div>
@@ -343,7 +357,7 @@
       <div class="inner-page-container">
         <div class="section-container">
           <div class="section-header" style="flex-wrap: wrap; gap: 12px; margin-bottom: 20px;">
-            <h2 class="page-heading" style="margin-bottom: 0;">Search Results for "<span id="search-query-label"></span>"</h2>
+            <h1 class="page-heading" style="margin-bottom: 0;">Search Results for "<span id="search-query-label"></span>"</h1>
             <p id="search-result-count" class="search-result-count" role="status" aria-live="polite" style="color: var(--text-muted); font-size: 14px; font-weight: 500;"></p>
           </div>
 

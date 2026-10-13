@@ -11,7 +11,7 @@ npm install
 npm start
 ```
 
-Open <http://localhost:3000>. `npm test` starts the server and runs the search API assertions.
+Open <http://localhost:3000>. `npm test` runs `test-search.js`, `test-security.js`, and `test-watchlist.js` in sequence: deterministic API/catalog and SEO checks, security and outage checks, and watchlist plus genre-filter regression checks.
 
 ## Configuration
 
@@ -38,7 +38,7 @@ For managed Node.js hosting instructions, production environment-variable requir
 - Search terms are sent to this server and forwarded to AniList for catalog results.
 - Catalog pages load live, non-adult AniList data and cache it in memory for 10 minutes: Trending (live trending), Popular (top 50 by popularity), Movies (films only) and TV Series (television formats only). Each list merges in curated titles, and falls back to the last cached list or the curated catalog when AniList is unavailable.
 - Every anime is identified by its AniList ID; the older `/api/detail/:id` route now redirects to `/api/anime/:id`.
-- The Popular page displays 24 titles per page; filters apply to the complete loaded catalog, and the selected page is shareable through the URL.
+- The Popular page displays 30 titles per page; filters apply to the complete loaded catalog, and the selected page is shareable through the URL.
 - Title details include available AniList metadata, staff and Japanese voice-actor credits, related titles, recommendations, and official YouTube trailer links; Anime Hub does not host or stream video.
 - Fonts are loaded from Google Fonts.
 - Analytics, advertisements, and video playback are not included.
@@ -51,5 +51,5 @@ For authenticated account deletion, apply `supabase-schema.sql` to the Supabase 
 
 - `public/` — static catalog UI and legal pages
 - `server.js` — Express API, metadata proxy, and sitemap/robots endpoints
-- `test-search.js` — search/SEO/CORS API assertions, catalog merge unit tests, and the unauthenticated account-deletion guard (the authenticated deletion path is currently untested — see `docs/TESTING.md`)
+- `test-search.js` — search/SEO/CORS API assertions, catalog merge unit tests, and unauthenticated and authenticated account-deletion checks using a local mock Supabase server (see `docs/TESTING.md`)
 - `docs/` — product and technical documentation (start with `docs/ARCHITECTURE.md`)

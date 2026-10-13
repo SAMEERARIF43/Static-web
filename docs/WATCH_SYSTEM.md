@@ -1,6 +1,6 @@
 # WATCH_SYSTEM — watchlist, progress, history, continue watching
 
-> Snapshot: 2026-10-05. This document states clearly what exists and what does not.
+> Snapshot: 2026-10-12. This document states clearly what exists and what does not.
 > Legend: **CURRENT** · **PLANNED** · **NOT IMPLEMENTED** · **NOT FOUND / NEEDS CONFIRMATION**.
 
 ## 1. Current status at a glance
@@ -8,12 +8,12 @@
 ```text
 Watchlist              = IMPLEMENTED   (guest-local + signed-in cloud)
 Watch Progress         = IMPLEMENTED   (status + current episode)
-Watch History          = NOT IMPLEMENTED   (approved to build — decision 2026-10-05)
-Continue Watching      = NOT IMPLEMENTED   (approved to build — decision 2026-10-05)
+ Watch History          = NOT IMPLEMENTED   (approved to build — decision 2026-10-05)
+ Continue Watching      = IMPLEMENTED   (title-level resume shelf; no playback)
 Episode-level tracking = NOT IMPLEMENTED   (title-level current episode only)
 ```
 
-The current UI supports title-level status and current-episode progress. It does not promise playback position, watch history, or continue watching; those remain separate future features.
+The current UI supports title-level status, current-episode progress, and a Continue Watching shelf derived from unfinished entries with positive progress. It does not promise playback position, watch history, or streaming playback.
 
 ## 2. Watchlist (CURRENT) — implemented behaviour
 
@@ -33,6 +33,7 @@ The current UI supports title-level status and current-episode progress. It does
 ### 2.3 Migration (guest → account)
 - Triggered on sign-in when a local watchlist exists; asks for consent; upserts only missing rows; verifies by read-back; merges the display cache; removes the local key only after verification.
 - Decline is remembered per session; any failure leaves local data intact and shows an error toast.
+- Account deletion removes the deleted user's derived cloud cache but preserves the shared guest watchlist key.
 
 ### 2.4 Not part of the watchlist today
 - No "added at" ordering in the UI (`added_at` exists in the database but is unused client-side).
@@ -40,12 +41,19 @@ The current UI supports title-level status and current-episode progress. It does
 - The Watchlist and Detail pages show status and current episode. Selecting `completed` advances to the known total episode count automatically.
 - No multi-device conflict resolution beyond "cloud rows win by union".
 
-## 3. Continue Watching — historical record only (NOT CURRENT)
+## 3. Continue Watching — CURRENT title-level shelf
+
+- The home page displays up to six unfinished watchlist entries with `currentEpisode > 0` and a status other than `completed`.
+- Guest entries come from `localStorage`; signed-in entries come from the per-user Supabase watchlist/cache path.
+- The shelf updates after add/remove/status/episode changes, account switching, logout, and page reload.
+- It is a resume-progress shelf only. It does not embed video, store playback position, or claim that an episode can be streamed.
+
+### Historical implementation record
 
 - Commit `816af2e` ("Add continue watching feature", 2026-10-03) implemented a continue-watching UI in the **then-current root** `index.html`, `script.js`, `style.css` (441 inserted lines).
 - Those root files were deleted in the `public/` restructure (`dc15de9`, `fdade94`, `8158752`). **The feature does not exist in the current app.**
 - The only remnant is a defensive assertion in `test-search.js` that the legacy `localStorage` key `anime_hub_continue_watching` is never removed. Some browsers may still hold that key; nothing reads it.
-- **Do not describe continue watching as a current feature anywhere.**
+- The older playback-oriented implementation is not present and must not be described as current.
 
 ## 4. Watch Progress / History
 

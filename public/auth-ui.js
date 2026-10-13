@@ -4,6 +4,19 @@ let authReady = false;
 let watchlistMigration = null;
 let authReturnFocus = null;
 
+async function authFetch(url, options = {}, timeoutMs = 10000) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } catch (error) {
+    if (error.name === 'AbortError') error.kind = 'timeout';
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 const {
   normalizeWatchProgress
 } = window.AnimeHubWatchlistUtils;
@@ -123,7 +136,7 @@ async function getCloudWatchlist() {
   // whole list (AH-004b). Order is preserved: results stay aligned with
   // missingIds, and only fulfilled rows are kept.
   const settled = await Promise.allSettled(missingIds.map(async id => {
-    const response = await fetch(`/api/anime/${encodeURIComponent(id)}`);
+    const response = await authFetch(`/api/anime/${encodeURIComponent(id)}`, {}, 15000);
     if (!response.ok) throw new Error(`Could not load anime ${id} for your cloud watchlist.`);
     const media = await response.json();
     if (!media?.id || Number(media.id) !== id) {
@@ -360,7 +373,7 @@ async function handleAuthState(session) {
 
 async function initSupabase() {
   try {
-    const response = await fetch('/api/config');
+    const response = await authFetch('/api/config', {}, 5000);
     if (!response.ok) throw new Error('Could not load authentication configuration.');
     const config = await response.json();
     if (!config.SUPABASE_URL || !config.SUPABASE_ANON_KEY) {
@@ -487,10 +500,10 @@ async function deleteAccount() {
   const deleteButton = document.getElementById('profile-delete-btn');
   if (deleteButton) deleteButton.disabled = true;
   try {
-    const response = await fetch('/api/account', {
+    const response = await authFetch('/api/account', {
       method: 'DELETE',
       headers: { Authorization: `Bearer ${session.access_token}` }
-    });
+    }, 15000);
     const result = await response.json().catch(() => ({}));
     if (!response.ok) {
       throw new Error(result.message || 'Account deletion could not be completed. Your account has not been deleted.');
@@ -506,7 +519,6 @@ async function deleteAccount() {
   }
 
   try {
-    localStorage.removeItem('anime_hub_watchlist');
     localStorage.removeItem(watchlistCacheKey(session.user.id));
   } catch (error) {
     console.error('Could not clear all local watchlist data after account deletion:', error);

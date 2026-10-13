@@ -14,3 +14,5 @@ node_modules/
 /.cache/
 opencode.json
 .freebuff/
+/test-results/
+/playwright-report/

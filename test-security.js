@@ -180,6 +180,10 @@ function createAuthServer() {
         res.end(JSON.stringify({ message: 'delete failed' }));
         return;
       }
+      if (authMode === 'hangAdmin') {
+        // Deliberately never answer: the server must apply its Admin API timeout.
+        return;
+      }
       res.end(JSON.stringify({ id: verifiedUserId }));
       return;
     }
@@ -428,10 +432,16 @@ async function runOutageAndHeaderScenario(deadPort, port) {
       'Browse status must be enforced on the fallback results'
     );
 
-    // Formats no curated title satisfies return an honest empty list.
+    // The curated catalog now contains Ne Zha (MOVIE, CN) added in Phase 4 to
+    // support Chinese animated movie compatibility. Verify the format filter
+    // correctly passes through and that every result is a film.
     const browseMovies = await request(baseURL, '/api/browse?format=MOVIE');
     assert.strictEqual(browseMovies.statusCode, 200, 'A browse format filter should be accepted');
-    assert.deepStrictEqual(browseMovies.body, [], 'No curated title is a film, so the browse result must be empty');
+    assert(
+      Array.isArray(browseMovies.body) &&
+        browseMovies.body.every(anime => (anime.type || anime.format) === 'MOVIE'),
+      'Every item returned by browse?format=MOVIE must be a film (MOVIE format)'
+    );
 
     // ---- invalid browse parameters are rejected during the outage too ----
     const invalidBrowseQueries = [
@@ -641,9 +651,21 @@ async function runAccountDeletionScenario(mockAuthUrl, port) {
     assertSecurityHeaders(timedOut, '504 response');
     authMode = 'ok';
 
-    // Three of the five allowed attempts are already spent (delete failure,
-    // success, timeout): two more must still answer, the sixth must throttle.
-    for (let attempt = 0; attempt < 2; attempt += 1) {
+    // ---- a hanging Admin API exercises the 15-second Admin API timeout ----
+    authMode = 'hangAdmin';
+    const adminTimedOut = await request(baseURL, '/api/account', { Authorization: 'Bearer test-access-token' }, 'DELETE');
+    assert.strictEqual(adminTimedOut.statusCode, 504, 'A Supabase Admin API timeout should surface as 504');
+    assert(
+      !/ECONNABORTED|127.0.0.1/.test(JSON.stringify(adminTimedOut.body)),
+      'An Admin API timeout response must not disclose upstream connection details'
+    );
+    assertSecurityHeaders(adminTimedOut, '504 response');
+    authMode = 'ok';
+
+    // Four of the five allowed attempts are already spent (delete failure,
+    // success, verification timeout, Admin API timeout): one more must still
+    // answer, the sixth must throttle.
+    for (let attempt = 0; attempt < 1; attempt += 1) {
       const unauthorized = await request(baseURL, '/api/account', {}, 'DELETE');
       assert.strictEqual(unauthorized.statusCode, 401, 'Unauthenticated deletion should stay 401 under the limit');
     }

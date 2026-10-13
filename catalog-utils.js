@@ -30,7 +30,8 @@ const ANILIST_AUTHORITATIVE_FIELDS = [
   'rating',
   'genre',
   'type',
-  'language'
+  'language',
+  'countryOfOrigin'
 ];
 
 /**
@@ -74,7 +75,8 @@ function mapAniListMediaToCatalogItem(media) {
     image: poster,
     poster,
     banner: media.bannerImage || '',
-    description: media.description || ''
+    description: media.description || '',
+    countryOfOrigin: media.countryOfOrigin || null
   };
 }
 

@@ -54,7 +54,7 @@ Every legal page and the site footer repeat this non-hosting statement. **AnimeH
 - ~~**TV Series page is unfiltered** — it renders the whole catalog, including movies.~~ → `/api/series` is `format_in: [TV, TV_SHORT]`; verified 0 films.
 - ~~**Trending is static** — a fixed slice of the local array, not computed from AniList popular/trending data.~~ → Real AniList `TRENDING_DESC`.
 - **Episodes are only a count.** No episode list, numbering, air dates, or per-episode data of any kind.
-- **No Favorites, Watch History, Continue Watching, or Admin** (see `docs/FEATURES.md`).
+- **No Favorites, Watch History, per-episode data, or Admin.** Continue Watching is now implemented as a title-level progress shelf only (see `docs/FEATURES.md`).
 - **No user-visible failure states** for the Popular, Movies, Series, and genre paths (failures only reach the console).
 - ~~**No API rate limiting** on the public AniList proxy endpoints.~~ → **Fixed 2026-10-07 (Phase 2):** per-IP limits on `/api` (120/min), `/api/search` and `/api/anime/:id` (60/min) and `/api/account` (5 per 15 min), with `TRUST_PROXY` for correct client IPs behind a proxy. Limits are process-local.
 
@@ -74,7 +74,7 @@ These decisions were recorded with the product owner on 2026-10-05. **Approved i
 | Canonical anime ID | **AniList ID everywhere** — local 1–12 IDs stop being exposed in APIs, URLs, and stored rows. **IMPLEMENTED 2026-10-06 (Phase 1):** the local id field is deleted, `catalog-utils.withCanonicalId` enforces `id === anilistId`, and `/api/detail/:id` now redirects to `/api/anime/:id` |
 | Favorites | **YES** — approved to build |
 | Watch History | **YES** — approved to build |
-| Continue Watching | **YES** — approved to build |
+| Continue Watching | **YES** — title-level progress shelf implemented; playback/history remains future scope |
 | Episode-level progress | **YES** — approved to build (requires an episode identity that does not exist yet) |
 | Admin | **LATER** — deferred; curation stays in code for now |
 | Anime data source | **Hybrid** — AniList is the primary catalog; the local layer is curation + offline fallback only |
@@ -84,7 +84,7 @@ These decisions were recorded with the product owner on 2026-10-05. **Approved i
 | Separate environments | **YES** — development and production will be separate |
 | Restoring deletion tests | **YES — before Phase 1** (completed 2026-10-05; see `docs/TESTING.md` §3) |
 
-Ordering implied by these decisions: Phase 1 (canonical ID + hybrid catalog) → episode identity → progress/history schema → Continue Watching UI, with Favorites as the early independent piece. Admin remains deferred.
+Ordering for the remaining watch-system work: episode identity → progress/history schema → playback-oriented Continue Watching, with Favorites as the early independent piece. Admin remains deferred.
 
 Open sub-decisions (Phase 4; not blocking Phase 1): favourites storage shape, episode identity source, and whether history is derived from progress or stored append-only.
 

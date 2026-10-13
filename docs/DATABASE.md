@@ -78,7 +78,7 @@ AFTER INSERT ON auth.users FOR EACH ROW EXECUTE FUNCTION public.handle_new_user(
 Favorites:              NOT IMPLEMENTED  (no table, no endpoint, no UI)
 Watch History:          NOT IMPLEMENTED  (no table, no endpoint, no UI)
 Watch Progress:         IMPLEMENTED  (status/current episode in `watchlist`; no playback position)
-Continue Watching:      NOT IMPLEMENTED  (no table, no endpoint, no UI)
+Continue Watching:      TITLE-LEVEL UI ONLY (derived from watchlist progress; no separate table or endpoint)
 Episode data:           NOT IMPLEMENTED  (episodes exist only as a count from AniList)
 Admin tables / roles:   NOT IMPLEMENTED  (no roles, no admin users, no moderation tables)
 ```
