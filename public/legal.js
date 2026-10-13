@@ -2,8 +2,10 @@ document.addEventListener('DOMContentLoaded', async () => {
   const statuses = document.querySelectorAll('[data-email-status]');
   if (!statuses.length) return;
 
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 5000);
   try {
-    const response = await fetch('/api/site-config');
+    const response = await fetch('/api/site-config', { signal: controller.signal });
     if (!response.ok) throw new Error(`Site settings request failed: ${response.status}`);
     const config = await response.json();
 
@@ -19,5 +21,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
   } catch (error) {
     console.error('Could not load contact settings:', error);
+  } finally {
+    clearTimeout(timer);
   }
 });

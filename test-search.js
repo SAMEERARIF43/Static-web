@@ -24,7 +24,7 @@ const verifiedUserId = '01234567-89ab-cdef-0123-456789abcdef';
 const _anilistTestScenario = process.env.ANILIST_TEST_SCENARIO || 'success';
  // The AniList IDs of the curated catalog, used to prove the catalog endpoints
 // are served from live AniList data rather than from that curated list.
-const CURATED_ANILIST_IDS = new Set([113415, 151807, 21, 101922, 16498, 20, 1535, 5114, 269, 101348, 9253, 11061]);
+const CURATED_ANILIST_IDS = new Set([113415, 151807, 21, 101922, 16498, 20, 1535, 5114, 269, 101348, 9253, 11061, 112117, 98861, 126403]);
 const authRequests = [];
 
 function request(pathname, headers = {}, method = 'GET', body = null) {
@@ -360,7 +360,7 @@ async function run() {
     server: null
   };
   const poster = id => `https://s4.anilist.co/file/anilistcdn/media/anime/cover/large/bx${id}.jpg`;
-  const media = (id, title, format = 'TV', genres = ['Action'], year = 2024, score = 80) => ({
+  const media = (id, title, format = 'TV', genres = ['Action'], year = 2024, score = 80, countryOfOrigin = 'JP') => ({
     id,
     title: { english: title, romaji: title, native: title },
     coverImage: { large: poster(id), extraLarge: poster(id) },
@@ -374,7 +374,7 @@ async function run() {
     seasonYear: year,
     startDate: { year, month: 1, day: 1 },
     format,
-    countryOfOrigin: 'JP',
+    countryOfOrigin,
     studios: { nodes: [{ name: title === 'Jujutsu Kaisen' ? 'MAPPA' : 'Studio Fixture' }] },
     staff: { edges: [] }, characters: { edges: [] }, trailer: null,
     relations: { edges: [] }, recommendations: { edges: [] }
@@ -403,6 +403,9 @@ async function run() {
     media(900021, 'One Piece', 'TV', ['Action', 'Adventure', 'Fantasy'], 1999, 90),
     media(900022, 'Naruto', 'TV', ['Action', 'Adventure'], 2002, 83),
     media(900023, 'One Piece Film: Red', 'MOVIE', ['Action', 'Comedy'], 2022, 82),
+    media(900050, 'Ne Zha', 'MOVIE', ['Action', 'Fantasy'], 2019, 85, 'CN'),
+    media(900051, 'The Kings Avatar', 'TV', ['Action', 'Adventure'], 2017, 82, 'CN'),
+    media(900052, 'Unknown Origin Title', 'TV', ['Mystery'], 2020, 75, null),
     ...Array.from({ length: 35 }, (_, index) => media(
       901000 + index,
       `Fixture Catalog ${index + 1}`,
@@ -414,7 +417,10 @@ async function run() {
   ];
   const detailMedia = new Map([
     [1, media(1, 'Cowboy Bebop', 'TV', ['Action', 'Sci-Fi'], 1998, 88)],
-    [206949, media(206949, 'The Fixture Chronicle', 'TV', ['Fantasy'], 2025, 81)]
+    [206949, media(206949, 'The Fixture Chronicle', 'TV', ['Fantasy'], 2025, 81)],
+    [900050, media(900050, 'Ne Zha', 'MOVIE', ['Action', 'Fantasy'], 2019, 85, 'CN')],
+    [900051, media(900051, 'The Kings Avatar', 'TV', ['Action', 'Adventure'], 2017, 82, 'CN')],
+    [900052, media(900052, 'Unknown Origin Title', 'TV', ['Mystery'], 2020, 75, null)]
   ]);
   mockAniList.server = http.createServer(async (req, res) => {
     try {
@@ -521,6 +527,27 @@ async function run() {
     assert(
       naruto.body.some(anime => getTitle(anime).toLowerCase().includes('naruto')),
       'Naruto results should include Naruto'
+    );
+
+    // Journey 1: Search - Chinese-origin titles and detail navigation alongside Japanese controls
+    const neZhaSearch = await search('Ne Zha');
+    assert.strictEqual(neZhaSearch.statusCode, 200, 'Ne Zha search should return HTTP 200');
+    assert(Array.isArray(neZhaSearch.body), 'Ne Zha search response should be an array');
+    assert(
+      neZhaSearch.body.some(anime => anime.id === 900050 && anime.countryOfOrigin === 'CN'),
+      'Search should return Chinese-origin title with countryOfOrigin: "CN"'
+    );
+    const cnSearchResult = neZhaSearch.body.find(anime => anime.id === 900050);
+    const cnSelectedDetail = await request(`/api/anime/${cnSearchResult.id}`);
+    assert.strictEqual(cnSelectedDetail.statusCode, 200, 'Selecting Chinese search result should open detail page');
+    assert.strictEqual(cnSelectedDetail.body.id, 900050);
+    assert.strictEqual(cnSelectedDetail.body.countryOfOrigin, 'CN');
+
+    const kingsAvatarSearch = await search('The Kings Avatar');
+    assert.strictEqual(kingsAvatarSearch.statusCode, 200, 'The Kings Avatar search should return HTTP 200');
+    assert(
+      kingsAvatarSearch.body.some(anime => anime.id === 900051 && anime.countryOfOrigin === 'CN'),
+      'Search should return Chinese-origin series with countryOfOrigin: "CN"'
     );
 
     const suggestions = await request('/api/search/suggestions?q=one');
@@ -857,6 +884,20 @@ async function run() {
     assert.strictEqual(jujutsuKaisen.studio, 'MAPPA', 'Catalog entries should include studio metadata');
     assert.strictEqual(jujutsuKaisen.language, 'Japanese', 'Catalog entries should include language metadata');
 
+    // Journey 2: Popular - Chinese-origin titles appear when eligible alongside Japanese titles
+    assert(
+      popular.body.some(anime => anime.id === 900050 && anime.countryOfOrigin === 'CN'),
+      'Popular catalog should include eligible Chinese-origin animated movie'
+    );
+    assert(
+      popular.body.some(anime => anime.id === 900051 && anime.countryOfOrigin === 'CN'),
+      'Popular catalog should include eligible Chinese-origin animated series'
+    );
+    assert(
+      popular.body.some(anime => anime.id === 900021 && anime.countryOfOrigin === 'JP'),
+      'Popular catalog should include Japanese-origin control title'
+    );
+
     // ---- Movies and TV series are separate live catalogs ----
     const movies = await request('/api/movies');
     assert.strictEqual(movies.statusCode, 200, 'Movies catalog should load');
@@ -870,12 +911,40 @@ async function run() {
       'Movie entries should use the canonical AniList ID'
     );
 
+    // Journey 3: Movies - Chinese movie appears, Japanese movie appears, TV series do not leak
+    assert(
+      movies.body.some(anime => anime.id === 900050 && anime.countryOfOrigin === 'CN'),
+      'Movies catalog should include Chinese-origin animated movie'
+    );
+    assert(
+      movies.body.some(anime => anime.id === 900023 && anime.countryOfOrigin === 'JP'),
+      'Movies catalog should include Japanese-origin control movie'
+    );
+    assert(
+      !movies.body.some(anime => anime.id === 900051 || anime.id === 900021),
+      'TV series (Chinese or Japanese) must not leak into movies catalog'
+    );
+
     const series = await request('/api/series');
     assert.strictEqual(series.statusCode, 200, 'TV series catalog should load');
     assert(series.body.length > 0, 'TV series catalog should return titles');
     assert(
       series.body.every(anime => ['TV', 'TV_SHORT'].includes(String(anime.type || anime.format).toUpperCase())),
       'TV series catalog must not contain films'
+    );
+
+    // Journey 4: Series - Chinese series appears, Japanese series appears, movies do not leak
+    assert(
+      series.body.some(anime => anime.id === 900051 && anime.countryOfOrigin === 'CN'),
+      'Series catalog should include Chinese-origin animated series'
+    );
+    assert(
+      series.body.some(anime => anime.id === 900021 && anime.countryOfOrigin === 'JP'),
+      'Series catalog should include Japanese-origin control series'
+    );
+    assert(
+      !series.body.some(anime => anime.id === 900050 || anime.id === 900023),
+      'Movies (Chinese or Japanese) must not leak into series catalog'
     );
 
     // ---- Genre filtering is served from the live catalog ----
@@ -948,6 +1017,36 @@ async function run() {
     const highCatalogDetail = await request('/api/anime/206949');
     assert.strictEqual(highCatalogDetail.statusCode, 200, 'A valid AniList ID above 100,000 should load');
     assert.strictEqual(highCatalogDetail.body.id, 206949, 'High AniList detail responses should preserve their canonical ID');
+
+    // Journey 5: Detail pages - Chinese movie, Chinese series, Japanese control, unknown origin
+    const cnMovieDetail = await request('/api/anime/900050');
+    assert.strictEqual(cnMovieDetail.statusCode, 200, 'Chinese movie detail should load');
+    assert.strictEqual(cnMovieDetail.body.id, 900050);
+    assert.strictEqual(cnMovieDetail.body.countryOfOrigin, 'CN', 'Chinese movie detail should expose countryOfOrigin "CN"');
+    assert.strictEqual(cnMovieDetail.body.format, 'MOVIE', 'Chinese movie detail should expose format "MOVIE"');
+    assert(cnMovieDetail.body.coverImage?.large, 'Chinese movie detail should expose cover image');
+    assert(cnMovieDetail.body.description, 'Chinese movie detail should expose description');
+
+    const cnSeriesDetail = await request('/api/anime/900051');
+    assert.strictEqual(cnSeriesDetail.statusCode, 200, 'Chinese series detail should load');
+    assert.strictEqual(cnSeriesDetail.body.id, 900051);
+    assert.strictEqual(cnSeriesDetail.body.countryOfOrigin, 'CN', 'Chinese series detail should expose countryOfOrigin "CN"');
+    assert.strictEqual(cnSeriesDetail.body.format, 'TV', 'Chinese series detail should expose format "TV"');
+    assert(cnSeriesDetail.body.coverImage?.large, 'Chinese series detail should expose cover image');
+    assert(cnSeriesDetail.body.description, 'Chinese series detail should expose description');
+
+    assert.strictEqual(canonicalDetail.body.countryOfOrigin, 'JP', 'Japanese control detail should expose countryOfOrigin "JP"');
+
+    const unknownOriginDetail = await request('/api/anime/900052');
+    assert.strictEqual(unknownOriginDetail.statusCode, 200, 'Title with missing/unknown origin should load safely');
+    assert.strictEqual(unknownOriginDetail.body.countryOfOrigin, null, 'Missing countryOfOrigin should be null without errors');
+
+    // Fallback detail for curated Chinese title
+    const curatedCnDetail = await request('/api/anime/112117');
+    assert.strictEqual(curatedCnDetail.statusCode, 200, 'Curated Chinese title detail should load');
+    assert.strictEqual(curatedCnDetail.body.id, 112117);
+    assert.strictEqual(curatedCnDetail.body.countryOfOrigin, 'CN', 'Curated Chinese title should expose countryOfOrigin "CN"');
+    assert.strictEqual(curatedCnDetail.body.format, 'MOVIE');
 
     const malformedAnimeId = await request('/api/anime/not-an-id');
     assert.strictEqual(malformedAnimeId.statusCode, 400, 'A malformed AniList ID should be rejected');

@@ -1,6 +1,6 @@
 # TESTING — current test, lint and CI setup
 
-> Snapshot: 2026-10-07 (Phase 2). Documents the suites as they exist. `test-security.js` was added on 2026-10-07; `test-search.js` was last extended in Phase 1.
+> Snapshot: 2026-10-12. Node suites use deterministic local fixtures/mocks; Playwright uses a dedicated local server on port 3100 with AniList pointed at a closed loopback port, test-only rate-limit bypass, and no existing-server reuse.
 > Legend: **CURRENT** · **GAP** · **NOT IMPLEMENTED** · **NOT FOUND / NEEDS CONFIRMATION**.
 
 ## 1. Commands (CURRENT)
@@ -30,7 +30,7 @@
 | `/api/site-config` | 200; `siteUrl` = configured origin; does **not** expose Supabase settings |
 | `/api/config` | 200; key set is exactly `['SUPABASE_ANON_KEY', 'SUPABASE_URL']`; `Cache-Control: no-store` |
 | Account deletion | Unauthenticated `DELETE /api/account` → 401 **and** (restored 2026-10-05) authenticated deletion → 200 with token verification at `/auth/v1/user`, the Admin API targeted at the verified user (not a body-supplied `user_id`), service-role header checks and a no-leak assertion |
-| Client source guards | `script.js` still reads `anime_hub_watchlist`; never removes `anime_hub_continue_watching`; search-filter `change`/`reset` listeners exist; search race guard present; canonical update present; quote escaping present |
+| Client source guards | `script.js` still reads `anime_hub_watchlist`; never removes `anime_hub_continue_watching`; search-filter `change`/`reset` listeners exist; search race guard present; autocomplete uses the suggestions endpoint with a 180 ms debounce, aborts obsolete requests, ignores stale responses, and retains keyboard controls; canonical update present; quote escaping present |
 | CORS | Foreign origin → 403 (**live assertion**); configured origin → 200 with matching `access-control-allow-origin` |
 | `/api/trending` | 200; ≥ 5 entries; every entry has `id === anilistId`; no duplicate IDs; **at least one entry outside the curated ID set** — proves the list is live rather than the old fixed local slice |
 | `/api/popular` | 200; array; ≥ 12 entries; every entry has an integer `anilistId > 0` **and** `id === anilistId`; no duplicate IDs; the curated Jujutsu Kaisen entry (113415) keeps studio `MAPPA` and language `Japanese` |
@@ -50,7 +50,8 @@
 | Exposure guards (`test-security.js`) | `/server.js`, `/.freebuff/project-id`, `/.env`, `/%2e%2e/server.js` and `/../server.js` are never served with 200 and never echo repository content |
 | AniList outage (`test-security.js`) | `/api/anime/113415` returns 200 with `X-Catalog-Source: curated` and a canonical ID; an unknown id returns **500** with no fabricated entry and no connection detail in the body; `/api/anime/abc`, `/0` and `/2147483648` return 400; `/api/trending` and `/api/search` degrade to curated data with `id === anilistId`; `q=Re%3AZero` is still 200 while `q=abc%00def` and `q=` are 400 |
 | Rate limits (`test-security.js`) | `RateLimit-Policy` is `120;w=60` on `/api`, `60;w=60` on `/api/search` and `5;w=900` on `/api/account`, and absent on `/api/site-config`; exhausting the global allowance returns **429** with the security headers and a neutral message, and the client stays limited for the window |
-| Account deletion failures (`test-security.js`) | 401 (no header, `Bearer` with no token, upstream 401) with **no upstream contact** when unauthenticated or malformed; **502** (unreachable Supabase, upstream 500, invalid user identity, Admin API failure); **503** (a server booted without Supabase credentials); **504** (a mock Supabase that never answers, exercising the 10-second verification timeout); 200 success with the IDOR guard; and the 5-per-15-min **429**. No body leaks the service-role key |
+| Account deletion failures (`test-security.js`) | 401 (no header, `Bearer` with no token, upstream 401) with **no upstream contact** when unauthenticated or malformed; **502** (unreachable Supabase, upstream 500, invalid user identity, Admin API failure); **503** (a server booted without Supabase credentials); **504** (a mock Supabase that never answers, exercising the 10-second verification timeout **and the 15-second Admin API timeout**); 200 success with the IDOR guard; and the 5-per-15-min **429**. No body leaks the service-role key |
+| Genre-filter UI function (`test-watchlist.js`) | Executes the extracted production `filterByGenre()` with local DOM/fetch mocks; covers successful rendering, HTTP and network failures replacing skeletons, same-genre/page retry, malformed response handling, and stale failure suppression. This is not a full browser test |
 
 ## 3. Account-deletion coverage — removed, then restored (2026-10-05)
 
@@ -73,10 +74,10 @@
 - DONE `GET /api/anime/:id` — success for ID 1 plus **400** (non-numeric, `0`, above the AniList range), the AniList-outage fallback and the unknown-ID **500** are all covered by `test-security.js` (2026-10-07).
 - `GET /api/detail/:id` (redirect + malformed id), `GET /api/genre/:genre` (incl. `?type=`, curated-only, unknown and adult genres) and `GET /api/genres` were added in Phase 1 (2026-10-06).
 - DONE The **curated** half of the catalog fallback is now exercised: `test-security.js` points `ANILIST_GRAPHQL_URL` at a closed port and asserts the curated answer for `/api/trending` and `/api/search`. The stale-cache half (AniList failing after a successful load) is still only unit-tested.
-- DONE `DELETE /api/account` failure paths — **503** (server booted without Supabase credentials), **504** (a mock Supabase that never answers, exercising the 10-second verification timeout), **502** (unreachable Supabase, upstream 500, invalid identity, Admin API failure), **401** (missing/malformed/expired session) and the account **429** are all covered by `test-security.js`. The only branch still unexercised is the 15-second **Admin API** timeout (the same code path as the tested verification timeout).
+- DONE `DELETE /api/account` failure paths — **503** (server booted without Supabase credentials), **504** (a mock Supabase that never answers, exercising the 10-second verification timeout **and the 15-second Admin API timeout**), **502** (unreachable Supabase, upstream 500, invalid identity, Admin API failure), **401** (missing/malformed/expired session) and the account **429** are all covered by `test-security.js`.
 - DONE `/api/search` **offline fallback path** is covered (curated fallback, validation, punctuation). The `/api/popular` AniList-failure fallback is still only unit-tested.
 - Unknown-route **404 JSON** is covered; the error middleware 413 payload and the `/api/search/suggestions` 502 path remain untested.
-- Frontend behaviour end-to-end: still no automated browser tests. Passing the Node suites does not establish browser UI behaviour. The CSP surface was verified manually on 2026-10-07 — Home, a detail page and search rendered from live data with an **empty console** and no CSP violations, and the pinned Supabase UMD build loaded from `cdn.jsdelivr.net`.
+- Frontend behaviour end-to-end: `test-auth-isolation.spec.js`, `test-genre-loading.spec.js`, `test-episode-selector.spec.js`, and `test-watch-controls.spec.js` (Playwright, Chromium) cover auth-state race protection, guest-data retention after mocked account deletion, genre chips and filters, malformed-response and stale-request guards via route mocking, the episode selector's search/total/Escape behaviour, and movie-versus-series watch controls plus guest persistence. The suite uses a dedicated port, a closed local AniList endpoint, and browser-side external-request blocking; it is mocked/local verification, not live Supabase or live AniList verification. The CSP surface was verified manually on 2026-10-07 — Home, a detail page and search rendered from live data with an **empty console** and no CSP violations, and the pinned Supabase UMD build loaded from `cdn.jsdelivr.net`.
 
 ## 5. Brittleness and dependencies (CURRENT)
 
@@ -92,14 +93,15 @@
 
 `.github/workflows/ci.yml`:
 
-- Triggers: `push` and `pull_request` to **`main`/`master` only**.
-- Matrix: Node **18.x** and **20.x**; `npm ci` → `npm run lint` → `npm test`.
-- Because the working branch is `agents/anime-movie-website-audit-and-build`, CI does **not** run for current work until merged/PR'd.
-- CI inherits the live-AniList dependency, so a network-restricted runner can fail on upstream issues.
+- Triggers: every `push` and `pull_request`; the workflow has no branch filters.
+- Matrix: Node **22.x** and **24.x**; `npm ci` → `npm run audit` → `npm run lint` → `npm test`.
+- A separate **playwright** job (Node 24.x) installs Chromium and runs `npx playwright test`; `playwright.config.js` boots the app itself via `webServer`, so no external server or service is needed.
+- `package.json` and `package-lock.json` declare Node `>=22.0.0 <25.0.0`.
+- The Node tests use deterministic local AniList fixtures, local mocks, and closed local ports; they do not require live AniList or Supabase services. The Playwright specs talk to the real local server through Playwright's `webServer` (or a locally running one via `reuseExistingServer`); they abort every non-local request so the render-blocking Google Fonts and Supabase CDN assets can never stall `DOMContentLoaded` (2026-10-11: an unreachable `fonts.googleapis.com` was timing out `page.goto` even though the local app answered in milliseconds). Three specs mock `/api/genre/*` with `page.route`; the rest exercise real endpoints that fall back to the curated catalog.
 
 ## 7. NOT IMPLEMENTED
 
-- Frontend/E2E tests (Playwright/Cypress/etc.).
+- Frontend/E2E tests for live authenticated Supabase, legal-page journeys, and cross-account RLS enforcement.
 - Test coverage measurement.
 - Live AniList compatibility/contract tests.
 - Contract/schema tests for API responses.
@@ -108,6 +110,5 @@
 
 ## 8. NOT FOUND / NEEDS CONFIRMATION
 
-- Required Node version for the suite (no `engines`).
-- Whether CI should be extended to the active branch(es).
-- Whether a test framework is acceptable to introduce (currently zero test dependencies).
+- Whether CI should add additional Node versions beyond 22.x and 24.x LTS.
+- Whether Playwright should expand beyond Chromium and add live non-production Supabase coverage.

@@ -198,7 +198,9 @@ function mapLocalAnimeToAniList(anime) {
     studios: {
       nodes: anime.studio ? [{ name: anime.studio }] : []
     },
-    countryOfOrigin: 'JP'
+    countryOfOrigin: Object.prototype.hasOwnProperty.call(anime, 'countryOfOrigin')
+      ? anime.countryOfOrigin
+      : (anime.language === 'Chinese' ? 'CN' : (anime.language === 'Korean' ? 'KR' : 'JP'))
   };
 }
 

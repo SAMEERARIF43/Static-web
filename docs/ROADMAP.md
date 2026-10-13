@@ -20,10 +20,10 @@
 1. ~~**Unify the catalog on one canonical ID**~~ — **DONE 2026-10-06** (TASKS Phase 1): AniList IDs everywhere, live-backed trending/genre/movies/series/popular, curated layer demoted to curation + offline fallback, TV Series filtered to TV, genre filtering consistent across pages.
 2. **Extend tests**: deterministic fixtures for the AniList-dependent tests, then the untested endpoints and failure paths (TASKS P6.2–P6.6). The authenticated deletion coverage called for in P6.1 is **done** (2026-10-05).
 3. **Harden the API**: rate limiting + CSP **DONE 2026-10-07 (Phase 2)**; still open: caching for search/detail and honest failure states in the UI (TASKS P5.x).
-4. **Build the approved watch system** in dependency order: episode identity → progress/history schema → Continue Watching UI, with Favorites as the early independent piece (TASKS P4.x).
+4. **Extend the watch system** in dependency order: episode identity → progress/history schema → playback-oriented Continue Watching, with Favorites as the early independent piece (TASKS P4.x). The current title-level Continue Watching shelf is implemented; playback/history are not.
 5. **Deployment readiness**: pin Node 24.x LTS, verify the Supabase environment, split development/production projects, choose the managed PaaS, and handle the service-role secret (TASKS P8.1–P8.4).
 
-Favorites, Watch History, Continue Watching and Episode-level progress are **approved but not implemented**. Admin is **deferred** (`docs/TASKS.md` P3.4).
+Favorites, Watch History, playback-oriented Continue Watching, and Episode-level progress are **approved but not implemented**. The current Continue Watching shelf is title-level only. Admin is **deferred** (`docs/TASKS.md` P3.4).
 
 ## FUTURE — candidates only (no commitment)
 

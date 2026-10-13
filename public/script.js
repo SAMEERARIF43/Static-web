@@ -9,6 +9,131 @@ document.addEventListener('DOMContentLoaded', () => {
   // Use relative URL so it works regardless of host/port
   const baseURL = '/api';
 
+  // Browser requests must have an upper bound so a stalled network cannot
+  // leave skeletons or loading labels on screen forever. Values can be
+  // shortened by deterministic browser tests through the init-script override;
+  // production uses these conservative defaults.
+  const REQUEST_TIMEOUTS = {
+    siteConfig: 5000,
+    suggestions: 6000,
+    search: 12000,
+    catalog: 12000,
+    detail: 15000
+  };
+
+  function requestTimeout(name) {
+    const override = window.__ANIME_HUB_REQUEST_TIMEOUTS?.[name];
+    return Number.isFinite(override) && override > 0 ? override : REQUEST_TIMEOUTS[name];
+  }
+
+  function classifyRequestError(error, timedOut = false) {
+    if (timedOut) return { kind: 'timeout', error };
+    if (error?.name === 'AbortError') return { kind: 'cancelled', error };
+    if (error?.name === 'TimeoutError') return { kind: 'timeout', error };
+    if (error instanceof SyntaxError) return { kind: 'parse', error };
+    if (error?.status >= 400) return { kind: 'http', error };
+    return { kind: 'network', error };
+  }
+
+  async function fetchWithPolicy(url, options = {}, policy = {}) {
+    const timeoutMs = policy.timeoutMs || requestTimeout(policy.timeout || 'catalog');
+    const retries = Number.isInteger(policy.retries) ? Math.max(0, policy.retries) : 0;
+    const method = String(options.method || 'GET').toUpperCase();
+    const retryableMethod = method === 'GET' || method === 'HEAD';
+    const callerSignal = options.signal;
+
+    for (let attempt = 0; attempt <= retries; attempt += 1) {
+      if (callerSignal?.aborted) {
+        const error = new DOMException('The request was cancelled.', 'AbortError');
+        error.kind = 'cancelled';
+        throw error;
+      }
+      const controller = new AbortController();
+      let timedOut = false;
+      let handedOffResponse = false;
+      const onCallerAbort = () => controller.abort();
+      callerSignal?.addEventListener('abort', onCallerAbort, { once: true });
+      const timer = setTimeout(() => {
+        timedOut = true;
+        controller.abort();
+      }, timeoutMs);
+
+      try {
+        const response = await fetch(url, { ...options, signal: controller.signal });
+        if (!response.ok) {
+          const error = new Error(`Request failed with status ${response.status}.`);
+          error.status = response.status;
+          throw error;
+        }
+        // fetch() resolves at headers, but every caller reads the payload after
+        // that point. Keep this attempt's deadline alive until the body helper
+        // settles; otherwise a server that sends headers and stalls forever in
+        // response.json() bypasses the policy entirely.
+        const bodyMethods = ['arrayBuffer', 'blob', 'formData', 'json', 'text'];
+        let wrappedBodyMethod = false;
+        bodyMethods.forEach(method => {
+          if (typeof response[method] !== 'function') return;
+          wrappedBodyMethod = true;
+          const readBody = response[method].bind(response);
+          response[method] = (...args) => Promise.resolve()
+            .then(() => readBody(...args))
+            .catch(bodyError => {
+              const classified = classifyRequestError(bodyError, timedOut && !callerSignal?.aborted);
+              bodyError.kind = classified.kind;
+              throw bodyError;
+            })
+            .finally(() => {
+              clearTimeout(timer);
+              callerSignal?.removeEventListener('abort', onCallerAbort);
+            });
+        });
+        // Keep lightweight response mocks (or unusual response-like objects)
+        // from retaining a timer forever when they expose no body helper.
+        if (!wrappedBodyMethod) {
+          clearTimeout(timer);
+          callerSignal?.removeEventListener('abort', onCallerAbort);
+        }
+        handedOffResponse = true;
+        return response;
+      } catch (error) {
+        const classified = classifyRequestError(error, timedOut && !callerSignal?.aborted);
+        const canRetry = retryableMethod && attempt < retries && ['timeout', 'network'].includes(classified.kind);
+        if (!canRetry) {
+          classified.error.kind = classified.kind;
+          throw classified.error;
+        }
+      } finally {
+        if (!handedOffResponse) {
+          clearTimeout(timer);
+          callerSignal?.removeEventListener('abort', onCallerAbort);
+        }
+      }
+
+      if (callerSignal?.aborted) {
+        const error = new DOMException('The request was cancelled.', 'AbortError');
+        error.kind = 'cancelled';
+        throw error;
+      }
+      const delay = Math.min(1000, 150 * (2 ** attempt) + Math.floor(Math.random() * 100));
+      await new Promise((resolve, reject) => {
+        let retryTimer;
+        const cancelRetry = () => {
+          clearTimeout(retryTimer);
+          callerSignal?.removeEventListener('abort', cancelRetry);
+          const error = new DOMException('The request was cancelled.', 'AbortError');
+          error.kind = 'cancelled';
+          reject(error);
+        };
+        retryTimer = setTimeout(() => {
+          callerSignal?.removeEventListener('abort', cancelRetry);
+          resolve();
+        }, delay);
+        callerSignal?.addEventListener('abort', cancelRetry, { once: true });
+      });
+    }
+    throw new Error('Max retries exceeded');
+  }
+
   // Default SEO Metadata
   const siteOrigin = new URL(
     document.querySelector('meta[property="og:url"]')?.content || window.location.origin
@@ -24,8 +149,8 @@ document.addEventListener('DOMContentLoaded', () => {
   // (JUSTWATCH_REGION), so operators can point visitors at their own catalog.
   // It defaults to "us" until (or unless) the setting loads.
   let justWatchRegion = 'us';
-  fetch(`${baseURL}/site-config`)
-    .then(response => (response.ok ? response.json() : null))
+  fetchWithPolicy(`${baseURL}/site-config`, {}, { timeout: 'siteConfig', retries: 1 })
+    .then(response => response.json())
     .then(config => {
       if (typeof config?.justWatchRegion === 'string' && /^[a-z]{2,3}(?:-[a-z]{2,3})?$/i.test(config.justWatchRegion)) {
         justWatchRegion = config.justWatchRegion.toLowerCase();
@@ -145,6 +270,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   let watchlist = loadLocalWatchlist();
+  let watchlistAuthRequestId = 0;
 
   function getWatchlistAuthState() {
     return window.getAnimeHubAuthState?.() || { ready: false, session: null };
@@ -180,12 +306,13 @@ document.addEventListener('DOMContentLoaded', () => {
     if (adding) watchlist.push(withWatchProgress(item));
     else watchlist.splice(index, 1);
     saveWatchlist();
+    if (typeof renderContinueWatching === 'function') renderContinueWatching();
     return adding;
   }
 
   async function updateWatchlistItem(item, changes) {
     const index = watchlist.findIndex(saved => String(saved.id) === String(item.id));
-    return updateWatchlistState({
+    const result = await updateWatchlistState({
       watchlist,
       index,
       changes,
@@ -196,6 +323,8 @@ document.addEventListener('DOMContentLoaded', () => {
       },
       save: saveWatchlist
     });
+    if (typeof renderContinueWatching === 'function') renderContinueWatching();
+    return result;
   }
 
   window.addEventListener('animehub:toast', event => {
@@ -255,8 +384,6 @@ document.addEventListener('DOMContentLoaded', () => {
     const id = escapeHtml(String(anime.id));
     const isMovie = isMovieEntry(anime);
     const totalEpisodes = progress.totalEpisodes;
-    const currentEpisode = progress.currentEpisode;
-    const hasKnownTotal = totalEpisodes !== null && totalEpisodes > 0;
     const totalLabel = totalEpisodes === null ? 'episodes' : `of ${totalEpisodes}`;
 
     const statusOptions = WATCH_STATUS_VALUES.map(value =>
@@ -265,9 +392,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // For movies, only show status selector - no episode controls or progress summary
     if (isMovie) {
-      const statusOptionsMovie = WATCH_STATUS_VALUES.map(value =>
-        `<option value="${value}" ${value === progress.watchStatus ? 'selected' : ''}>${WATCH_STATUS_LABELS[value]}</option>`
-      ).join('');
       return `
         <div class="watch-progress-controls${compact ? ' compact' : ''}" data-watch-controls data-watch-id="${escapeHtml(String(anime.id))}">
           <label>
@@ -382,7 +506,7 @@ document.addEventListener('DOMContentLoaded', () => {
               </svg>
             </div>
 
-            <button type="button" class="card-watchlist-btn ${isSaved ? 'saved' : ''}" data-bookmark-id="${cardId}" data-episodes="${anime.episodes || 0}" title="${isSaved ? 'Remove from Watchlist' : 'Add to Watchlist'}" aria-label="${isSaved ? 'Remove from Watchlist' : 'Add to Watchlist'}">
+            <button type="button" class="card-watchlist-btn ${isSaved ? 'saved' : ''}" data-bookmark-id="${cardId}" data-type="${escapeHtml(animeTypeValue(anime))}" data-episodes="${anime.episodes || 0}" title="${isSaved ? 'Remove from Watchlist' : 'Add to Watchlist'}" aria-label="${isSaved ? 'Remove from Watchlist' : 'Add to Watchlist'}">
               ${isSaved ? '★' : '☆'}
             </button>
 
@@ -443,6 +567,29 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     grid.innerHTML = animes.map(anime => renderAnimeCard(anime, containerId)).join('');
+  }
+
+  function renderCatalogLoadError(containerId, message, retry) {
+    const grid = document.getElementById(containerId);
+    if (!grid) return;
+    const state = document.createElement('div');
+    state.className = 'catalog-load-error';
+    state.setAttribute('role', 'alert');
+    state.style.gridColumn = '1 / -1';
+    const text = document.createElement('p');
+    text.textContent = message;
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'cta-btn secondary-btn';
+    button.textContent = 'Try again';
+    button.addEventListener('click', () => {
+      button.disabled = true;
+      button.textContent = 'Retrying…';
+      void retry();
+    });
+    state.append(text, button);
+    grid.replaceChildren(state);
+    grid.style.display = 'grid';
   }
 
   // Page size and totals are reported by the server (headers); the client never
@@ -617,7 +764,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const genreSelect = document.getElementById('filter-genre');
     if (!genreSelect || genreSelect.options.length) return;
     try {
-      const res = await fetch(`${baseURL}/genres`);
+      const res = await fetchWithPolicy(`${baseURL}/genres`, {}, { timeout: 'catalog', retries: 1 });
       if (!res.ok) throw new Error(`Genres request failed: ${res.status}`);
       const genres = await res.json();
       genreSelect.innerHTML = (Array.isArray(genres) ? genres : [])
@@ -658,7 +805,7 @@ document.addEventListener('DOMContentLoaded', () => {
     setLoadMoreVisible(false);
 
     try {
-      const res = await fetch(`${baseURL}/browse?${buildBrowseParams(values, 1).toString()}`);
+      const res = await fetchWithPolicy(`${baseURL}/browse?${buildBrowseParams(values, 1).toString()}`, {}, { timeout: 'catalog', retries: 0 });
       if (requestId !== catalogRequestId) return;
       if (!res.ok) {
         const payload = await res.json().catch(() => null);
@@ -707,7 +854,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (count) count.textContent = 'Those filters are not valid.';
         return;
       }
-      grid.innerHTML = `<div style="grid-column: 1/-1; color: var(--text-muted);">Unable to load the catalog. Please try again.</div>`;
+      renderCatalogLoadError('popular-page-grid', 'Unable to load the catalog. Check your connection and try again.', () => refreshCatalogPage('replace', true));
       if (count) count.textContent = '';
     }
   }
@@ -750,7 +897,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     try {
-      const res = await fetch(`${baseURL}/browse?${buildBrowseParams(values, nextPage).toString()}`);
+      const res = await fetchWithPolicy(`${baseURL}/browse?${buildBrowseParams(values, nextPage).toString()}`, {}, { timeout: 'catalog', retries: 1 });
       if (requestId !== catalogRequestId) return;
       if (!res.ok) {
         const payload = await res.json().catch(() => null);
@@ -794,14 +941,13 @@ document.addEventListener('DOMContentLoaded', () => {
   async function loadTrending() {
     renderSkeletonGrid('trending-grid', 5);
     try {
-      const res = await fetch(`${baseURL}/trending`);
+      const res = await fetchWithPolicy(`${baseURL}/trending`, {}, { timeout: 'catalog', retries: 1 });
       if (!res.ok) throw new Error(`Trending request failed: ${res.status}`);
       const data = await res.json();
       renderAnimeGrid(data, 'trending-grid');
     } catch (err) {
       console.error('Error loading trending:', err);
-      const grid = document.getElementById('trending-grid');
-      if (grid) grid.innerHTML = `<div style="grid-column: 1/-1; color: var(--text-muted);">Unable to load trending items.</div>`;
+      renderCatalogLoadError('trending-grid', 'Unable to load trending items. Check your connection and try again.', loadTrending);
     }
   }
 
@@ -812,7 +958,7 @@ document.addEventListener('DOMContentLoaded', () => {
   async function loadPopular() {
     renderSkeletonGrid('popular-grid', 10);
     try {
-      const res = await fetch(`${baseURL}/popular`);
+      const res = await fetchWithPolicy(`${baseURL}/popular`, {}, { timeout: 'catalog', retries: 1 });
       if (!res.ok) throw new Error(`Popular request failed: ${res.status}`);
       const data = await res.json();
       // The home page shows a five-title strip; the Popular page's full grid is
@@ -820,8 +966,7 @@ document.addEventListener('DOMContentLoaded', () => {
       renderAnimeGrid(data.slice(0, 5), 'popular-grid');
     } catch (err) {
       console.error('Error loading popular:', err);
-      const grid = document.getElementById('popular-grid');
-      if (grid) grid.innerHTML = `<div style="grid-column: 1/-1; color: var(--text-muted);">Unable to load popular items.</div>`;
+      renderCatalogLoadError('popular-grid', 'Unable to load popular items. Check your connection and try again.', loadPopular);
     }
   }
 
@@ -833,6 +978,14 @@ document.addEventListener('DOMContentLoaded', () => {
   let currentSearchResults = [];
   let lastSearchQuery = '';
   let searchRequestId = 0;
+  let detailRequestId = 0;
+  let detailRequestController = null;
+
+  function cancelDetailRequest() {
+    detailRequestId += 1;
+    detailRequestController?.abort();
+    detailRequestController = null;
+  }
 
   function populateSearchFilters(items) {
     const genreSelect = document.getElementById('search-filter-genre');
@@ -958,7 +1111,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     try {
-      const res = await fetch(`${baseURL}/search?q=${encodeURIComponent(normalizedQuery)}`);
+      const res = await fetchWithPolicy(`${baseURL}/search?q=${encodeURIComponent(normalizedQuery)}`, {}, { timeout: 'search', retries: 1 });
       if (requestId !== searchRequestId) return;
       if (!res.ok) {
         throw new Error(`Search request failed: ${res.status}`);
@@ -993,22 +1146,23 @@ document.addEventListener('DOMContentLoaded', () => {
           format: anime.format || anime.type || 'TV',
           studio: anime.studios?.nodes?.[0]?.name || anime.studio || '',
           language: ({ JP: 'Japanese', KR: 'Korean', CN: 'Chinese' })[anime.countryOfOrigin] || anime.language || 'Unknown',
+          countryOfOrigin: anime.countryOfOrigin || null,
           status: anime.status || 'Unknown',
           episodes: anime.episodes || 0,
           year: anime.seasonYear || anime.year || 'Unknown',
           seasonYear: anime.seasonYear || anime.year || null,
           season: anime.season || null
         };
-      });
-
-      searchCache.set(cacheKey, animeResults);
-      currentSearchResults = animeResults;
-      populateSearchFilters(currentSearchResults);
-      applySearchFilters();
+      });    searchCache.set(cacheKey, animeResults);
+    currentSearchResults = animeResults;
+    populateSearchFilters(currentSearchResults);
+    applySearchFilters();
 
     } catch (err) {
       if (requestId !== searchRequestId) return;
       console.error('Error searching anime:', err);
+      // Invalidate cache for this query so a retry fetches fresh data
+      searchCache.delete(cacheKey);
       currentSearchResults = [];
       if (searchResultsGrid) searchResultsGrid.style.display = 'none';
       if (searchFiltersSection) searchFiltersSection.style.display = 'none';
@@ -1018,6 +1172,7 @@ document.addEventListener('DOMContentLoaded', () => {
         searchError.style.display = 'block';
         const errorMsg = document.getElementById('search-error-message');
         if (errorMsg) errorMsg.textContent = 'Could not load search results. Please check your network connection and try again.';
+
       }
       if (resultCount) resultCount.textContent = 'Search error';
     }
@@ -1029,6 +1184,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
   async function loadAnimeDetails(id, updateHistory = true) {
     if (!id) return;
+
+    const requestId = ++detailRequestId;
+    detailRequestController?.abort();
+    detailRequestController = new AbortController();
+    const requestSignal = detailRequestController.signal;
 
     const detailContent = document.getElementById('detail-content');
     if (!detailContent) return;
@@ -1050,10 +1210,11 @@ document.addEventListener('DOMContentLoaded', () => {
     window.scrollTo(0, 0);
 
     try {
-      const res = await fetch(`${baseURL}/anime/${id}`);
+      const res = await fetchWithPolicy(`${baseURL}/anime/${id}`, { signal: requestSignal }, { timeout: 'detail', retries: 1 });
       if (!res.ok) throw new Error(`Failed to fetch details: ${res.status}`);
       
       const anime = await res.json();
+      if (requestId !== detailRequestId) return;
       
       const rawTitle = anime.title?.english || anime.title?.romaji || anime.title?.native || 'Unknown Anime';
       const title = escapeHtml(rawTitle);
@@ -1232,8 +1393,24 @@ document.addEventListener('DOMContentLoaded', () => {
 
       const savedAnime = watchlist.find(w => String(w.id) === String(anime.id));
       const isAnimeSaved = !!savedAnime;
+      // Legacy guest entries were bookmarked without `type`; the catalog
+      // response is the authoritative format source, so fall back to it
+      // (never infer from episode counts) and persist the repair so the
+      // watchlist page classifies the entry correctly too. Every other field
+      // (id, title, poster, status, progress) is left untouched, and a
+      // missing/unknown catalog format leaves the entry as-is.
+      const catalogType = animeTypeValue(anime);
+      if (savedAnime && !savedAnime.type && catalogType) {
+        savedAnime.type = catalogType;
+        saveWatchlist();
+      }
       const detailWatchControls = savedAnime
-        ? renderWatchProgressControls({ ...savedAnime, totalEpisodes: totalEpisodes ?? savedAnime.totalEpisodes, id: anime.id })
+        ? renderWatchProgressControls({
+          ...savedAnime,
+          type: savedAnime.type || animeTypeValue(anime) || undefined,
+          totalEpisodes: totalEpisodes ?? savedAnime.totalEpisodes,
+          id: anime.id
+        })
         : '<p class="watch-progress-hint">Add this title to your watchlist to track status and episode progress.</p>';
 
       detailContent.innerHTML = `
@@ -1333,6 +1510,7 @@ document.addEventListener('DOMContentLoaded', () => {
       }
 
     } catch (err) {
+      if (requestId !== detailRequestId || requestSignal.aborted) return;
       console.error('Error loading anime details:', err);
       detailContent.innerHTML = `
         <div style="text-align: center; padding: 100px 20px; font-size: 18px; color: var(--danger);">
@@ -1345,6 +1523,8 @@ document.addEventListener('DOMContentLoaded', () => {
       document.getElementById('detail-error-back-btn')?.addEventListener('click', () => {
         navigateToPage('home');
       });
+    } finally {
+      if (requestId === detailRequestId) detailRequestController = null;
     }
   }
 
@@ -1395,7 +1575,8 @@ document.addEventListener('DOMContentLoaded', () => {
       }
 
       const genreUrl = `${baseURL}/genre/${encodeURIComponent(genre)}${typeKey ? `?type=${typeKey}` : ''}`;
-      const res = await fetch(genreUrl);
+      const requester = typeof fetchWithPolicy === 'function' ? fetchWithPolicy : (url => fetch(url));
+      const res = await requester(genreUrl, {}, { timeout: 'catalog', retries: 0 });
       if (requestId !== genreRequestId) return;
       if (!res.ok) throw new Error(`Genre request failed: ${res.status}`);
       const data = await res.json();
@@ -1440,6 +1621,9 @@ document.addEventListener('DOMContentLoaded', () => {
   // ============================================================
 
   async function navigateToPage(navName, updateHistory = true) {
+    if (navName !== 'detail') {
+      cancelDetailRequest();
+    }
     if (navName === 'profile') {
       if (!getWatchlistAuthState().ready) {
         await window.animeHubAuthReady;
@@ -1519,7 +1703,7 @@ document.addEventListener('DOMContentLoaded', () => {
   async function loadMovies() {
     renderSkeletonGrid('movies-grid', 6);
     try {
-      const res = await fetch(`${baseURL}/movies`);
+      const res = await fetchWithPolicy(`${baseURL}/movies`, {}, { timeout: 'catalog', retries: 1 });
       if (!res.ok) throw new Error(`Movies request failed: ${res.status}`);
       const data = await res.json();
       // `/api/movies` already filters to films; this keeps the page honest even
@@ -1538,18 +1722,14 @@ document.addEventListener('DOMContentLoaded', () => {
       }
     } catch (err) {
       console.error('Error loading movies:', err);
-      const grid = document.getElementById('movies-grid');
-      if (grid) {
-        grid.style.display = 'grid';
-        grid.innerHTML = `<div style="grid-column: 1/-1; color: var(--text-muted);">Unable to load movies.</div>`;
-      }
+      renderCatalogLoadError('movies-grid', 'Unable to load movies. Check your connection and try again.', loadMovies);
     }
   }
 
   async function loadSeries() {
     renderSkeletonGrid('series-grid', 8);
     try {
-      const res = await fetch(`${baseURL}/series`);
+      const res = await fetchWithPolicy(`${baseURL}/series`, {}, { timeout: 'catalog', retries: 1 });
       if (!res.ok) throw new Error(`Series request failed: ${res.status}`);
       const data = await res.json();
       // `/api/series` already filters to television formats; without this the
@@ -1557,8 +1737,7 @@ document.addEventListener('DOMContentLoaded', () => {
       renderAnimeGrid((Array.isArray(data) ? data : []).filter(isSeriesEntry), 'series-grid');
     } catch (err) {
       console.error('Error loading series:', err);
-      const grid = document.getElementById('series-grid');
-      if (grid) grid.innerHTML = `<div style="grid-column: 1/-1; color: var(--text-muted);">Unable to load series items.</div>`;
+      renderCatalogLoadError('series-grid', 'Unable to load series. Check your connection and try again.', loadSeries);
     }
   }
 
@@ -1576,6 +1755,20 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
+  // Continue Watching is a title-level resume shelf, not a playback system.
+  // It uses the same guest/cloud watchlist source and shows only unfinished
+  // entries with positive progress, so it remains safe across reloads and
+  // never invents episode or streaming data.
+  function renderContinueWatching() {
+    const section = document.getElementById('section-continue-watching');
+    const inProgress = watchlist
+      .filter(item => Number(item.currentEpisode) > 0 && item.watchStatus !== 'completed')
+      .sort((a, b) => Number(b.updatedAt || b.updated_at || 0) - Number(a.updatedAt || a.updated_at || 0));
+    if (!section) return;
+    section.style.display = inProgress.length ? 'block' : 'none';
+    if (inProgress.length) renderAnimeGrid(inProgress.slice(0, 6), 'continue-watching-grid');
+  }
+
   // Inline error state for a failed cloud watchlist load. Built with DOM APIs
   // rather than an innerHTML string so no markup is interpolated, and it clears
   // the skeletons renderSkeletonGrid left behind (AH-004a).
@@ -1591,6 +1784,42 @@ document.addEventListener('DOMContentLoaded', () => {
     grid.style.display = 'grid';
   }
 
+  // Repair legacy guest entries that predate `type` persistence: the catalog
+  // is the authoritative format source, so each untyped entry is hydrated
+  // once via /api/anime/:id and the repaired type is persisted. A failed
+  // lookup leaves the entry completely untouched (never guess from episode
+  // counts). Entries already carrying a `type` are never re-fetched, so this
+  // converges after the first successful visit.
+  async function repairUntypedWatchlistEntries() {
+    const untyped = watchlist.filter(item => !item.type);
+    if (!untyped.length) return;
+    const repairs = await Promise.all(untyped.map(async item => {
+      try {
+        const response = await fetchWithPolicy(`${baseURL}/anime/${encodeURIComponent(String(item.id))}`, {}, { timeout: 'detail', retries: 1 });
+        if (!response.ok) return null;
+        const media = await response.json();
+        const type = animeTypeValue(media);
+        return type ? { id: String(item.id), type } : null;
+      } catch {
+        return null;
+      }
+    }));
+
+    // Re-resolve by id on the CURRENT array. An `animehub:auth-state` refresh
+    // can replace `watchlist` (with a freshly parsed, still-untyped copy) while
+    // these requests are in flight; mutating the discarded array would persist
+    // nothing and the entry would stay untyped on the next render.
+    let repaired = false;
+    for (const repair of repairs) {
+      if (!repair) continue;
+      const target = watchlist.find(entry => String(entry.id) === repair.id && !entry.type);
+      if (!target) continue;
+      target.type = repair.type;
+      repaired = true;
+    }
+    if (repaired) saveWatchlist();
+  }
+
   async function loadWatchlist() {
     const authState = getWatchlistAuthState();
     if (authState.ready && authState.session && window.animeHubCloudWatchlist) {
@@ -1603,18 +1832,29 @@ document.addEventListener('DOMContentLoaded', () => {
         renderWatchlistError();
         return;
       }
+    } else {
+      // Guest path only: cloud items already carry `type` from hydration.
+      await repairUntypedWatchlistEntries();
     }
     renderWatchlist();
+    if (typeof renderContinueWatching === 'function') renderContinueWatching();
   }
 
   window.addEventListener('animehub:auth-state', async event => {
+    const requestId = ++watchlistAuthRequestId;
+    const authenticatedUserId = event.detail?.userId || null;
     try {
-      watchlist = event.detail?.authenticated
+      const nextWatchlist = event.detail?.authenticated
         ? await window.animeHubCloudWatchlist.list()
         : loadLocalWatchlist();
+      if (requestId !== watchlistAuthRequestId) return;
+      const currentAuthState = getWatchlistAuthState();
+      if ((currentAuthState.session?.user?.id || null) !== authenticatedUserId) return;
+      watchlist = nextWatchlist;
       if (document.getElementById('page-watchlist')?.classList.contains('active')) {
         renderWatchlist();
       }
+      if (typeof renderContinueWatching === 'function') renderContinueWatching();
     } catch (error) {
       console.error('Could not refresh watchlist after authentication changed:', error);
       showToast('Could not refresh your watchlist.', 'error');
@@ -1626,10 +1866,15 @@ document.addEventListener('DOMContentLoaded', () => {
   // ============================================================
 
   async function initPage() {
+    if (typeof renderContinueWatching === 'function') renderContinueWatching();
     const urlParams = new URLSearchParams(window.location.search);
     const query = urlParams.get('q');
     const id = urlParams.get('id');
     const page = urlParams.get('page');
+    // Search and ordinary pages are reached directly by Back/Forward too;
+    // those branches do not go through navigateToPage, so explicitly cancel a
+    // detail request before replacing the visible page.
+    if (!id) cancelDetailRequest();
     // Legacy `catalogPage` links predate Load more: their filters are still
     // rehydrated below, and paging restarts at page 1 (the next URL write
     // normalises the stale parameter away).
@@ -1664,6 +1909,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   function triggerSearch(query) {
     if (!query) return;
+    cancelDetailRequest();
     document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
     document.getElementById('page-search').classList.add('active');
     window.history.pushState({}, '', `?q=${encodeURIComponent(query)}`);
@@ -1680,7 +1926,11 @@ document.addEventListener('DOMContentLoaded', () => {
     performSearch(query);
 
     // Close search overlay if open
-    document.getElementById('search-overlay')?.classList.remove('open');
+    const searchOverlay = document.getElementById('search-overlay');
+    if (searchOverlay) {
+      searchOverlay.classList.remove('open');
+      searchOverlay.hidden = true;
+    }
     document.getElementById('nav-search-trigger')?.setAttribute('aria-expanded', 'false');
     closeSuggestionPanels.forEach(close => close());
   }
@@ -1708,6 +1958,7 @@ document.addEventListener('DOMContentLoaded', () => {
       input.removeAttribute('aria-activedescendant');
       state.items = [];
       state.activeIndex = -1;
+      if (inputId === 'search-overlay-input') input.value = '';
     }
 
     closeSuggestionPanels.push(closeSuggestions);
@@ -1788,9 +2039,9 @@ document.addEventListener('DOMContentLoaded', () => {
         state.timer = null;
         state.controller = new AbortController();
         try {
-          const response = await fetch(`${baseURL}/search/suggestions?q=${encodeURIComponent(query)}`, {
+          const response = await fetchWithPolicy(`${baseURL}/search/suggestions?q=${encodeURIComponent(query)}`, {
             signal: state.controller.signal
-          });
+          }, { timeout: 'suggestions', retries: 0 });
           if (!response.ok) throw new Error(`Suggestions request failed: ${response.status}`);
           const results = await response.json();
           if (requestId !== state.requestId || input.value.trim().replace(/\s+/g, ' ').toLowerCase() !== normalizedQuery) return;
@@ -1818,13 +2069,13 @@ document.addEventListener('DOMContentLoaded', () => {
         event.preventDefault();
         if (state.activeIndex >= 0) selectSuggestion(state.activeIndex);
         else triggerSearch(input.value.trim());
-      } else if (event.key === 'Escape' && !panel.hidden) {
+      } else if (event.key === 'Escape' && !panel.hidden && inputId !== 'search-overlay-input') {
         event.preventDefault();
         closeSuggestions();
       } else if (event.key === 'Escape' && inputId === 'search-overlay-input') {
-        document.getElementById('search-overlay')?.classList.remove('open');
-        document.getElementById('nav-search-trigger')?.setAttribute('aria-expanded', 'false');
-        document.getElementById('nav-search-trigger')?.focus();
+        event.preventDefault();
+        _closeOverlaySuggestions();
+        closeSearchOverlay(true);
       }
     });
 
@@ -1839,6 +2090,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     input.addEventListener('blur', () => {
       setTimeout(() => {
+        if (inputId === 'search-overlay-input' && document.getElementById('search-overlay')?.classList.contains('open')) return;
         if (!panel.contains(document.activeElement)) closeSuggestions();
       }, 100);
     });
@@ -1849,10 +2101,13 @@ document.addEventListener('DOMContentLoaded', () => {
         input.setAttribute('aria-expanded', 'true');
       }
     });
+
+    // Return closeSuggestions so callers can invoke it after listeners exist.
+    return closeSuggestions;
   }
 
-  connectAutocomplete('hero-search-input', 'hero-search-suggestions', 'hero-search-options', 'hero-search-status');
-  connectAutocomplete('search-overlay-input', 'nav-search-suggestions', 'nav-search-options', 'nav-search-status');
+  const _closeHeroSuggestions = connectAutocomplete('hero-search-input', 'hero-search-suggestions', 'hero-search-options', 'hero-search-status');
+  const _closeOverlaySuggestions = connectAutocomplete('search-overlay-input', 'nav-search-suggestions', 'nav-search-options', 'nav-search-status');
 
   const filterForm = document.getElementById('catalog-filter-form');
   filterForm?.addEventListener('change', () => {
@@ -1883,30 +2138,36 @@ document.addEventListener('DOMContentLoaded', () => {
   const searchOverlay = document.getElementById('search-overlay');
   const searchClose = document.getElementById('search-close-btn');
 
+  function closeSearchOverlay(restoreFocus = false) {
+    if (!searchOverlay) return;
+    searchOverlay.classList.remove('open');
+    searchOverlay.hidden = true;
+    searchTrigger?.setAttribute('aria-expanded', 'false');
+    document.getElementById('search-overlay-input')?.setAttribute('aria-expanded', 'false');
+    const suggestions = document.getElementById('nav-search-suggestions');
+    if (suggestions) suggestions.hidden = true;
+    if (restoreFocus) searchTrigger?.focus();
+  }
+
   if (searchTrigger && searchOverlay) {
     searchTrigger.addEventListener('click', () => {
-      searchOverlay.classList.toggle('open');
-      const isOpen = searchOverlay.classList.contains('open');
-      searchTrigger.setAttribute('aria-expanded', String(isOpen));
-      if (searchOverlay.classList.contains('open')) {
-        document.getElementById('search-overlay-input')?.focus();
+      const isOpen = !searchOverlay.classList.contains('open');
+      if (isOpen) {
+        searchOverlay.hidden = false;
+        searchOverlay.classList.add('open');
       } else {
-        const input = document.getElementById('search-overlay-input');
-        const panel = document.getElementById('nav-search-suggestions');
-        if (input) input.setAttribute('aria-expanded', 'false');
-        if (panel) panel.hidden = true;
+        closeSearchOverlay(true);
+      }
+      searchTrigger.setAttribute('aria-expanded', String(isOpen));
+      if (isOpen) {
+        document.getElementById('search-overlay-input')?.focus();
       }
     });
   }
 
   if (searchClose && searchOverlay) {
     searchClose.addEventListener('click', () => {
-      searchOverlay.classList.remove('open');
-      searchTrigger?.setAttribute('aria-expanded', 'false');
-      document.getElementById('search-overlay-input')?.setAttribute('aria-expanded', 'false');
-      const suggestions = document.getElementById('nav-search-suggestions');
-      if (suggestions) suggestions.hidden = true;
-      searchTrigger?.focus();
+      closeSearchOverlay(true);
     });
   }
 
@@ -1961,8 +2222,11 @@ document.addEventListener('DOMContentLoaded', () => {
         return;
       }
       episode = parsedEpisode;
+      // Mirror normalizeWatchProgress: a total of 0 means UNKNOWN (the card
+      // bookmark path stores `episodes: 0` for series with no listed count),
+      // not a known total of zero — otherwise every episode > 0 is rejected.
       const knownTotal = item.totalEpisodes ?? item.episodes;
-      const total = knownTotal != null ? Number(knownTotal) : null;
+      const total = knownTotal != null && Number(knownTotal) > 0 ? Number(knownTotal) : null;
       if (total !== null && episode > total) {
         showToast(`Current episode cannot exceed the known total of ${total}.`, 'error');
         return;
@@ -2002,8 +2266,12 @@ document.addEventListener('DOMContentLoaded', () => {
     const select = selector.querySelector('[data-watch-episode]');
     if (!select) return;
 
-    // Toggle search mode
-    const isSearchMode = select.classList.toggle('episode-selector-searching');
+    // Toggle search mode. The class belongs on the wrapper that CONTAINS the
+    // search input and the button: every CSS rule for it is descendant-based
+    // (.episode-selector-searching .episode-search-input), and putting it on
+    // the <select> itself — a sibling of both — left the input invisible.
+    const searchRoot = selector.querySelector('.episode-selector-wrapper') || selector;
+    const isSearchMode = searchRoot.classList.toggle('episode-selector-searching');
     searchBtn.setAttribute('aria-label', isSearchMode ? 'Close search' : 'Search episodes');
     searchBtn.title = isSearchMode ? 'Close search' : 'Search episodes';
 
@@ -2036,10 +2304,13 @@ document.addEventListener('DOMContentLoaded', () => {
       // Handle keyboard navigation
       searchInput.addEventListener('keydown', (e) => {
         if (e.key === 'Escape') {
-          select.classList.remove('episode-selector-searching');
+          searchRoot.classList.remove('episode-selector-searching');
           searchBtn.setAttribute('aria-label', 'Search episodes');
           searchBtn.title = 'Search episodes';
           searchInput.remove();
+          // Detach the outside-click listener too, or it outlives the search
+          // input and fires on a later click.
+          document.removeEventListener('click', closeSearch);
         } else if (e.key === 'Enter') {
           // Select the first visible option
           const visibleOptions = Array.from(select.options).filter(o => o.style.display !== 'none');
@@ -2047,25 +2318,29 @@ document.addEventListener('DOMContentLoaded', () => {
             select.value = visibleOptions[0].value;
             select.dispatchEvent(new Event('change', { bubbles: true }));
           }
-          select.classList.remove('episode-selector-searching');
+          searchRoot.classList.remove('episode-selector-searching');
           searchBtn.setAttribute('aria-label', 'Search episodes');
           searchBtn.title = 'Search episodes';
           searchInput.remove();
+          document.removeEventListener('click', closeSearch);
         }
       });
 
       // Close search when clicking outside
       const closeSearch = (e) => {
         if (!selector.contains(e.target) && e.target !== searchBtn) {
-          select.classList.remove('episode-selector-searching');
+          searchRoot.classList.remove('episode-selector-searching');
           searchBtn.setAttribute('aria-label', 'Search episodes');
           searchBtn.title = 'Search episodes';
           const searchInput = selector.querySelector('.episode-search-input');
           if (searchInput) searchInput.remove();
           document.removeEventListener('click', closeSearch);
         }
+      };
+      // Registered OUTSIDE the handler body: previously this call sat inside the
+      // arrow function, so the listener was never attached and outside-click
+      // closing never worked.
       document.addEventListener('click', closeSearch);
-    }
     } else {
       // Clean up search input if it exists
       const searchInput = selector.querySelector('.episode-search-input');
@@ -2092,8 +2367,12 @@ document.addEventListener('DOMContentLoaded', () => {
       const title = card.querySelector('.card-title')?.innerText || 'Anime';
       const poster = card.querySelector('.card-image')?.src || '';
       const episodes = Number(bookmarkBtn.dataset.episodes) || 0;
+      // Persist the card's format so isMovieEntry() can classify the stored
+      // item later; without it movies were saved as untyped and rendered
+      // episode controls on the detail and watchlist pages.
+      const type = bookmarkBtn.dataset.type || '';
       try {
-        const adding = await toggleWatchlistItem({ id, title, poster, image: poster, episodes });
+        const adding = await toggleWatchlistItem({ id, title, poster, image: poster, episodes, type });
         bookmarkBtn.classList.toggle('saved', adding);
         bookmarkBtn.innerText = adding ? '★' : '☆';
         bookmarkBtn.setAttribute('aria-label', adding ? 'Remove from Watchlist' : 'Add to Watchlist');

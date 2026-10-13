@@ -1,7 +1,12 @@
 // ============================================================
 // ANIME HUB SERVER
 // ============================================================
-require('dotenv').config();
+// Optionally load an external env file (e.g. to keep secrets outside a
+// synced folder) via ANIME_HUB_ENV_FILE; unset keeps the default cwd-relative
+// .env. No override: real process env vars retain precedence over file values.
+require('dotenv').config(
+  process.env.ANIME_HUB_ENV_FILE ? { path: process.env.ANIME_HUB_ENV_FILE } : {}
+);
 const express = require('express');
 const cors = require('cors');
 const fs = require('fs');
@@ -275,6 +280,7 @@ const RATE_LIMIT_WINDOW_MS = 60 * 1000;
 const RATE_LIMIT_GLOBAL_MAX = 120;
 const RATE_LIMIT_PROXY_MAX = 60;
 const RATE_LIMIT_ACCOUNT_MAX = 5;
+const AUTOMATED_TEST_MODE = process.env.NODE_ENV === 'test' && process.env.ANIME_HUB_TEST_MODE === '1';
 
 const globalApiLimiter = rateLimit({
   windowMs: RATE_LIMIT_WINDOW_MS,
@@ -283,7 +289,7 @@ const globalApiLimiter = rateLimit({
   legacyHeaders: false,
   // req.path is mount-relative here (/site-config), so the full originalUrl
   // decides which public config endpoints stay unthrottled.
-  skip: req => req.originalUrl.startsWith('/api/site-config') || req.originalUrl.startsWith('/api/config'),
+   skip: req => AUTOMATED_TEST_MODE || req.originalUrl.startsWith('/api/site-config') || req.originalUrl.startsWith('/api/config'),
   handler: (req, res) => {
     console.warn(`Rate limit exceeded (global /api) from ${req.ip}`);
     res.status(429).json({ message: 'Too many requests. Please slow down.' });
@@ -295,6 +301,7 @@ const proxyLimiter = rateLimit({
   limit: RATE_LIMIT_PROXY_MAX,
   standardHeaders: 'draft-7',
   legacyHeaders: false,
+  skip: () => AUTOMATED_TEST_MODE,
   handler: (req, res) => {
     console.warn(`Rate limit exceeded (AniList proxy) from ${req.ip}`);
     res.status(429).json({ message: 'Too many requests. Please slow down.' });
@@ -306,6 +313,9 @@ const accountDeletionLimiter = rateLimit({
   limit: RATE_LIMIT_ACCOUNT_MAX,
   standardHeaders: 'draft-7',
   legacyHeaders: false,
+  // Count malformed and unauthenticated deletion attempts too; otherwise an
+  // attacker can bypass the sensitive-action limiter by omitting the header.
+  skip: () => AUTOMATED_TEST_MODE,
   handler: (req, res) => {
     console.warn(`Rate limit exceeded (account deletion) from ${req.ip}`);
     res.status(429).json({ message: 'Too many requests. Please try again later.' });
@@ -427,7 +437,7 @@ app.delete('/api/account', async (req, res) => {
     return res.status(502).json({ message: 'Could not verify the account session.' });
   }
 
-const userId = authenticatedUser?.id;
+  const userId = authenticatedUser?.id;
   if (typeof userId !== 'string' || !/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(userId)) {
     console.error('Supabase session verification returned an invalid user identity.');
     return res.status(502).json({ message: 'Could not verify the account session.' });
@@ -699,6 +709,63 @@ const ANIME_DB = [
     banner: "https://s4.anilist.co/file/anilistcdn/media/anime/banner/11061-8WkkTZ6duKpq.jpg",
     description:
       "Gon Freecss becomes a Hunter and travels the world while searching for his missing father."
+  },
+
+  {
+    anilistId: 112117,
+    title: "Ne Zha",
+    genre: ["Action", "Adventure", "Fantasy"],
+    year: 2019,
+    rating: 7.9,
+    episodes: 1,
+    type: "MOVIE",
+    studio: "Chengdu Coco Cartoon",
+    countryOfOrigin: "CN",
+    language: "Chinese",
+    status: "Completed",
+    image: "https://s4.anilist.co/file/anilistcdn/media/anime/cover/large/bx112117-640Mv5P7b9oZ.png",
+    poster: "https://s4.anilist.co/file/anilistcdn/media/anime/cover/large/bx112117-640Mv5P7b9oZ.png",
+    banner: "https://s4.anilist.co/file/anilistcdn/media/anime/banner/112117-zK66B9qM3H7k.jpg",
+    description:
+      "A young boy born from a heavenly pearl must choose between good and evil to overcome his cursed fate."
+  },
+
+  {
+    anilistId: 98861,
+    title: "The King's Avatar",
+    genre: ["Action", "Adventure"],
+    year: 2017,
+    rating: 7.9,
+    episodes: 12,
+    type: "TV",
+    studio: "B.CMAY PICTURES",
+    countryOfOrigin: "CN",
+    language: "Chinese",
+    status: "Completed",
+    image: "https://s4.anilist.co/file/anilistcdn/media/anime/cover/large/bx98861-6H5qV5s7a8oK.png",
+    poster: "https://s4.anilist.co/file/anilistcdn/media/anime/cover/large/bx98861-6H5qV5s7a8oK.png",
+    banner: "https://s4.anilist.co/file/anilistcdn/media/anime/banner/98861-7H8qV5s7a8oK.jpg",
+    description:
+      "Ye Xiu, a top-tier player in the online game Glory, is forced to retire and restart from scratch on a new server."
+  },
+
+  {
+    anilistId: 126403,
+    title: "Link Click",
+    genre: ["Drama", "Mystery", "Supernatural"],
+    year: 2021,
+    rating: 8.7,
+    episodes: 11,
+    type: "TV",
+    studio: "LAN Studio",
+    countryOfOrigin: "CN",
+    language: "Chinese",
+    status: "Completed",
+    image: "https://s4.anilist.co/file/anilistcdn/media/anime/cover/large/bx126403-QpDzkb6b9i4n.jpg",
+    poster: "https://s4.anilist.co/file/anilistcdn/media/anime/cover/large/bx126403-QpDzkb6b9i4n.jpg",
+    banner: "https://s4.anilist.co/file/anilistcdn/media/anime/banner/126403-tUa3Jk0F1Z4M.jpg",
+    description:
+      "Using superpowers to enter their clientele's photos one by one, Cheng Xiaoshi and Lu Guang take their work seriously at 'Time Photo Studio'."
   }
 ];
 
@@ -1662,6 +1729,20 @@ app.get('/api/anime/:id', async (req, res) => {
 
     // Sanitize description before sending to client
     anime.description = sanitizeDescription(anime.description);
+
+    // Merge with local catalog data for fields that AniList may not provide
+    // (e.g., episode count for ongoing series)
+    const localAnime = ANIME_DB.find(a => a.anilistId === animeId);
+    if (localAnime) {
+      // Use local catalog episode count if AniList doesn't have it
+      if ((anime.episodes === null || anime.episodes === 0) && localAnime.episodes && localAnime.episodes > 0) {
+        anime.episodes = localAnime.episodes;
+      }
+      // Also ensure totalEpisodes is available for the client
+      if (!anime.totalEpisodes && localAnime.episodes && localAnime.episodes > 0) {
+        anime.totalEpisodes = localAnime.episodes;
+      }
+    }
 
     res.setHeader('X-Catalog-Source', 'anilist');
     res.json(anime);
