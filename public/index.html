@@ -59,6 +59,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Outfit:wght@400;600;700;800;900&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="style.css">
+  <link rel="manifest" href="manifest.json">
 </head>
 <body>
 
@@ -808,7 +809,7 @@
   <div class="toast" id="toast" role="status" aria-live="polite" aria-atomic="true"></div>
 
   <!-- ========== NOTIFICATIONS PANEL ========== -->
-  <div class="notifications-panel" id="notifications-panel" hidden role="region" aria-label="Notifications" aria-modal="true">
+  <div class="notifications-panel" id="notifications-panel" hidden role="dialog" aria-modal="true" aria-label="Notifications" aria-labelledby="notifications-title">
     <div class="notifications-panel-header">
       <h2 class="notifications-title">Notifications</h2>
       <button type="button" class="notifications-close" id="notifications-close" aria-label="Close notifications">✕</button>

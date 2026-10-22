@@ -17,6 +17,65 @@ document.addEventListener('DOMContentLoaded', () => {
   let writingReadingList = false;
   let pendingReadingStorageRefresh = false;
 
+  // ============================================================
+  // PWA SERVICE WORKER REGISTRATION & OFFLINE HANDLING (Task 1)
+  // ============================================================
+
+  function registerServiceWorker() {
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('/sw.js', { scope: '/' })
+        .then(registration => {
+          console.log('[SW] Registered successfully:', registration.scope);
+          if (registration.waiting) {
+            registration.waiting.postMessage({ type: 'SKIP_WAITING' });
+          }
+        })
+        .catch(error => {
+          console.warn('[SW] Registration failed:', error);
+        });
+    }
+  }
+
+  function showOfflineNotice(offline) {
+    const existing = document.getElementById('offline-toast');
+    if (offline) {
+      if (existing) return;
+      const offlineToast = document.createElement('div');
+      offlineToast.id = 'offline-toast';
+      offlineToast.className = 'toast show info';
+      offlineToast.setAttribute('role', 'alert');
+      offlineToast.setAttribute('aria-live', 'polite');
+      offlineToast.style.position = 'fixed';
+      offlineToast.style.top = '20px';
+      offlineToast.style.left = '50%';
+      offlineToast.style.transform = 'translateX(-50%)';
+      offlineToast.style.zIndex = '10001';
+      offlineToast.innerHTML = '<span style="margin-right:8px;">\u26A0</span><span>You are offline — cached content may be shown.</span>';
+      document.body.appendChild(offlineToast);
+      setTimeout(() => {
+        offlineToast.classList.remove('show');
+        setTimeout(() => offlineToast.remove(), 350);
+      }, 5000);
+    } else if (existing) {
+      existing.classList.remove('show');
+      setTimeout(() => existing.remove(), 350);
+    }
+  }
+
+  function setupOnlineOfflineListeners() {
+    window.addEventListener('online', () => {
+      showOfflineNotice(false);
+      showToast('Connection restored.', 'success');
+    });
+    window.addEventListener('offline', () => {
+      showOfflineNotice(true);
+      showToast('You are offline — cached content may be shown.', 'info');
+    });
+  }
+
+  registerServiceWorker();
+  setupOnlineOfflineListeners();
+
   function acquireReadingStore() {
     readingStore = null;
     if (!readingUtils?.createReadingListStore) {
@@ -3605,17 +3664,20 @@ document.addEventListener('DOMContentLoaded', () => {
       ...items.map(item => {
         const card = document.createElement('article');
         card.className = 'gallery-card';
+        card.setAttribute('aria-label', `${escapeHtml(item.title)} — ${escapeHtml(item.category)} by ${escapeHtml(item.artist)}`);
+        card.setAttribute('tabindex', '0');
+        card.setAttribute('role', 'article');
         card.innerHTML = `
           <div class="gallery-image-wrap">
             <img src="${escapeHtml(item.image)}" alt="${escapeHtml(item.title)}" class="gallery-image" data-fallback-src="${POSTER_FALLBACK}">
-            <div class="gallery-badge">${escapeHtml(item.category)}</div>
+            <div class="gallery-badge" aria-roledescription="category">${escapeHtml(item.category)}</div>
           </div>
           <div class="gallery-info">
             <h3 class="gallery-title">${escapeHtml(item.title)}</h3>
             <p class="gallery-artist">by ${escapeHtml(item.artist)}</p>
             <p class="gallery-source" style="font-size:12px;color:var(--text-muted);">${escapeHtml(item.source)} (${item.year})</p>
             <p class="gallery-copyright" style="font-size:11px;color:var(--text-dim);margin-top:6px;">${escapeHtml(item.copyright)}</p>
-            <a href="${escapeHtml(item.dmcaUrl)}" class="gallery-dmca" target="_blank" rel="noopener noreferrer" style="font-size:11px;color:var(--primary);">Report copyright / DMCA takedown</a>
+            <a href="${escapeHtml(item.dmcaUrl)}" class="gallery-dmca" target="_blank" rel="noopener noreferrer" style="font-size:11px;color:var(--primary);" aria-label="Report copyright / DMCA takedown for ${escapeHtml(item.title)}">Report copyright / DMCA takedown</a>
           </div>
         `;
         return card;
@@ -4926,12 +4988,50 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   document.addEventListener('keydown', event => {
+    // '/' hotkey: focus navbar search input
+    if (event.key === '/' && !(event.target instanceof HTMLInputElement) && !(event.target instanceof HTMLTextAreaElement)) {
+      event.preventDefault();
+      const searchInput = document.getElementById('search-overlay-input') || document.getElementById('hero-search-input');
+      if (searchInput) {
+        searchInput.focus();
+        // Open the search overlay if it exists and is hidden
+        const overlay = document.getElementById('search-overlay');
+        const trigger = document.getElementById('nav-search-trigger');
+        if (overlay && overlay.hidden && trigger) {
+          overlay.hidden = false;
+          overlay.classList.add('open');
+          trigger.setAttribute('aria-expanded', 'true');
+          searchInput.setAttribute('aria-expanded', 'true');
+        }
+        return;
+      }
+    }
     if (event.key === 'Escape' && navLinksContainer?.classList.contains('open')) {
       event.preventDefault();
       closeMobileNav(true);
       return;
     }
-    if (event.key !== 'Enter' && event.key !== ' ') return;
+    if (event.key === 'Escape') {
+      // Close search overlay with focus return
+      const searchOverlay = document.getElementById('search-overlay');
+      if (searchOverlay && !searchOverlay.hidden && searchOverlay.classList.contains('open')) {
+        event.preventDefault();
+        closeSearchOverlay(true);
+        return;
+      }
+      // Close notifications panel with focus return
+      const notificationsPanel = document.getElementById('notifications-panel');
+      const notificationsTrigger = document.getElementById('nav-notification-trigger');
+      const notificationsBackdrop = document.getElementById('notifications-backdrop');
+      if (notificationsPanel && !notificationsPanel.hidden && notificationsTrigger) {
+        event.preventDefault();
+        notificationsPanel.hidden = true;
+        if (notificationsBackdrop) notificationsBackdrop.hidden = true;
+        notificationsTrigger.setAttribute('aria-expanded', 'false');
+        notificationsTrigger.focus();
+        return;
+      }
+    }
     if (event.target.matches?.('[data-reading-chapter]') && event.key === 'Enter') {
       event.preventDefault();
       event.target.dispatchEvent(new Event('change', { bubbles: true }));
