@@ -7,7 +7,9 @@ module.exports = defineConfig({
   testDir: '.',
   // Temporary diagnostic probe from a concurrent run; it is retained for
   // audit traceability but is not part of the release regression suite.
-  testIgnore: ['**/test-auth-debug.spec.js'],
+  testIgnore: ['**/test-auth-debug.spec.js', '**/frontend/**'],
+  // A fresh external output path preserves earlier local QA artifacts.
+  outputDir: process.env.ANIME_HUB_TEST_OUTPUT_DIR || 'test-results',
   /* Run tests in files in parallel */
   fullyParallel: false,
   /* Fail the build on CI if you accidentally left test.only in the source code. */

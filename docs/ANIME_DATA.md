@@ -43,6 +43,10 @@
 ### 1.3 No other data source
 There is **no** database of anime titles, no CMS, no scraper, no local JSON catalog file (`public/data.js` was removed as dead code). Anime titles live only in `ANIME_DB` (12) and in live AniList responses.
 
+### 1.4 Manga discovery (Milestone 1)
+
+AniList `MANGA` records use the isolated `content-utils.js` adapter. Separate `/api/manga`, `/api/manhwa`, and `/api/manhua` routes classify only unambiguous origins: JP → manga, KR → manhwa, and CN/TW → manhua. Missing or other origins remain unclassified. Manga `chapters` and `volumes` are independent from anime `episodes`; unavailable totals are `null`.
+
 ## 2. Merge behaviour (CURRENT) — `catalog-utils.js`
 
 `mergeAniListCatalog(localCatalog, mediaList)`:

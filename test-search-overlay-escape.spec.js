@@ -141,6 +141,93 @@ test.describe('Search Overlay Escape Behavior', () => {
     await expect(overlay).toBeHidden();
     await expect(trigger).toBeFocused();
   });
+
+  test('autocomplete debounces requests and renders an empty-result state', async ({ page }) => {
+    await page.unroute('**/api/search/suggestions**');
+    const requests = [];
+    await page.route('**/api/search/suggestions**', route => {
+      const url = new URL(route.request().url());
+      const query = url.searchParams.get('q') || '';
+      requests.push(query);
+      return route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify(query.toLowerCase().includes('one piece') ? searchResults(query) : [])
+      });
+    });
+
+    await page.click('#nav-search-trigger');
+    const input = page.locator('#search-overlay-input');
+    await input.fill('One Piece');
+    await page.waitForTimeout(100);
+    expect(requests).toEqual([]);
+
+    await expect(page.locator('#nav-search-options [role="option"]')).toHaveCount(1, { timeout: 5000 });
+    expect(requests).toEqual(['One Piece']);
+
+    await input.fill('No Match');
+    await expect(page.locator('#nav-search-status')).toHaveText('No anime found.', { timeout: 5000 });
+    await expect(page.locator('#nav-search-options [role="option"]')).toHaveCount(0);
+  });
+
+  test('autocomplete ignores a stale response after a newer query', async ({ page }) => {
+    await page.unroute('**/api/search/suggestions**');
+    const requests = [];
+    let releaseOldResponse;
+    await page.route('**/api/search/suggestions**', async route => {
+      const url = new URL(route.request().url());
+      const query = url.searchParams.get('q') || '';
+      requests.push(query);
+      if (query === 'Old Title') {
+        await new Promise(resolve => { releaseOldResponse = resolve; });
+        try {
+          await route.fulfill({
+            status: 200,
+            contentType: 'application/json',
+            body: JSON.stringify([{ ...ONE_PIECE_FIXTURE, title: { english: 'OLD RESPONSE' } }])
+          });
+        } catch {
+          // The application may abort the obsolete request before it resolves.
+        }
+        return;
+      }
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify([{ ...ONE_PIECE_FIXTURE, title: { english: 'NEW RESPONSE' } }])
+      });
+    });
+
+    await page.click('#nav-search-trigger');
+    const input = page.locator('#search-overlay-input');
+    await input.fill('Old Title');
+    await expect.poll(() => requests).toContain('Old Title');
+
+    await input.fill('New Title');
+    await expect(page.locator('#nav-search-options [role="option"] span')).toHaveText('NEW RESPONSE', { timeout: 5000 });
+
+    releaseOldResponse?.();
+    await page.waitForTimeout(100);
+    await expect(page.locator('#nav-search-options [role="option"] span')).toHaveText('NEW RESPONSE');
+  });
+
+  test('autocomplete arrow keys expose the active option and Escape clears it', async ({ page }) => {
+    await page.click('#nav-search-trigger');
+    const input = page.locator('#search-overlay-input');
+    await input.fill('One Piece');
+    await expect(page.locator('#nav-search-options [role="option"]')).toHaveCount(1, { timeout: 5000 });
+
+    await input.press('ArrowDown');
+    await expect(page.locator('#nav-search-options [role="option"]')).toHaveAttribute('aria-selected', 'true');
+    await expect(input).toHaveAttribute('aria-activedescendant', 'search-overlay-input-option-0');
+
+    await input.press('ArrowUp');
+    await expect(input).toHaveAttribute('aria-activedescendant', 'search-overlay-input-option-0');
+
+    await input.press('Escape');
+    await expect(page.locator('#nav-search-suggestions')).toBeHidden();
+    await expect(page.locator('#nav-search-options [role="option"]')).toHaveCount(0);
+  });
 });
 
 async function run() {

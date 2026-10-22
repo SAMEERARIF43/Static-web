@@ -7,15 +7,19 @@
   --bg:           #090c12;
   --surface:      #121722;
   --surface-2:    #1a2232;
+  --surface-3:    #222d40;
   --surface-glass:rgba(18, 23, 34, 0.75);
   --border:       rgba(255, 255, 255, 0.08);
+  --border-strong:rgba(255, 255, 255, 0.18);
   --border-hot:   rgba(255, 114, 0, 0.5);
   --primary:      #ff7200;
   --primary-dark: #e05d00;
+  --primary-contrast: #b45309;
+  --primary-contrast-hover: #9a3412;
   --primary-glow: rgba(255, 114, 0, 0.35);
   --text:         #f8fafc;
   --text-muted:   #94a3b8;
-  --text-dim:     #64748b;
+  --text-dim:     #a8b4c5;
   --star:         #fbbf24;
   --success:      #22c55e;
   --danger:       #ef4444;
@@ -25,13 +29,16 @@
   --radius-pill:  100px;
   --shadow-card:  0 10px 30px rgba(0, 0, 0, 0.5);
   --shadow-glow:  0 0 24px var(--primary-glow);
+  --shadow-soft:  0 12px 32px rgba(0, 0, 0, 0.28);
   --ease:         cubic-bezier(0.4, 0, 0.2, 1);
   --trans:        all 0.3s var(--ease);
   --font-head:    'Outfit', sans-serif;
   --font-body:    'Inter', sans-serif;
   --nav-h:        72px;
+  --content-width:1320px;
+  --focus-ring:   0 0 0 3px rgba(9, 12, 18, 0.9), 0 0 0 5px var(--primary);
   --bg-overlay:   0.80;
-  --bg-main-image: url("assets/images/background.png");
+  --bg-main-image: url("websites picture.webp");
 }
 
 .catalog-filters {
@@ -152,6 +159,10 @@ body {
   min-height: 100vh;
 }
 
+body.nav-open {
+  overflow: hidden;
+}
+
 a {
   text-decoration: none;
   color: inherit;
@@ -184,8 +195,8 @@ input:focus-visible,
 select:focus-visible,
 .tag:focus-visible,
 .anime-card:focus-visible {
-  outline: 2px solid var(--primary);
-  outline-offset: 3px;
+  outline: none;
+  box-shadow: var(--focus-ring);
   border-radius: 4px;
 }
 
@@ -227,7 +238,7 @@ select:focus-visible,
 }
 
 .nav-container {
-  max-width: 1320px;
+  max-width: var(--content-width);
   margin: 0 auto;
   padding: 0 28px;
   display: flex;
@@ -256,6 +267,10 @@ select:focus-visible,
   justify-content: center;
 }
 
+.nav-scrim {
+  display: none;
+}
+
 .nav-link {
   font-size: 14.5px;
   font-weight: 500;
@@ -263,6 +278,7 @@ select:focus-visible,
   transition: var(--trans);
   position: relative;
   padding-bottom: 2px;
+  white-space: nowrap;
 }
 
 .nav-link::after {
@@ -369,7 +385,7 @@ select:focus-visible,
 
 .search-overlay-inner {
   padding: 16px 28px 24px;
-  max-width: 1320px;
+  max-width: var(--content-width);
   margin: 0 auto;
 }
 
@@ -440,6 +456,113 @@ select:focus-visible,
   margin-bottom: 24px;
   letter-spacing: -0.5px;
 }
+
+/* Comic catalog surfaces */
+.comic-page-header { align-items: flex-start; margin-bottom: 18px; }
+.page-kicker, .comic-result-status { color: var(--text-muted); font-size: 14px; }
+.calendar-header { align-items: flex-end; margin-bottom: 18px; }
+.calendar-result-status, .recommendations-status { color: var(--text-muted); font-size: 14px; }
+.calendar-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 14px;
+  margin: 0 0 28px;
+  padding: 18px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+.calendar-controls label {
+  display: grid;
+  gap: 6px;
+  min-width: 150px;
+  color: var(--text-muted);
+  font-size: 13px;
+  font-weight: 600;
+}
+.calendar-controls select {
+  min-height: 42px;
+  padding: 8px 34px 8px 12px;
+  color: var(--text);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font: inherit;
+}
+.calendar-grid { display: grid; gap: 26px; }
+.calendar-week {
+  padding: 20px;
+  background: rgba(18, 23, 34, 0.72);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+}
+.calendar-week > h2 {
+  margin-bottom: 18px;
+  color: var(--text);
+  font-family: var(--font-head);
+  font-size: 20px;
+}
+.calendar-week-days { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 10px; }
+.calendar-day {
+  min-width: 0;
+  min-height: 160px;
+  padding: 12px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+.calendar-day h3 { display: grid; gap: 2px; margin-bottom: 10px; font-size: 13px; }
+.calendar-day h3 time { color: var(--text-muted); font-size: 12px; font-weight: 500; }
+.calendar-day-items { display: grid; gap: 12px; }
+.calendar-day-items .anime-card { min-width: 0; gap: 6px; }
+.calendar-day-items .card-image-wrapper { aspect-ratio: 2 / 2.6; }
+.calendar-day-items .card-title { font-size: 13px; }
+.calendar-day-items .card-meta { display: block; font-size: 11px; }
+.calendar-day-items .card-rating { display: none; }
+.calendar-day-empty { color: var(--text-dim); font-size: 12px; }
+.recommendations-section[hidden] { display: none; }
+.watchlist-recommendations { margin-top: 48px; padding: 0; }
+.watchlist-recommendations .section-header { margin-bottom: 12px; }
+.comic-search-form {
+  display: flex;
+  gap: 10px;
+  max-width: 720px;
+  margin: 0 0 24px;
+  padding: 6px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+}
+.comic-search-form input {
+  flex: 1;
+  min-width: 0;
+  padding: 11px 14px;
+  color: var(--text);
+  background: transparent;
+  font: inherit;
+}
+.comic-search-form input:focus { outline: 2px solid var(--primary); outline-offset: 2px; border-radius: var(--radius-sm); }
+.comic-search-form .cta-btn { padding: 10px 22px; }
+.comic-search-form select {
+  min-height: 42px;
+  padding: 8px 32px 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  color: var(--text);
+  font: inherit;
+}
+.comic-search-form select:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+.comic-result-status { min-height: 24px; margin-bottom: 8px; }
+.comic-empty[hidden], .comic-error[hidden] { display: none; }
+.comic-detail-loading { min-height: 70vh; display: grid; place-items: center; color: var(--text-muted); padding: 120px 20px; }
+.comic-detail-content { max-width: 1320px; margin: 0 auto; padding: calc(var(--nav-h) + 40px) 28px 80px; }
+.comic-detail-top { display: flex; align-items: flex-start; gap: 40px; }
+.comic-detail-label { color: var(--primary); font-weight: 700; text-transform: uppercase; letter-spacing: .08em; font-size: 12px; margin-bottom: 8px; }
 
 /* ============================================================
    HERO SECTION
@@ -618,7 +741,7 @@ select:focus-visible,
 
 .search-btn {
   padding: 11px 24px;
-  background: var(--primary);
+  background: var(--primary-contrast);
   color: #fff;
   border-radius: var(--radius-pill);
   font-weight: 700;
@@ -629,7 +752,7 @@ select:focus-visible,
 }
 
 .search-btn:hover {
-  background: var(--primary-dark);
+  background: var(--primary-contrast-hover);
   transform: scale(1.03);
 }
 
@@ -695,7 +818,9 @@ select:focus-visible,
 
 .primary-btn {
   background: linear-gradient(135deg, var(--primary), #ff9a00);
-  color: #fff;
+  /* The bright brand gradient does not provide 4.5:1 with white text.
+     Keep the high-energy orange while using a dark label for readable CTAs. */
+  color: #1c1208;
   box-shadow: 0 6px 20px var(--primary-glow);
 }
 
@@ -845,8 +970,8 @@ select:focus-visible,
 }
 
 .genre-btn.active {
-  background: var(--primary);
-  border-color: var(--primary);
+  background: var(--primary-contrast);
+  border-color: var(--primary-contrast);
   color: #fff;
   box-shadow: 0 4px 14px var(--primary-glow);
 }
@@ -859,7 +984,7 @@ select:focus-visible,
 }
 
 .section-container {
-  max-width: 1320px;
+  max-width: var(--content-width);
   margin: 0 auto;
 }
 
@@ -907,7 +1032,7 @@ select:focus-visible,
 .anime-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
-  gap: 24px;
+  gap: 28px 22px;
 }
 
 .large-grid {
@@ -923,11 +1048,22 @@ select:focus-visible,
   gap: 10px;
   cursor: pointer;
   border-radius: var(--radius-md);
-  transition: transform 0.3s var(--ease);
+  transition: transform 0.3s var(--ease), filter 0.3s var(--ease);
+}
+
+.badge-mark,
+.floating-card-mark {
+  display: inline-grid;
+  place-items: center;
+  width: 1.25em;
+  height: 1.25em;
+  color: var(--primary);
+  font-weight: 800;
 }
 
 .anime-card:hover {
   transform: translateY(-6px);
+  filter: brightness(1.04);
 }
 
 .card-image-wrapper {
@@ -989,7 +1125,7 @@ select:focus-visible,
   position: absolute;
   top: 10px;
   left: 10px;
-  background: rgba(255, 114, 0, 0.9);
+  background: var(--primary-contrast);
   color: #fff;
   padding: 4px 10px;
   border-radius: 6px;
@@ -1001,7 +1137,7 @@ select:focus-visible,
 }
 
 .card-badge.completed {
-  background: rgba(34, 197, 94, 0.9);
+  background: #166534;
 }
 
 .card-watchlist-btn {
@@ -1020,11 +1156,17 @@ select:focus-visible,
   font-size: 16px;
   transition: var(--trans);
   border: 1px solid var(--border);
-  opacity: 0;
+  opacity: 0.92;
 }
 
 .anime-card:hover .card-watchlist-btn {
   opacity: 1;
+}
+
+.card-watchlist-btn:focus-visible {
+  opacity: 1;
+  outline: none;
+  box-shadow: var(--focus-ring);
 }
 
 .card-watchlist-btn:hover,
@@ -1038,7 +1180,8 @@ select:focus-visible,
   display: flex;
   flex-direction: column;
   gap: 4px;
-  padding: 2px 4px 0;
+  padding: 4px 4px 0;
+  min-width: 0;
 }
 
 .watch-progress-controls {
@@ -1449,12 +1592,25 @@ select:focus-visible,
   align-items: center;
   justify-content: center;
   gap: 14px;
-  padding: 90px 24px;
+  padding: 72px 24px;
+  margin: 12px 0 24px;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-lg);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.035), rgba(255, 255, 255, 0.015));
   text-align: center;
 }
 
 .empty-icon {
-  font-size: 64px;
+  display: grid;
+  place-items: center;
+  width: 68px;
+  height: 68px;
+  font-size: 42px;
+  color: var(--primary);
+  border: 1px solid var(--border-hot);
+  border-radius: 22px;
+  background: rgba(255, 114, 0, 0.1);
+  box-shadow: var(--shadow-soft);
   margin-bottom: 4px;
 }
 
@@ -1514,6 +1670,254 @@ select:focus-visible,
 
 .toast.error {
   border-color: rgba(239, 68, 68, 0.5);
+}
+
+/* ============================================================
+   PROFILE & PRIVACY SETTINGS (Item 38)
+   ============================================================ */
+
+/* ============================================================
+   RATINGS & REVIEWS (Item 39)
+   ============================================================ */
+.review-card {
+  margin-top: 16px;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-2);
+}
+
+.review-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.review-star-input {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  margin-bottom: 4px;
+}
+
+.review-star {
+  appearance: none;
+  background: none;
+  border: 0;
+  color: var(--text-muted);
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 2px;
+}
+
+.review-star.active,
+.review-star:hover {
+  color: var(--primary);
+}
+
+.review-existing p {
+  margin: 6px 0 0;
+  white-space: pre-wrap;
+}
+
+/* ============================================================
+   SPOILER-PROTECTED TEXT (Item 40)
+   ============================================================ */
+.spoiler {
+  filter: blur(8px);
+  background: var(--surface-2);
+  color: transparent;
+  padding: 2px 4px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  user-select: none;
+  transition: filter 0.2s ease, background 0.2s ease;
+}
+
+.spoiler[data-revealed="true"] {
+  filter: none;
+  color: var(--text);
+  background: transparent;
+  cursor: default;
+  text-decoration: underline;
+  text-decoration-style: dotted;
+  text-decoration-color: var(--primary);
+}
+
+.spoiler[data-revealed="true"]:hover {
+  background: rgba(99, 102, 241, 0.08);
+}
+
+/* ============================================================
+   NOTIFICATION BADGE & PANEL (Item 35)
+   ============================================================ */
+.notification-badge {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  background: var(--primary);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  border-radius: 50%;
+  padding: 2px 6px;
+  line-height: 1;
+}
+
+.notifications-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  z-index: 1050;
+  backdrop-filter: blur(2px);
+}
+
+.notifications-panel {
+  position: fixed;
+  top: 112px;
+  right: 28px;
+  width: 420px;
+  max-height: 72vh;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.55);
+  z-index: 1060;
+  display: flex;
+  flex-direction: column;
+}
+
+.notifications-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--border);
+}
+
+.notifications-title {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.notifications-close {
+  background: none;
+  border: 0;
+  color: var(--text-muted);
+  font-size: 22px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 2px 8px;
+  border-radius: var(--radius-sm);
+}
+
+.notifications-close:hover {
+  color: var(--text);
+  background: rgba(99, 102, 241, 0.08);
+}
+
+.notifications-list {
+  overflow-y: auto;
+  max-height: calc(72vh - 80px);
+}
+
+.notification-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
+}
+
+.notification-item:last-child {
+  border-bottom: none;
+}
+
+.notification-item:hover {
+  background-color: rgba(99, 102, 241, 0.06);
+}
+
+.notification-item.notification-read {
+  opacity: 0.85;
+}
+
+.notification-item strong {
+  display: block;
+  font-size: 14px;
+  color: var(--text);
+  margin-bottom: 2px;
+}
+
+.notification-item p {
+  margin: 0 0 6px 0;
+  font-size: 13.5px;
+  color: var(--text-muted);
+  line-height: 1.4;
+}
+
+.notification-item time {
+  font-size: 11.5px;
+  color: var(--text-muted);
+}
+
+.notification-mark {
+  margin-left: auto;
+  background: none;
+  border: 0;
+  color: var(--primary);
+  font-size: 12px;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: var(--radius-sm);
+}
+
+.notification-mark:hover {
+  background-color: rgba(99, 102, 241, 0.08);
+}
+
+.notifications-empty {
+  padding: 26px 18px;
+  text-align: center;
+  color: var(--text-muted);
+}
+
+/* Watchlist tag filter chips (Item 36) */
+.tag-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  font-size: 12.5px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  background: var(--surface);
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.tag-chip[aria-pressed="true"] {
+  border-color: var(--primary);
+  color: var(--primary);
+  background-color: rgba(99, 102, 241, 0.1);
+}
+
+.tag-chip-clear {
+  font-size: 12.5px;
+  color: var(--text-muted);
+  background: none;
+  border: 0;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: var(--radius-sm);
+}
+
+.tag-chip-clear:hover {
+  color: var(--text);
+  background-color: rgba(99, 102, 241, 0.08);
 }
 
 /* ============================================================
@@ -1615,6 +2019,19 @@ footer {
    RESPONSIVE BREAKPOINTS
    ============================================================ */
 @media (max-width: 1024px) {
+  .nav-container {
+    gap: 14px;
+    padding-inline: 20px;
+  }
+  .nav-links {
+    gap: 14px;
+  }
+  .nav-link {
+    font-size: 12.5px;
+  }
+  .logo {
+    font-size: 23px;
+  }
   .catalog-filter-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -1687,6 +2104,27 @@ footer {
     box-shadow: -16px 0 40px rgba(0, 0, 0, 0.6);
     z-index: 1050;
   }
+  .nav-scrim {
+    position: fixed;
+    inset: 0;
+    display: block;
+    width: 100vw;
+    height: 100vh;
+    height: 100dvh;
+    border: 0;
+    background: rgba(0, 0, 0, 0.62);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.28s var(--ease);
+    z-index: 1040;
+  }
+  .nav-scrim[hidden] {
+    display: none;
+  }
+  .nav-scrim:not([hidden]) {
+    opacity: 1;
+    pointer-events: auto;
+  }
   .nav-links.open {
     transform: translateX(0);
     visibility: visible;
@@ -1748,7 +2186,7 @@ footer {
   }
   .anime-grid {
     grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
-    gap: 16px;
+    gap: 22px 14px;
   }
   .catalog-filters {
     padding: 18px;
@@ -1759,6 +2197,12 @@ footer {
   .catalog-filter-grid select {
     min-width: 0;
   }
+  .comic-detail-top { flex-direction: column; gap: 24px; }
+  .comic-detail-content { padding-inline: 16px; }
+  .comic-search-form { border-radius: var(--radius-md); }
+  .comic-search-form .cta-btn { flex-shrink: 0; }
+  .calendar-week-days { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .calendar-day { min-height: 140px; }
   .tag,
   .genre-btn,
   .catalog-filter-actions button,
@@ -1783,11 +2227,15 @@ footer {
   }
   .anime-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 12px;
+    gap: 20px 12px;
   }
   .content-section {
     padding: 0 16px 48px;
   }
+  .calendar-controls { align-items: stretch; }
+  .calendar-controls label, .calendar-controls .cta-btn { width: 100%; }
+  .calendar-week { padding: 14px; }
+  .calendar-week-days { grid-template-columns: 1fr; }
   .genre-section {
     padding: 0 16px;
   }
@@ -1797,6 +2245,8 @@ footer {
   .catalog-filter-grid {
     grid-template-columns: 1fr;
   }
+  .comic-search-form { flex-direction: column; padding: 10px; }
+  .comic-search-form .cta-btn { width: 100%; justify-content: center; }
   .catalog-filter-actions {
     align-items: flex-start;
     flex-direction: column;
@@ -1990,3 +2440,474 @@ footer {
     background-size: cover;
   }
 }
+.comic-load-more {
+  display: flex;
+  justify-content: center;
+  margin: 24px 0 8px;
+}
+
+.catalog-load-error {
+  display: grid;
+  justify-items: center;
+  gap: 14px;
+  padding: 48px 24px;
+  color: var(--text-muted);
+  text-align: center;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-lg);
+  background: rgba(255, 255, 255, 0.025);
+}
+
+/* ============================================================
+   READING LIST & CONTINUE READING
+   Scoped to reading surfaces so watch controls keep their layout.
+   ============================================================ */
+#page-reading-list .page-heading {
+  margin-bottom: 10px;
+}
+
+.reading-list-note {
+  max-width: 70ch;
+  margin-bottom: 24px;
+  color: var(--text-muted);
+  font-size: 14px;
+}
+
+.reading-list-summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 110px), 1fr));
+  gap: 12px;
+  margin-bottom: 24px;
+}
+
+.reading-list-summary > div {
+  min-width: 0;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+}
+
+.reading-list-summary dt {
+  color: var(--text-muted);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.reading-list-summary dd {
+  color: var(--text);
+  font-family: var(--font-head);
+  font-size: 28px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.4;
+}
+
+.reading-list-filters {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr)) auto;
+  align-items: end;
+  gap: 14px;
+  padding: 20px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+}
+
+.reading-list-filters label,
+.reading-controls label {
+  display: grid;
+  align-content: start;
+  gap: 6px;
+  min-width: 0;
+  color: var(--text-muted);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.reading-list-filters :is(select, input),
+.reading-controls :is(select, input) {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  min-height: 44px;
+  padding: 9px 12px;
+  border: 1px solid var(--text-muted);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  color: var(--text);
+  color-scheme: dark;
+  font: inherit;
+  font-size: 16px;
+  line-height: 1.5;
+}
+
+#page-reading-list :is(a, button),
+#section-continue-reading :is(a, button),
+.comic-reading-btn,
+[data-reading-remove],
+.reading-detail-link {
+  min-width: 44px;
+  min-height: 44px;
+  max-width: 100%;
+}
+
+#page-reading-list .cta-btn {
+  justify-content: center;
+  padding: 10px 18px;
+  text-align: center;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+#comic-detail-content h1[tabindex="-1"] {
+  scroll-margin-top: calc(var(--nav-h) + 24px);
+}
+
+#comic-detail-content h1[tabindex="-1"]:focus-visible {
+  outline: 3px solid var(--primary);
+  outline-offset: 4px;
+}
+
+#page-reading-list .primary-btn {
+  background: var(--primary-contrast);
+  color: var(--text);
+}
+
+#page-reading-list .primary-btn:hover {
+  background: var(--primary-contrast-hover);
+}
+
+.reading-list-status {
+  min-height: 24px;
+  margin: 16px 0 20px;
+  color: var(--text-muted);
+  font-size: 14px;
+}
+
+#reading-list-grid {
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 240px), 1fr));
+}
+
+#reading-list-grid,
+#continue-reading-grid {
+  align-items: start;
+  min-width: 0;
+}
+
+.comic-card,
+.reading-card,
+#reading-list-grid .card-info,
+#continue-reading-grid .card-info {
+  min-width: 0;
+}
+
+.reading-detail-link {
+  display: block;
+  border-radius: var(--radius-md);
+  overflow-wrap: anywhere;
+}
+
+:is(.comic-card, .reading-card) .card-meta,
+#reading-list-grid .card-meta,
+#continue-reading-grid .card-meta {
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+:is(.comic-card, .reading-card) .card-title,
+#reading-list-grid .card-title,
+#continue-reading-grid .card-title {
+  overflow-wrap: anywhere;
+}
+
+.reading-controls {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 140px), 1fr));
+  gap: 12px;
+  min-width: 0;
+  margin-top: 12px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+}
+
+.reading-progress-summary,
+.reading-progress-warning {
+  grid-column: 1 / -1;
+  color: var(--text-muted);
+  font-size: 13px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.reading-progress-summary {
+  font-variant-numeric: tabular-nums;
+}
+
+.reading-progress-warning {
+  padding: 10px 12px;
+  border-left: 3px solid var(--star);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  color: var(--star);
+}
+
+.comic-reading-btn,
+[data-reading-remove] {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 10px 14px;
+  border: 1px solid var(--text-muted);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  color: var(--text);
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.5;
+  text-align: center;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  transition: border-color 0.2s var(--ease), background-color 0.2s var(--ease);
+}
+
+.comic-reading-btn:hover,
+.comic-reading-btn.saved {
+  border-color: var(--primary);
+  color: var(--primary);
+}
+
+[data-reading-remove]:hover {
+  border-color: var(--danger);
+}
+
+.reading-list-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  margin-top: 28px;
+  padding-top: 20px;
+  border-top: 1px solid var(--border);
+}
+
+#reading-list-clear {
+  border: 1px solid var(--danger);
+  background: var(--surface);
+  color: var(--text);
+}
+
+#reading-list-clear:hover {
+  background: var(--surface-2);
+}
+
+#page-reading-list .empty-state h2 {
+  font-family: var(--font-head);
+  font-size: 24px;
+  font-weight: 800;
+}
+
+#section-continue-reading .section-header {
+  flex-wrap: wrap;
+  gap: 12px 24px;
+}
+
+#section-continue-reading .section-subtitle {
+  color: var(--text-muted);
+  font-size: 14px;
+}
+
+#section-continue-reading .view-all {
+  flex-shrink: 0;
+  padding-inline: 4px;
+}
+
+#page-reading-list :is(a, button, input, select):focus-visible,
+#section-continue-reading :is(a, button, input, select):focus-visible,
+:is(.comic-card, .reading-card):focus-visible,
+:is(.comic-card, .reading-card) a:focus-visible,
+.reading-controls :is(button, input, select):focus-visible,
+.reading-detail-link:focus-visible,
+.comic-reading-btn:focus-visible,
+[data-reading-remove]:focus-visible,
+[data-nav="reading-list"]:focus-visible {
+  outline: 3px solid var(--primary);
+  outline-offset: 3px;
+  scroll-margin-top: calc(var(--nav-h) + 24px);
+}
+
+#page-reading-list :is(button, input, select):disabled,
+.reading-controls :is(button, input, select):disabled,
+.comic-reading-btn:disabled,
+[data-reading-remove]:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+#page-reading-list [hidden],
+#section-continue-reading[hidden],
+#section-continue-reading [hidden] {
+  display: none;
+}
+
+@media (max-width: 768px) {
+  .reading-list-filters {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 480px) {
+  .reading-list-filters {
+    grid-template-columns: minmax(0, 1fr);
+    padding: 16px;
+  }
+  .reading-list-actions .cta-btn {
+    width: 100%;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :is(.comic-card, .reading-card):hover,
+  :is(.comic-card, .reading-card):hover .card-image,
+  #reading-list-grid .anime-card:hover,
+  #reading-list-grid .anime-card:hover .card-image,
+  #continue-reading-grid .anime-card:hover,
+  #continue-reading-grid .anime-card:hover .card-image,
+  #page-reading-list .cta-btn:hover {
+    transform: none;
+  }
+}
+
+/* ============================================================
+   SOCIAL FOLLOWS & ACTIVITY FEED (Item 41)
+   ============================================================ */
+.follow-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  font-size: 12.5px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  background: var(--surface-2);
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.follow-chip:hover {
+  border-color: var(--primary);
+  color: var(--primary);
+}
+
+.activity-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.activity-card {
+  display: flex;
+  gap: 10px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-2);
+  align-items: flex-start;
+}
+.activity-thumb {
+  width: 56px;
+  height: 84px;
+  object-fit: cover;
+  border-radius: var(--radius-sm);
+  flex-shrink: 0;
+  opacity: 0.9;
+}
+.activity-thumb[data-fallback-src] {
+  opacity: 0.85;
+}
+
+/* ============================================================
+   ANIME ART GALLERY (Items 42-50)
+   ============================================================ */
+.gallery-controls {
+  gap: 8px;
+}
+.gallery-card {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-2);
+  overflow: hidden;
+  transition: transform 0.3s var(--ease), box-shadow 0.3s var(--ease);
+}
+.gallery-card:hover {
+  transform: translateY(-4px);
+  box-shadow: var(--shadow-card);
+  border-color: var(--border-strong);
+}
+.gallery-image-wrap {
+  position: relative;
+  width: 100%;
+  height: 260px;
+  overflow: hidden;
+  background: var(--surface);
+}
+.gallery-image {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.gallery-badge {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  font-size: 11px;
+  font-weight: 700;
+  color: #fff;
+  background: rgba(0, 0, 0, 0.55);
+  padding: 2px 8px;
+  border-radius: var(--radius-sm);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+}
+.gallery-info {
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.gallery-title {
+  margin: 0;
+  font-size: 15px;
+  color: var(--text);
+  font-weight: 600;
+}
+.gallery-artist {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--text-muted);
+}
+.gallery-source {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.gallery-copyright {
+  margin: 0;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+.gallery-dmca {
+  margin-top: 6px;
+  align-self: flex-start;
+  text-decoration: underline;
+  text-decoration-style: dotted;
+}
+.gallery-dmca:hover {
+  color: var(--primary-dark);
+}
+.gallery-count { font-size: 13px; color: var(--text-muted); }
+

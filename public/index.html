@@ -79,14 +79,26 @@
         <li><a href="#" id="nav-logout" class="nav-link" hidden>Log Out</a></li>
         <li><a href="#" data-nav="home" class="nav-link active">Home</a></li>
         <li><a href="#" data-nav="movies" class="nav-link">Movies</a></li>
+        <li><a href="#" data-nav="animated-movies" class="nav-link" id="nav-animated-movies">Animated Movies</a></li>
         <li><a href="#" data-nav="series" class="nav-link">TV Series</a></li>
+        <li><a href="#" data-nav="manga" class="nav-link">Manga</a></li>
+        <li><a href="#" data-nav="manhwa" class="nav-link">Manhwa</a></li>
+        <li><a href="#" data-nav="manhua" class="nav-link">Manhua</a></li>
         <li><a href="#" data-nav="popular" class="nav-link">Most Popular</a></li>
+        <li><a href="#" data-nav="calendar" class="nav-link">Release Calendar</a></li>
+        <li><a href="#" data-nav="gallery" class="nav-link">Art Gallery</a></li>
         <li><a href="#" data-nav="watchlist" class="nav-link">My Watchlist</a></li>
+        <li><a href="#" data-nav="reading-list" class="nav-link">Reading List</a></li>
       </ul>
+      <button class="nav-scrim" id="nav-scrim" type="button" aria-label="Close navigation" hidden></button>
 
       <div class="nav-actions">
         <button class="nav-search-trigger" id="nav-search-trigger" aria-label="Search" aria-expanded="false" aria-controls="search-overlay">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+        </button>
+        <button class="nav-notification-trigger" id="nav-notification-trigger" aria-label="Notifications" aria-expanded="false" aria-haspopup="true" aria-controls="notifications-panel">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+          <span id="notification-badge" class="notification-badge" hidden>0</span>
         </button>
       </div>
     </div>
@@ -119,7 +131,7 @@
         <div class="hero-bg-overlay"></div>
         <div class="hero-content">
           <div class="hero-left">
-            <div class="badge">🎌 Discover your next favorite</div>
+            <div class="badge"><span class="badge-mark" aria-hidden="true">✦</span> Discover your next favorite</div>
             <h1 class="hero-title">Find your next anime.<br>Explore, <span class="highlight">save, enjoy.</span></h1>
             <p class="hero-subtitle">Explore anime and movies with ratings, genres, and YouTube trailers. Find out where titles are legally available to watch.</p>
 
@@ -161,8 +173,8 @@
               <div class="floating-card rating-card">
                 <span class="star">★</span> 9.0+ Ratings
               </div>
-              <div class="floating-card hd-card">🎬 Official Trailers</div>
-              <div class="floating-card count-card">🔎 AniList Discovery</div>
+               <div class="floating-card hd-card"><span class="floating-card-mark" aria-hidden="true">▶</span> Official Trailers</div>
+               <div class="floating-card count-card"><span class="floating-card-mark" aria-hidden="true">⌕</span> AniList Discovery</div>
             </div>
           </div>
         </div>
@@ -174,15 +186,15 @@
       <section class="genre-section">
         <div class="section-container">
           <div class="genre-filter-bar" id="genre-filter-bar" role="group" aria-label="Filter by genre">
-            <button class="genre-btn active" data-genre="All">All</button>
-            <button class="genre-btn" data-genre="Action">Action</button>
-            <button class="genre-btn" data-genre="Adventure">Adventure</button>
-            <button class="genre-btn" data-genre="Fantasy">Fantasy</button>
-            <button class="genre-btn" data-genre="Supernatural">Supernatural</button>
-            <button class="genre-btn" data-genre="Drama">Drama</button>
-            <button class="genre-btn" data-genre="Comedy">Comedy</button>
-            <button class="genre-btn" data-genre="Sci-Fi">Sci-Fi</button>
-            <button class="genre-btn" data-genre="Shounen">Shounen</button>
+            <button class="genre-btn active" data-genre="All" aria-pressed="true">All</button>
+            <button class="genre-btn" data-genre="Action" aria-pressed="false">Action</button>
+            <button class="genre-btn" data-genre="Adventure" aria-pressed="false">Adventure</button>
+            <button class="genre-btn" data-genre="Fantasy" aria-pressed="false">Fantasy</button>
+            <button class="genre-btn" data-genre="Supernatural" aria-pressed="false">Supernatural</button>
+            <button class="genre-btn" data-genre="Drama" aria-pressed="false">Drama</button>
+            <button class="genre-btn" data-genre="Comedy" aria-pressed="false">Comedy</button>
+            <button class="genre-btn" data-genre="Sci-Fi" aria-pressed="false">Sci-Fi</button>
+            <button class="genre-btn" data-genre="Shounen" aria-pressed="false">Shounen</button>
           </div>
         </div>
       </section>
@@ -201,12 +213,40 @@
         </div>
       </section>
 
+      <!-- CONTINUE READING -->
+      <section class="content-section" id="section-continue-reading" style="display:none" aria-labelledby="continue-reading-title">
+        <div class="section-container">
+          <div class="section-header">
+            <div>
+              <h2 class="section-title" id="continue-reading-title">Continue Reading</h2>
+              <p class="section-subtitle">Pick up your next chapter.</p>
+            </div>
+            <a href="/?page=reading-list" class="view-all" data-nav="reading-list">View Reading List <span aria-hidden="true">→</span></a>
+          </div>
+          <div class="anime-grid" id="continue-reading-grid"></div>
+        </div>
+      </section>
+
+      <!-- PERSONALIZED RECOMMENDATIONS -->
+      <section class="content-section recommendations-section" id="section-recommendations" hidden aria-labelledby="recommendations-title">
+        <div class="section-container">
+          <div class="section-header">
+            <div>
+              <h2 class="section-title" id="recommendations-title">Personalized Recommendations</h2>
+              <p class="section-subtitle" id="recommendations-subtitle">Picked from your watchlist and favorite genres.</p>
+            </div>
+          </div>
+          <p class="recommendations-status" id="recommendations-status" role="status" aria-live="polite"></p>
+          <div class="anime-grid" id="recommendations-grid"></div>
+        </div>
+      </section>
+
       <!-- TRENDING -->
       <section class="content-section" id="section-trending">
         <div class="section-container">
           <div class="section-header">
             <h2 class="section-title">🔥 Trending Now</h2>
-            <a href="#" class="view-all" data-nav="popular">View All <span>→</span></a>
+            <a href="#" class="view-all" data-nav="popular" aria-label="View all trending anime">View All <span>→</span></a>
           </div>
           <div class="anime-grid" id="trending-grid"></div>
         </div>
@@ -217,7 +257,7 @@
         <div class="section-container">
           <div class="section-header">
             <h2 class="section-title">⭐ Most Popular</h2>
-            <a href="#" class="view-all" data-nav="popular">View All <span>→</span></a>
+            <a href="#" class="view-all" data-nav="popular" aria-label="View all popular anime">View All <span>→</span></a>
           </div>
           <div class="anime-grid" id="popular-grid"></div>
         </div>
@@ -231,12 +271,12 @@
         <div class="section-container">
           <h1 class="page-heading">Most Popular Anime</h1>
           <div class="genre-filter-bar" id="popular-genre-filter" role="group" aria-label="Filter by genre">
-            <button class="genre-btn active" data-genre="All">All</button>
-            <button class="genre-btn" data-genre="Action">Action</button>
-            <button class="genre-btn" data-genre="Adventure">Adventure</button>
-            <button class="genre-btn" data-genre="Fantasy">Fantasy</button>
-            <button class="genre-btn" data-genre="Supernatural">Supernatural</button>
-            <button class="genre-btn" data-genre="Drama">Drama</button>
+            <button class="genre-btn active" data-genre="All" aria-pressed="true">All</button>
+            <button class="genre-btn" data-genre="Action" aria-pressed="false">Action</button>
+            <button class="genre-btn" data-genre="Adventure" aria-pressed="false">Adventure</button>
+            <button class="genre-btn" data-genre="Fantasy" aria-pressed="false">Fantasy</button>
+            <button class="genre-btn" data-genre="Supernatural" aria-pressed="false">Supernatural</button>
+            <button class="genre-btn" data-genre="Drama" aria-pressed="false">Drama</button>
           </div>
           <section class="catalog-filters" aria-labelledby="catalog-filters-title">
             <h3 id="catalog-filters-title" class="filter-heading">Filter catalog</h3>
@@ -320,20 +360,154 @@
       </div>
     </div>
 
+    <!-- ===== PAGE: RELEASE CALENDAR ===== -->
+    <div class="page" id="page-calendar">
+      <div class="inner-page-container">
+        <div class="section-container">
+          <div class="section-header calendar-header">
+            <div>
+              <h1 class="page-heading">Release Calendar</h1>
+              <p class="page-kicker">Upcoming TV releases, grouped Monday through Sunday.</p>
+            </div>
+            <p class="calendar-result-status" id="calendar-result-status" role="status" aria-live="polite"></p>
+          </div>
+          <form class="calendar-controls" id="calendar-filter-form" aria-label="Release calendar filters">
+            <label for="calendar-season">Season
+              <select id="calendar-season" name="season">
+                <option value="WINTER">Winter</option>
+                <option value="SPRING">Spring</option>
+                <option value="SUMMER">Summer</option>
+                <option value="FALL">Fall</option>
+              </select>
+            </label>
+            <label for="calendar-year">Year
+              <select id="calendar-year" name="year"></select>
+            </label>
+            <button class="cta-btn primary-btn" type="submit">Load releases</button>
+          </form>
+          <div class="calendar-grid" id="calendar-grid" aria-live="polite"></div>
+          <div class="empty-state" id="calendar-empty" hidden>
+            <div class="empty-icon">🗓️</div>
+            <h2>No upcoming releases found</h2>
+            <p>Try another season or year.</p>
+          </div>
+          <div class="empty-state" id="calendar-error" hidden>
+            <div class="empty-icon">⚠️</div>
+            <h2>Release calendar unavailable</h2>
+            <p>We couldn't load this release schedule.</p>
+            <button class="cta-btn primary-btn" type="button" id="calendar-retry">Try again</button>
+          </div>
+          <div class="catalog-load-more" id="calendar-load-more" hidden>
+            <button type="button" class="cta-btn secondary-btn" id="calendar-load-more-btn">Load more releases</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===== PAGE: ANIMATED MOVIES ===== -->
+    <div class="page" id="page-animated-movies">
+      <div class="inner-page-container">
+        <div class="section-container">
+          <div class="section-header animated-movies-header">
+            <div>
+              <h1 class="page-heading" id="animated-movies-heading">Animated Movies</h1>
+              <p class="page-kicker">Discover anime, donghua, and animation from around the world.</p>
+            </div>
+            <p class="comic-result-status" id="animated-movies-result-count" role="status" aria-live="polite"></p>
+          </div>
+
+          <form class="comic-search-form animated-movies-search-form" id="animated-movies-search-form" role="search">
+            <label class="sr-only" for="animated-movies-search">Search animated movies</label>
+            <input id="animated-movies-search" name="search" type="search" maxlength="100" placeholder="Search animated movies by title…" autocomplete="off">
+            <button class="cta-btn primary-btn" type="submit">Search</button>
+          </form>
+
+          <div class="genre-filter-bar" id="animated-movies-region-filter" role="group" aria-label="Filter by animation region">
+            <button class="genre-btn active" type="button" data-country-of-origin="JP" aria-pressed="true">Anime (Japan)</button>
+            <button class="genre-btn" type="button" data-country-of-origin="CN" aria-pressed="false">Donghua (China)</button>
+            <button class="genre-btn" type="button" data-country-of-origin="US" aria-pressed="false">Western Animation</button>
+            <button class="genre-btn" type="button" data-country-of-origin="KR" aria-pressed="false">Korean Animation</button>
+            <button class="genre-btn" type="button" data-country-of-origin="IN" aria-pressed="false">Indian Animation</button>
+            <button class="genre-btn" type="button" data-country-of-origin="FR" aria-pressed="false">French Animation</button>
+            <button class="genre-btn" type="button" data-country-of-origin="GB" aria-pressed="false">British Animation</button>
+            <button class="genre-btn" type="button" data-country-of-origin="CA" aria-pressed="false">Canadian Animation</button>
+            <button class="genre-btn" type="button" data-country-of-origin="BR" aria-pressed="false">Brazilian Animation</button>
+            <button class="genre-btn" type="button" data-country-of-origin="OTHER" aria-pressed="false">Other Animation</button>
+          </div>
+
+          <section class="catalog-filters" aria-labelledby="animated-movies-filters-title">
+            <h2 id="animated-movies-filters-title" class="filter-heading">Filter animated movies</h2>
+            <form id="animated-movies-filter-form" class="catalog-filter-grid">
+              <label for="animated-movies-year">Release year
+                <select id="animated-movies-year" name="year">
+                  <option value="">Any release year</option>
+                </select>
+              </label>
+              <div class="catalog-filter-actions">
+                <button class="cta-btn secondary-btn" id="animated-movies-clear-filters" type="reset">Clear year filter</button>
+              </div>
+            </form>
+          </section>
+
+          <div class="anime-grid large-grid" id="animated-movies-grid" aria-live="polite"></div>
+          <div class="empty-state" id="animated-movies-empty" hidden>
+            <div class="empty-icon">🎬</div>
+            <h3>No animated movies found</h3>
+            <p id="animated-movies-empty-message">Try another region or release year.</p>
+          </div>
+          <div class="catalog-load-more" id="animated-movies-load-more" hidden>
+            <button type="button" class="cta-btn secondary-btn" id="animated-movies-load-more-btn" data-animated-movies-more>Load more</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <!-- ===== PAGE: SERIES ===== -->
     <div class="page" id="page-series">
       <div class="inner-page-container">
         <div class="section-container">
           <h1 class="page-heading">TV Series</h1>
           <div class="genre-filter-bar" id="series-genre-filter" role="group" aria-label="Filter by genre">
-            <button class="genre-btn active" data-genre="All">All</button>
-            <button class="genre-btn" data-genre="Action">Action</button>
-            <button class="genre-btn" data-genre="Adventure">Adventure</button>
-            <button class="genre-btn" data-genre="Shounen">Shounen</button>
+            <button class="genre-btn active" data-genre="All" aria-pressed="true">All</button>
+            <button class="genre-btn" data-genre="Action" aria-pressed="false">Action</button>
+            <button class="genre-btn" data-genre="Adventure" aria-pressed="false">Adventure</button>
+            <button class="genre-btn" data-genre="Shounen" aria-pressed="false">Shounen</button>
           </div>
           <div class="anime-grid large-grid" id="series-grid"></div>
         </div>
       </div>
+    </div>
+
+    <!-- ===== PAGES: MANGA / MANHWA / MANHUA ===== -->
+    <div class="page comic-catalog-page" id="page-manga" data-comic-kind="manga">
+      <div class="inner-page-container"><div class="section-container">
+        <div class="section-header comic-page-header"><div><h1 class="page-heading">Manga</h1><p class="page-kicker">Japanese comics and graphic stories</p></div></div>
+        <form class="comic-search-form" data-comic-search="manga" role="search"><label class="sr-only" for="manga-search">Search manga</label><input id="manga-search" name="q" type="search" maxlength="100" placeholder="Search manga by title…" autocomplete="off"><select id="manga-sort" aria-label="Sort manga"><option value="popularity">Popular</option><option value="trending">Trending</option><option value="score">Top rated</option><option value="newest">Newest</option><option value="title">Title</option></select><button class="cta-btn primary-btn" type="submit">Search</button></form>
+        <p class="comic-result-status" id="manga-result-status" role="status" aria-live="polite"></p>
+          <div class="anime-grid large-grid" id="manga-grid" aria-live="polite"></div><div class="comic-load-more" id="manga-load-more" hidden><button class="cta-btn secondary-btn" type="button" data-comic-more="manga">Load more</button></div>
+        <div class="empty-state comic-empty" id="manga-empty" hidden><div class="empty-icon">📚</div><h2>No manga found</h2><p>Try a different title or check back for new additions.</p></div>
+        <div class="empty-state comic-error" id="manga-error" hidden><div class="empty-icon">⚠️</div><h2>Manga is temporarily unavailable</h2><p>We couldn't load this catalog.</p><button class="cta-btn primary-btn" type="button" data-comic-retry="manga">Try again</button></div>
+      </div></div>
+    </div>
+    <div class="page comic-catalog-page" id="page-manhwa" data-comic-kind="manhwa">
+      <div class="inner-page-container"><div class="section-container">
+        <div class="section-header comic-page-header"><div><h1 class="page-heading">Manhwa</h1><p class="page-kicker">Korean comics and webtoons</p></div></div>
+        <form class="comic-search-form" data-comic-search="manhwa" role="search"><label class="sr-only" for="manhwa-search">Search manhwa</label><input id="manhwa-search" name="q" type="search" maxlength="100" placeholder="Search manhwa by title…" autocomplete="off"><select id="manhwa-sort" aria-label="Sort manhwa"><option value="popularity">Popular</option><option value="trending">Trending</option><option value="score">Top rated</option><option value="newest">Newest</option><option value="title">Title</option></select><button class="cta-btn primary-btn" type="submit">Search</button></form>
+        <p class="comic-result-status" id="manhwa-result-status" role="status" aria-live="polite"></p>
+          <div class="anime-grid large-grid" id="manhwa-grid" aria-live="polite"></div><div class="comic-load-more" id="manhwa-load-more" hidden><button class="cta-btn secondary-btn" type="button" data-comic-more="manhwa">Load more</button></div>
+        <div class="empty-state comic-empty" id="manhwa-empty" hidden><div class="empty-icon">📖</div><h2>No manhwa found</h2><p>Try a different title or check back for new additions.</p></div>
+        <div class="empty-state comic-error" id="manhwa-error" hidden><div class="empty-icon">⚠️</div><h2>Manhwa is temporarily unavailable</h2><p>We couldn't load this catalog.</p><button class="cta-btn primary-btn" type="button" data-comic-retry="manhwa">Try again</button></div>
+      </div></div>
+    </div>
+    <div class="page comic-catalog-page" id="page-manhua" data-comic-kind="manhua">
+      <div class="inner-page-container"><div class="section-container">
+        <div class="section-header comic-page-header"><div><h1 class="page-heading">Manhua</h1><p class="page-kicker">Chinese comics and illustrated stories</p></div></div>
+        <form class="comic-search-form" data-comic-search="manhua" role="search"><label class="sr-only" for="manhua-search">Search manhua</label><input id="manhua-search" name="q" type="search" maxlength="100" placeholder="Search manhua by title…" autocomplete="off"><select id="manhua-sort" aria-label="Sort manhua"><option value="popularity">Popular</option><option value="trending">Trending</option><option value="score">Top rated</option><option value="newest">Newest</option><option value="title">Title</option></select><button class="cta-btn primary-btn" type="submit">Search</button></form>
+        <p class="comic-result-status" id="manhua-result-status" role="status" aria-live="polite"></p>
+          <div class="anime-grid large-grid" id="manhua-grid" aria-live="polite"></div><div class="comic-load-more" id="manhua-load-more" hidden><button class="cta-btn secondary-btn" type="button" data-comic-more="manhua">Load more</button></div>
+        <div class="empty-state comic-empty" id="manhua-empty" hidden><div class="empty-icon">🀄</div><h2>No manhua found</h2><p>Try a different title or check back for new additions.</p></div>
+        <div class="empty-state comic-error" id="manhua-error" hidden><div class="empty-icon">⚠️</div><h2>Manhua is temporarily unavailable</h2><p>We couldn't load this catalog.</p><button class="cta-btn primary-btn" type="button" data-comic-retry="manhua">Try again</button></div>
+      </div></div>
     </div>
 
     <!-- ===== PAGE: WATCHLIST ===== -->
@@ -341,6 +515,18 @@
       <div class="inner-page-container">
         <div class="section-container">
           <h1 class="page-heading">My Watchlist</h1>
+          <div class="watchlist-controls" style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-bottom:16px;">
+            <label for="watchlist-sort" style="font-size:14px;color:var(--text-muted);margin-right:6px;">Sort by:</label>
+            <select id="watchlist-sort" name="sort" aria-label="Sort watchlist by">
+              <option value="dateAdded">Date Added</option>
+              <option value="title">Title (A–Z)</option>
+              <option value="rating">Rating (High→Low)</option>
+              <option value="progress">Progress (High→Low)</option>
+            </select>
+            <button class="cta-btn secondary-btn" id="watchlist-export" aria-label="Export watchlist to JSON">Export Watchlist</button>
+            <button class="cta-btn secondary-btn" id="watchlist-import" aria-label="Import watchlist from JSON">Import Watchlist</button>
+            <input type="file" id="watchlist-import-file" accept=".json" hidden>
+          </div>
           <div class="anime-grid large-grid" id="watchlist-grid"></div>
           <div class="empty-state" id="watchlist-empty" style="display:none">
             <div class="empty-icon">📚</div>
@@ -348,6 +534,16 @@
             <p>Browse anime and click the star icon on any card to save titles here.</p>
             <button class="cta-btn primary-btn" data-nav="home">Browse Anime</button>
           </div>
+          <section class="content-section recommendations-section watchlist-recommendations" id="section-watchlist-recommendations" hidden aria-labelledby="watchlist-recommendations-title">
+            <div class="section-header">
+              <div>
+                <h2 class="section-title" id="watchlist-recommendations-title">Personalized Recommendations</h2>
+                <p class="section-subtitle" id="watchlist-recommendations-subtitle">More anime based on your saved titles.</p>
+              </div>
+            </div>
+            <p class="recommendations-status" id="watchlist-recommendations-status" role="status" aria-live="polite"></p>
+            <div class="anime-grid" id="watchlist-recommendations-grid"></div>
+          </section>
         </div>
       </div>
     </div>
@@ -434,6 +630,75 @@
       <div id="detail-content"></div>
     </div>
 
+    <!-- ===== PAGE: READING LIST ===== -->
+    <div class="page" id="page-reading-list">
+      <div class="inner-page-container">
+        <div class="section-container">
+          <h1 class="page-heading">My Reading List</h1>
+          <p class="reading-list-note" id="reading-list-storage-note">Your reading list is saved in this browser only and does not sync to the cloud.</p>
+          <dl class="reading-list-summary" id="reading-list-summary" aria-label="Reading list summary">
+            <div><dt>Reading</dt><dd><span id="reading-summary-reading">0</span></dd></div>
+            <div><dt>Completed</dt><dd><span id="reading-summary-completed">0</span></dd></div>
+            <div><dt>Planned</dt><dd><span id="reading-summary-planned">0</span></dd></div>
+            <div><dt>On hold</dt><dd><span id="reading-summary-on-hold">0</span></dd></div>
+            <div><dt>Dropped</dt><dd><span id="reading-summary-dropped">0</span></dd></div>
+          </dl>
+          <div class="reading-list-filters" role="group" aria-label="Filter and sort reading list">
+            <label for="reading-list-status-filter">Reading status filter
+              <select id="reading-list-status-filter" name="readingStatus">
+                <option value="all">All statuses</option>
+                <option value="reading">Reading</option>
+                <option value="completed">Completed</option>
+                <option value="plan_to_read">Plan to read</option>
+                <option value="on_hold">On hold</option>
+                <option value="dropped">Dropped</option>
+              </select>
+            </label>
+            <label for="reading-list-type-filter">Content type filter
+              <select id="reading-list-type-filter" name="contentType">
+                <option value="all">All content types</option>
+                <option value="manga">Manga</option>
+                <option value="manhwa">Manhwa</option>
+                <option value="manhua">Manhua</option>
+              </select>
+            </label>
+            <label for="reading-list-sort">Sort reading list
+              <select id="reading-list-sort" name="readingSort">
+                <option value="updated">Recently updated</option>
+                <option value="title">Title (A–Z)</option>
+                <option value="status">Reading status</option>
+                <option value="progress">Chapter progress</option>
+              </select>
+            </label>
+            <button class="cta-btn secondary-btn" id="reading-list-reset" type="button">Reset filters</button>
+          </div>
+          <p class="reading-list-status" id="reading-list-status" role="status" aria-live="polite"></p>
+          <div class="anime-grid large-grid" id="reading-list-grid"></div>
+          <div class="empty-state" id="reading-list-no-results" style="display:none">
+            <h2>No titles match these filters</h2>
+            <p>Try another reading status or content type, or reset filters to see all your saved titles.</p>
+            <button class="cta-btn secondary-btn" type="button" data-reading-reset>Show all saved titles</button>
+          </div>
+          <div class="empty-state" id="reading-list-empty" style="display:none">
+            <div class="empty-icon">📖</div>
+            <h3>Your reading list is empty</h3>
+            <p>Browse manga, manhwa, or manhua and save a title to track chapters.</p>
+            <button class="cta-btn primary-btn" type="button" data-nav="manga">Browse Manga</button>
+          </div>
+          <div class="empty-state" id="reading-list-error" style="display:none">
+            <div class="empty-icon">⚠️</div>
+            <h3>Reading list unavailable</h3>
+            <p id="reading-list-error-message">Saved reading data needs attention before it can be changed.</p>
+            <button class="cta-btn secondary-btn" id="reading-list-retry" type="button">Try again</button>
+          </div>
+          <div class="reading-list-actions" id="reading-list-actions">
+            <button class="cta-btn danger-btn" id="reading-list-clear" type="button">Clear saved reading data</button>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="page" id="page-comic-detail"><div id="comic-detail-content"></div></div>
+
     <!-- ===== PAGE: PROFILE ===== -->
     <div class="page" id="page-profile">
       <div class="section-container" style="padding-top: 120px; min-height: 60vh;">
@@ -442,11 +707,82 @@
           <p style="margin-bottom: 12px;"><strong>Email:</strong> <span id="profile-email" style="color: var(--text-muted);">Not logged in</span></p>
           <p id="profile-verified-status" style="margin-bottom: 20px; font-size: 14px; color: var(--text-dim);"></p>
         </div>
+
+        <!-- ===== Account settings ===== -->
+        <div style="margin-top: 32px; padding-top: 24px; border-top: 1px solid var(--border);">
+          <h2 style="font-size: 1.2rem; margin-bottom: 16px; color: var(--text);">Account settings</h2>
+          <div style="display:flex;flex-direction:column;gap:14px;">
+            <label style="display:flex;align-items:center;gap:10px;cursor:pointer;font-size:15px;">
+              <input type="checkbox" id="profile-watchlist-public">
+              <span>Make my watchlist public</span>
+            </label>
+            <p style="margin:0 0 0 28px;font-size:13px;color:var(--text-muted);">When public, your saved titles may appear in community recommendations.</p>
+            <label style="display:flex;align-items:center;gap:10px;cursor:pointer;font-size:15px;">
+              <input type="checkbox" id="profile-activity-pref">
+              <span>Share watch activity</span>
+            </label>
+            <p style="margin:0 0 0 28px;font-size:13px;color:var(--text-muted);">Include your watchlist updates in activity feeds.</p>
+          </div>
+        </div>
+
+        <!-- ===== Follows & Activity (Item 41) ===== -->
+        <div style="margin-top: 32px; padding-top: 24px; border-top: 1px solid var(--border);">
+          <h2 style="font-size: 1.2rem; margin-bottom: 16px; color: var(--text);">Following</h2>
+          <div id="profile-following-preview" style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:16px;"></div>
+          <div id="profile-following-empty" style="font-size:13px;color:var(--text-muted);margin-bottom:24px;">Not following anyone yet.</div>
+        </div>
+
+        <div style="margin-top: 0; padding-top: 24px; border-top: 1px solid var(--border);">
+          <h2 style="font-size: 1.2rem; margin-bottom: 16px; color: var(--text);">Activity feed</h2>
+          <div id="profile-activity-feed" class="activity-list" style="display:flex;flex-direction:column;gap:10px;"></div>
+          <div id="profile-activity-empty" style="font-size:13px;color:var(--text-muted);">No recent activity.</div>
+        </div>
+
+        <!-- ===== Danger Zone ===== -->
         <div style="margin-top: 32px; padding-top: 24px; border-top: 1px solid var(--border);">
           <h2 style="font-size: 1.2rem; margin-bottom: 12px; color: var(--danger);">Danger Zone</h2>
           <p style="font-size: 14px; color: var(--text-muted); margin-bottom: 16px; max-width: 520px;">Deleting your account will permanently remove your profile and cloud watchlist data. This action cannot be undone.</p>
           <button type="button" id="profile-delete-btn" class="cta-btn profile-delete-btn">Delete My Account</button>
           <p id="profile-delete-note" style="font-size: 12px; color: var(--text-dim); margin-top: 10px; max-width: 520px;"></p>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===== PAGE: ART GALLERY (Items 42-50) ===== -->
+    <div class="page" id="page-gallery">
+      <div class="section-container" style="padding-top: 120px; min-height: 60vh;">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:20px;flex-wrap:wrap;">
+          <div>
+            <h1 style="font-family: var(--font-head); font-size: 2rem; margin-bottom: 4px;">Art Gallery</h1>
+            <p style="font-size: 14px; color: var(--text-muted); margin: 0;">Official posters, banners, key visuals, character art, and wallpapers.</p>
+          </div>
+          <div class="gallery-controls" style="display:flex;gap:8px;align-items:center;">
+            <select id="gallery-category" aria-label="Gallery category" style="padding:6px 10px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface-2);color:var(--text);font:inherit;">
+              <option value="">All categories</option>
+              <option value="Official Art">Official Art</option>
+              <option value="Key Visuals">Key Visuals</option>
+              <option value="Character Wallpapers">Character Wallpapers</option>
+              <option value="Fan Art">Fan Art</option>
+            </select>
+            <input type="search" id="gallery-search" placeholder="Search artwork…" aria-label="Search gallery" style="padding:6px 10px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface-2);color:var(--text);font:inherit;min-width:170px;">
+            <button type="button" id="gallery-reset" class="cta-btn secondary-btn" style="padding:6px 14px;font-size:14px;">Reset</button>
+          </div>
+        </div>
+
+        <p id="gallery-count" style="font-size:13px;color:var(--text-muted);margin-bottom:14px;"></p>
+
+        <div class="anime-grid large-grid" id="gallery-grid"></div>
+        <div class="empty-state" id="gallery-empty" style="display:none;">
+          <div class="empty-icon">🖼️</div>
+          <h3>No artwork matches your filters</h3>
+          <p>Try adjusting the category or search term.</p>
+          <button class="cta-btn primary-btn" id="gallery-reset-empty">Reset filters</button>
+        </div>
+        <div class="empty-state" id="gallery-error" style="display:none;">
+          <div class="empty-icon">⚠️</div>
+          <h3>Gallery unavailable</h3>
+          <p>Could not load the art gallery. Please try again.</p>
+          <button class="cta-btn primary-btn" id="gallery-retry">Try again</button>
         </div>
       </div>
     </div>
@@ -469,10 +805,25 @@
   </footer>
 
   <!-- ========== TOAST NOTIFICATION ========== -->
-  <div class="toast" id="toast"></div>
+  <div class="toast" id="toast" role="status" aria-live="polite" aria-atomic="true"></div>
+
+  <!-- ========== NOTIFICATIONS PANEL ========== -->
+  <div class="notifications-panel" id="notifications-panel" hidden role="region" aria-label="Notifications" aria-modal="true">
+    <div class="notifications-panel-header">
+      <h2 class="notifications-title">Notifications</h2>
+      <button type="button" class="notifications-close" id="notifications-close" aria-label="Close notifications">✕</button>
+    </div>
+    <div class="notifications-list" id="notifications-list"></div>
+    <div class="notifications-empty" id="notifications-empty" hidden>
+      <p>No notifications yet.</p>
+    </div>
+  </div>
+  <div class="notifications-backdrop" id="notifications-backdrop" hidden></div>
+
 
   <!-- ========== SCRIPTS ========== -->
   <script src="watchlist-utils.js"></script>
+  <script src="reading-list-utils.js"></script>
   <script src="script.js"></script>
 
   <!-- Auth Modal -->

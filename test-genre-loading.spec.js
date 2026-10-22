@@ -39,6 +39,10 @@ const MOCK_MOVIES = [
   { ...mockCard(900006, 'Mock Movie 2'), type: 'MOVIE', format: 'MOVIE' }
 ];
 const MOCK_GENRE_ACTION = [mockCard(900007, 'Mock Action 1'), mockCard(900008, 'Mock Action 2')];
+const MOCK_GENRE_DRAMA = [mockCard(900009, 'Mock Drama 1'), mockCard(900010, 'Mock Drama 2')];
+const MOCK_BROWSE_ALL = [mockCard(900020, 'Mock Popular 1')];
+const MOCK_BROWSE_ACTION = [mockCard(900021, 'Mock Popular Action')];
+const MOCK_BROWSE_DRAMA = [mockCard(900022, 'Mock Popular Drama')];
 
 test.describe('Genre Loading', () => {
   test.beforeEach(async ({ page }) => {
@@ -64,6 +68,8 @@ test.describe('Genre Loading', () => {
     // Mock genre endpoint used by the home page genre chip test.
     await page.route('**/api/genre/Action', route =>
       route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(MOCK_GENRE_ACTION) }));
+    await page.route('**/api/genre/Drama', route =>
+      route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(MOCK_GENRE_DRAMA) }));
 
     await page.goto('/', { waitUntil: 'domcontentloaded', timeout: 60000 });
   });
@@ -78,6 +84,26 @@ test.describe('Genre Loading', () => {
 
     // Wait for results to load
     await expect(page.locator('#trending-grid .anime-card').first()).toBeVisible({ timeout: 30000 });
+  });
+
+  test('Home genre selection keeps aria-pressed state synchronized', async ({ page }) => {
+    const allChip = page.locator('#genre-filter-bar .genre-btn[data-genre="All"]');
+    const actionChip = page.locator('#genre-filter-bar .genre-btn[data-genre="Action"]');
+    const dramaChip = page.locator('#genre-filter-bar .genre-btn[data-genre="Drama"]');
+
+    await expect(allChip).toHaveAttribute('aria-pressed', 'true');
+    await expect(actionChip).toHaveAttribute('aria-pressed', 'false');
+
+    await actionChip.click();
+    await expect(actionChip).toHaveAttribute('aria-pressed', 'true');
+    await expect(allChip).toHaveAttribute('aria-pressed', 'false');
+    await expect(page.locator('#trending-grid')).toContainText('Mock Action 1', { timeout: 15000 });
+
+    await dramaChip.click();
+    await expect(dramaChip).toHaveAttribute('aria-pressed', 'true');
+    await expect(actionChip).toHaveAttribute('aria-pressed', 'false');
+    await expect(allChip).toHaveAttribute('aria-pressed', 'false');
+    await expect(page.locator('#trending-grid')).toContainText('Mock Drama 1', { timeout: 15000 });
   });
 
   test('Series page genre chip loads results', async ({ page }) => {
@@ -118,6 +144,71 @@ test.describe('Genre Loading', () => {
 
     // Wait for results to load
     await expect(page.locator('#popular-page-grid .anime-card').first()).toBeVisible({ timeout: 30000 });
+  });
+
+  test('Popular catalog genre buttons mirror the selected filter and URL', async ({ page }) => {
+    await page.route('**/api/genres', route =>
+      route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(['Action', 'Drama']) }));
+    await page.route('**/api/browse*', route => {
+      const genre = new URL(route.request().url()).searchParams.get('genre') || '';
+      const body = genre === 'Action' ? MOCK_BROWSE_ACTION : genre === 'Drama' ? MOCK_BROWSE_DRAMA : MOCK_BROWSE_ALL;
+      return route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        headers: { 'X-Catalog-Has-Next': 'false', 'X-Catalog-Total': String(body.length) },
+        body: JSON.stringify(body)
+      });
+    });
+
+    await clickNav(page, 'popular');
+    await expect(page.locator('#popular-genre-filter .genre-btn[data-genre="All"]')).toHaveAttribute('aria-pressed', 'true');
+    await expect(page.locator('#popular-genre-filter .genre-btn[data-genre="Action"]')).toHaveAttribute('aria-pressed', 'false');
+
+    await page.selectOption('#filter-genre', 'Action');
+    await expect(page.locator('#popular-page-grid')).toContainText('Mock Popular Action', { timeout: 15000 });
+    await expect(page.locator('#popular-genre-filter .genre-btn[data-genre="Action"]')).toHaveAttribute('aria-pressed', 'true');
+    await expect(page.locator('#popular-genre-filter .genre-btn[data-genre="All"]')).toHaveAttribute('aria-pressed', 'false');
+    await expect(page).toHaveURL(/page=popular.*genre=Action/);
+
+    await page.selectOption('#filter-genre', 'Drama');
+    await expect(page.locator('#popular-page-grid')).toContainText('Mock Popular Drama', { timeout: 15000 });
+    await expect(page.locator('#popular-genre-filter .genre-btn[data-genre="Drama"]')).toHaveAttribute('aria-pressed', 'true');
+    await expect(page.locator('#popular-genre-filter .genre-btn[data-genre="Action"]')).toHaveAttribute('aria-pressed', 'false');
+    await expect(page).toHaveURL(/page=popular.*genre=Drama/);
+  });
+
+  test('Popular catalog genre selection stays on the last successful state during retry', async ({ page }) => {
+    let failDrama = false;
+    await page.route('**/api/genres', route =>
+      route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(['Action', 'Drama']) }));
+    await page.route('**/api/browse*', route => {
+      const genre = new URL(route.request().url()).searchParams.get('genre') || '';
+      if (genre === 'Drama' && failDrama) return route.abort('failed');
+      const body = genre === 'Action' ? MOCK_BROWSE_ACTION : genre === 'Drama' ? MOCK_BROWSE_DRAMA : MOCK_BROWSE_ALL;
+      return route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        headers: { 'X-Catalog-Has-Next': 'false', 'X-Catalog-Total': String(body.length) },
+        body: JSON.stringify(body)
+      });
+    });
+
+    await clickNav(page, 'popular');
+    await page.selectOption('#filter-genre', 'Action');
+    await expect(page.locator('#popular-page-grid')).toContainText('Mock Popular Action', { timeout: 15000 });
+
+    failDrama = true;
+    await page.selectOption('#filter-genre', 'Drama');
+    const errorState = page.locator('#popular-page-grid .catalog-load-error');
+    await expect(errorState).toBeVisible({ timeout: 15000 });
+    await expect(page.locator('#popular-genre-filter .genre-btn[data-genre="Action"]')).toHaveAttribute('aria-pressed', 'true');
+    await expect(page.locator('#popular-genre-filter .genre-btn[data-genre="Drama"]')).toHaveAttribute('aria-pressed', 'false');
+
+    failDrama = false;
+    await errorState.getByRole('button', { name: 'Try again' }).click();
+    await expect(page.locator('#popular-page-grid')).toContainText('Mock Popular Drama', { timeout: 15000 });
+    await expect(page.locator('#popular-genre-filter .genre-btn[data-genre="Drama"]')).toHaveAttribute('aria-pressed', 'true');
+    await expect(page.locator('#popular-genre-filter .genre-btn[data-genre="Action"]')).toHaveAttribute('aria-pressed', 'false');
   });
 
   test('Popular page shows a retryable error when the catalog request fails', async ({ page }) => {
@@ -174,6 +265,9 @@ test.describe('Genre Loading', () => {
 
     await page.click('#genre-filter-bar .genre-btn[data-genre="Action"]');
 
+    await expect(page.locator('#genre-filter-bar .genre-btn[data-genre="Action"]')).toHaveAttribute('aria-pressed', 'true');
+    await expect(page.locator('#genre-filter-bar .genre-btn[data-genre="All"]')).toHaveAttribute('aria-pressed', 'false');
+
     // The failure renders an alert with a retry button, not a blank grid.
     const errorState = page.locator('#trending-grid .genre-load-error');
     await expect(errorState).toBeVisible({ timeout: 15000 });
@@ -183,6 +277,7 @@ test.describe('Genre Loading', () => {
     // Retry re-issues the request, which now succeeds.
     await errorState.getByRole('button', { name: 'Try again' }).click();
     await expect(page.locator('#trending-grid .anime-card')).toHaveCount(1, { timeout: 15000 });
+    await expect(page.locator('#genre-filter-bar .genre-btn[data-genre="Action"]')).toHaveAttribute('aria-pressed', 'true');
     await expect(page.locator('#trending-grid')).toContainText('Retry Mock Title');
     await expect(page.locator('#trending-grid .genre-load-error')).toHaveCount(0);
   });

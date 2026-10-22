@@ -26,12 +26,24 @@ const { mergeAniListCatalog, withCanonicalId } = require('./catalog-utils');
 const {
   boundedCacheSet,
   browseCacheKey,
+  BROWSE_MAX_PAGE,
   CATALOG_MEDIA_FIELDS,
   CATALOG_PER_PAGE,
   buildCatalogGraphQL,
+  buildRecommendationsGraphQL,
   filterCatalogLocally,
-  parseBrowseFilters
+  parseBrowseFilters,
+  parseRecommendationInput,
+  RECOMMENDATIONS_MAX_RESULTS
 } = require('./catalog-filters');
+const {
+  CONTENT_KINDS,
+  normalizeContentKind,
+  normalizeMangaMedia,
+  parseMangaRequest,
+  buildMangaGraphQL,
+  mangaCacheKey
+} = require('./content-utils');
 
 const app = express();
 
@@ -325,7 +337,9 @@ const accountDeletionLimiter = rateLimit({
 app.use('/api', globalApiLimiter);
 app.use('/api/search', proxyLimiter);
 app.use('/api/browse', proxyLimiter);
+app.use('/api/recommendations', proxyLimiter);
 app.use('/api/anime/:id', proxyLimiter);
+app.use(['/api/manga', '/api/manhwa', '/api/manhua'], proxyLimiter);
 app.use('/api/account', accountDeletionLimiter);
 
 app.get('/api/health', (req, res) => {
@@ -334,6 +348,14 @@ app.get('/api/health', (req, res) => {
 });
 
 app.use(express.json({ limit: '16kb' }));
+
+// Test-only fault injection for the generic JSON error contract. This route is
+// unavailable unless the local test harness explicitly opts in.
+if (process.env.NODE_ENV === 'test' && process.env.ANIME_HUB_TEST_ERROR_ROUTE === '1') {
+  app.get('/api/test/error-middleware', () => {
+    throw new Error('P6.5 test fixture internal detail');
+  });
+}
 
 const indexHtml = fs.readFileSync(path.join(__dirname, 'public', 'index.html'), 'utf8');
 app.get(['/', '/index.html'], (req, res) => {
@@ -837,7 +859,17 @@ function curatedGenres() {
 // keeps working with AniList unavailable. Every fallback logs which source
 // answered, so a cached or curated list is never mistaken for a live one.
 
-const CATALOG_CACHE_TTL_MS = 10 * 60 * 1000;
+// Catalog list cache TTL. Tests override this to exercise cache-expiry paths
+// (the stale fallback when a refresh fails) without waiting out the production
+// window; unset or empty keeps the production default. Like TRUST_PROXY, an
+// invalid value fails fast at startup instead of silently misbehaving.
+const rawCatalogCacheTtl = process.env.CATALOG_CACHE_TTL_MS;
+const CATALOG_CACHE_TTL_MS = rawCatalogCacheTtl === undefined || rawCatalogCacheTtl.trim() === ''
+  ? 10 * 60 * 1000
+  : Number(rawCatalogCacheTtl);
+if (!Number.isFinite(CATALOG_CACHE_TTL_MS) || CATALOG_CACHE_TTL_MS < 0) {
+  throw new Error('CATALOG_CACHE_TTL_MS must be a finite, non-negative number of milliseconds; leave it unset for the default.');
+}
 const CATALOG_TIMEOUT_MS = 10000;
 const GENRE_CACHE_LIMIT = 30;
 const genreCatalogCache = new Map();
@@ -981,7 +1013,9 @@ const getSeriesCatalog = createCatalogLoader({
 async function getGenreCatalog(genre, typeKey) {
   const cacheKey = `${genre.toLowerCase()}|${typeKey || 'all'}`;
   const cached = genreCatalogCache.get(cacheKey);
-  if (cached && Date.now() < cached.expiresAt) return cached.data;
+  if (cached && Date.now() < cached.expiresAt) {
+    return { data: cached.data, source: 'anilist' };
+  }
 
   const curatedMatches = () => curatedCatalogWhere(anime =>
     animeMatchesGenre(anime, genre) && (!typeKey || matchesTypeFilter(anime, typeKey))
@@ -989,7 +1023,7 @@ async function getGenreCatalog(genre, typeKey) {
 
   const knownGenres = await getGenreList();
   if (!knownGenres.some(name => String(name).toLowerCase() === genre.toLowerCase())) {
-    return curatedMatches();
+    return { data: curatedMatches(), source: 'curated' };
   }
 
   let liveCatalog;
@@ -1005,7 +1039,9 @@ async function getGenreCatalog(genre, typeKey) {
     );
   } catch (error) {
     console.warn(`AniList "${genre}" catalog unavailable; using ${cached ? 'cached' : 'curated'} catalog: ${error.message}`);
-    return cached ? cached.data : curatedMatches();
+    return cached
+      ? { data: cached.data, source: 'anilist' }
+      : { data: curatedMatches(), source: 'curated' };
   }
 
   // Curated entries the merge appends only belong in this result when they
@@ -1021,7 +1057,7 @@ async function getGenreCatalog(genre, typeKey) {
   if (genreCatalogCache.size > GENRE_CACHE_LIMIT) {
     genreCatalogCache.delete(genreCatalogCache.keys().next().value);
   }
-  return catalog;
+  return { data: catalog, source: 'anilist' };
 }
 
 /** The genres this catalog can filter by: live AniList genres plus curation. */
@@ -1058,6 +1094,151 @@ async function getGenreList() {
 
   return genreListCache.pending;
 }
+
+
+// ============================================================
+// RECOMMENDATIONS — client-owned watchlist signals, AniList-backed
+// ============================================================
+//
+// The client sends only derived genre weights and AniList IDs. This endpoint
+// does not read, persist, or authenticate a watchlist; it validates the
+// request, binds all values as GraphQL variables, and returns the same
+// catalog shape as /api/browse. Live responses are cached briefly and a stale
+// response or curated catalog keeps the endpoint useful during an outage.
+
+const RECOMMENDATION_CACHE_LIMIT = 100;
+const recommendationCache = new Map();
+const pendingRecommendationRequests = new Map();
+
+function recommendationCacheKey(input) {
+  return JSON.stringify({
+    genres: [...input.genreWeights]
+      .map(entry => [String(entry.name).toLowerCase(), Number(entry.weight)])
+      .sort((a, b) => a[0].localeCompare(b[0])),
+    favoriteIds: [...input.favoriteIds].sort((a, b) => a - b)
+  });
+}
+
+function recommendationFallback(input) {
+  const favoriteIds = new Set(input.favoriteIds);
+  const wantedGenres = input.genreWeights.map(entry => entry.name);
+  const fallback = filterCatalogLocally(CURATED_CATALOG, {
+    genres: wantedGenres,
+    sort: 'score'
+  });
+  const candidates = (wantedGenres.length ? fallback : CURATED_CATALOG)
+    .filter(item => !favoriteIds.has(Number(item?.id || item?.anilistId)));
+  return candidates.slice(0, RECOMMENDATIONS_MAX_RESULTS);
+}
+
+function recommendationScore(item, weights, position) {
+  const genres = Array.isArray(item?.genre) ? item.genre : Array.isArray(item?.genres) ? item.genres : [];
+  const weightedGenreScore = genres.reduce((sum, genre) => sum + (weights.get(String(genre).toLowerCase()) || 0), 0);
+  const rating = Number(item?.rating || 0);
+  // Genre affinity dominates; score and provider order only break ties.
+  return weightedGenreScore * 1000 + rating * 10 + Math.max(0, 100 - position) / 100;
+}
+
+function rankRecommendationMedia(media, input) {
+  const favoriteIds = new Set(input.favoriteIds);
+  const weights = new Map(input.genreWeights.map(entry => [entry.name.toLowerCase(), entry.weight]));
+  const byId = new Map();
+  media.forEach((item, position) => {
+    const id = Number(item?.id || item?.anilistId);
+    if (!Number.isSafeInteger(id) || favoriteIds.has(id) || byId.has(id)) return;
+    byId.set(id, { item, score: recommendationScore(item, weights, position) });
+  });
+  return [...byId.values()]
+    .sort((a, b) => b.score - a.score || Number(a.item.id) - Number(b.item.id))
+    .map(entry => entry.item)
+    .slice(0, RECOMMENDATIONS_MAX_RESULTS);
+}
+
+async function fetchRecommendations(input) {
+  const { query, variables } = buildRecommendationsGraphQL(input, {
+    perPage: RECOMMENDATIONS_MAX_RESULTS
+  });
+  const response = await axios.post(
+    ANILIST_GRAPHQL_URL,
+    { query, variables },
+    {
+      headers: { 'Content-Type': 'application/json' },
+      timeout: CATALOG_TIMEOUT_MS
+    }
+  );
+  if (response.data?.errors) {
+    throw new Error(response.data.errors.map(error => error.message).join('; '));
+  }
+
+  const payload = safe(response, 'data.data', null);
+  if (!payload || typeof payload !== 'object') {
+    throw new Error('AniList returned an invalid recommendations response.');
+  }
+  const media = [];
+  const genrePage = payload.genrePage || payload.Page;
+  if (Array.isArray(genrePage?.media)) media.push(...genrePage.media);
+  const favoritePage = payload.favoritePage || (!input.genreWeights.length ? payload.Page : null);
+  if (Array.isArray(favoritePage?.media)) {
+    for (const favorite of favoritePage.media) {
+      const edges = favorite?.recommendations?.edges;
+      if (!Array.isArray(edges)) continue;
+      for (const edge of edges) {
+        const recommendation = edge?.node?.mediaRecommendation;
+        if (recommendation) media.push(recommendation);
+      }
+    }
+  }
+  const sanitized = media.map(item => ({
+    ...item,
+    description: sanitizeDescription(item?.description)
+  }));
+  return rankRecommendationMedia(mergeAniListCatalog([], sanitized), input);
+}
+
+async function getRecommendations(input) {
+  const key = recommendationCacheKey(input);
+  const cached = recommendationCache.get(key);
+  if (cached?.pending) return cached.pending;
+  const inFlight = pendingRecommendationRequests.get(key);
+  if (inFlight) return inFlight;
+  if (cached && Date.now() < cached.expiresAt) {
+    return { data: cached.data, source: 'anilist' };
+  }
+  const stale = cached?.data || null;
+  const pending = (async () => {
+    try {
+      const data = await fetchRecommendations(input);
+      if (!data.length) {
+        throw new Error('AniList returned no recommendations.');
+      }
+      const entry = { data, expiresAt: Date.now() + CATALOG_CACHE_TTL_MS };
+      boundedCacheSet(recommendationCache, key, entry, RECOMMENDATION_CACHE_LIMIT);
+      return { data, source: 'anilist' };
+    } catch (error) {
+      console.warn(`AniList recommendations unavailable; using ${stale ? 'cached' : 'curated'} catalog: ${error.message}`);
+      return {
+        data: stale || recommendationFallback(input),
+        source: stale ? 'anilist' : 'curated'
+      };
+    } finally {
+      if (pendingRecommendationRequests.get(key) === pending) {
+        pendingRecommendationRequests.delete(key);
+      }
+    }
+  })();
+  pendingRecommendationRequests.set(key, pending);
+  return pending;
+}
+
+app.post('/api/recommendations', async (req, res) => {
+  const parsed = parseRecommendationInput(req.body);
+  if (parsed.errors.length) {
+    return res.status(400).json({ message: parsed.errors[0] });
+  }
+  const result = await getRecommendations(parsed);
+  res.setHeader('X-Catalog-Source', result.source);
+  return res.json(result.data);
+});
 
 
 // ============================================================
@@ -1115,19 +1296,24 @@ app.get('/api/popular', async (req, res) => {
 
 /**
  * Normalize AniList's pageInfo (or a length-only fallback) into the pagination
- * metadata the response headers carry.
+ * metadata the response headers carry. `maxPage` caps the advertised page
+ * window: the browse API never navigates beyond `BROWSE_MAX_PAGE`, so page 50
+ * is the last navigable page even when AniList reports more results.
  */
-function pageMeta(pageInfo, page, itemCount, fallbackPerPage = CATALOG_PER_PAGE) {
+function pageMeta(pageInfo, page, itemCount, fallbackPerPage = CATALOG_PER_PAGE, maxPage = Infinity) {
   const total = Number.isInteger(pageInfo?.total) ? pageInfo.total : null;
   const lastPage = Number.isInteger(pageInfo?.lastPage) ? pageInfo.lastPage : null;
-  const hasNext = typeof pageInfo?.hasNextPage === 'boolean'
+  const rawHasNext = typeof pageInfo?.hasNextPage === 'boolean'
     ? pageInfo.hasNextPage
     : itemCount >= fallbackPerPage;
+  // Never advertise a next page beyond the supported navigation window, and
+  // never report more total pages than the application permits.
+  const hasNext = page < maxPage && rawHasNext;
   return {
     page,
     perPage: Number.isInteger(pageInfo?.perPage) ? pageInfo.perPage : fallbackPerPage,
     total,
-    totalPages: lastPage !== null ? Math.max(1, lastPage) : Math.max(1, page + (hasNext ? 1 : 0)),
+    totalPages: lastPage !== null ? Math.min(Math.max(1, lastPage), maxPage) : Math.max(1, page + (hasNext ? 1 : 0)),
     hasNext
   };
 }
@@ -1177,7 +1363,7 @@ async function getBrowsePage(filters, perPage) {
       const entry = {
         data: catalog,
         source: 'anilist',
-        meta: pageMeta(pageInfo, filters.page, catalog.length, perPage),
+        meta: pageMeta(pageInfo, filters.page, catalog.length, perPage, BROWSE_MAX_PAGE),
         expiresAt: Date.now() + BROWSE_CACHE_TTL_MS,
         pending: null
       };
@@ -1211,14 +1397,41 @@ async function getBrowsePage(filters, perPage) {
 }
 
 app.get('/api/browse', async (req, res) => {
-  const knownGenres = new Set([...(await getGenreList()), ...curatedGenres()]);
-  const { filters, perPage, errors } = parseBrowseFilters(req.query, {
-    knownGenres,
+  // Phase 1: structural validation only — no upstream provider call. Malformed
+  // or out-of-range parameters, repeated parameters, and malformed/too-long
+  // genre values are rejected here without touching AniList. The genre
+  // allowlist is deliberately not loaded yet.
+  const structural = parseBrowseFilters(req.query, {
+    knownGenres: undefined,
+    skipGenreMembership: true,
     maxYear: new Date().getFullYear() + 1
   });
 
-  if (errors.length) {
-    return res.status(400).json({ message: errors[0] });
+  if (structural.errors.length) {
+    return res.status(400).json({ message: structural.errors[0] });
+  }
+
+  // Phase 2: load the genre allowlist only when a syntactically-valid genre
+  // was provided, so unknown-genre membership can be confirmed. This is the
+  // only path that calls the provider, and only for structurally-valid genre
+  // requests. Without a genre parameter curated genres suffice and no provider
+  // call is made.
+  let filters;
+  let perPage;
+  if (structural.filters.genres && structural.filters.genres.length) {
+    const knownGenres = new Set([...(await getGenreList()), ...curatedGenres()]);
+    const validated = parseBrowseFilters(req.query, {
+      knownGenres,
+      maxYear: new Date().getFullYear() + 1
+    });
+    if (validated.errors.length) {
+      return res.status(400).json({ message: validated.errors[0] });
+    }
+    filters = validated.filters;
+    perPage = validated.perPage;
+  } else {
+    filters = structural.filters;
+    perPage = structural.perPage;
   }
 
   const { data, source, meta } = await getBrowsePage(filters, perPage);
@@ -1234,6 +1447,167 @@ app.get('/api/browse', async (req, res) => {
   if (meta.total !== null) res.setHeader('X-Catalog-Total', String(meta.total));
   res.json(data);
 });
+
+
+// ============================================================
+// MANGA / MANHWA / MANHUA (isolated AniList content pipeline)
+// ============================================================
+
+const MANGA_CACHE_TTL_MS = 5 * 60 * 1000;
+const MANGA_CACHE_LIMIT = 100;
+const mangaContentCache = new Map();
+
+function cacheMangaContent(key, value) {
+  if (mangaContentCache.size >= MANGA_CACHE_LIMIT && !mangaContentCache.has(key)) {
+    mangaContentCache.delete(mangaContentCache.keys().next().value);
+  }
+  mangaContentCache.set(key, value);
+}
+
+function mangaMeta(pageInfo, page, perPage, count, rawCount = count) {
+  const hasNext = page < 50 && (typeof pageInfo?.hasNextPage === 'boolean' ? pageInfo.hasNextPage : rawCount >= perPage);
+  // Provider totals describe the unfiltered page. Once malformed or
+  // misclassified records are removed, do not expose a misleading total.
+  const pageInfoMatchesRequest = Number.isSafeInteger(pageInfo?.currentPage)
+    && pageInfo.currentPage === page
+    && Number.isSafeInteger(pageInfo?.perPage)
+    && pageInfo.perPage === perPage;
+  const total = rawCount === count && pageInfoMatchesRequest && Number.isSafeInteger(pageInfo?.total) && pageInfo.total >= 0
+    ? pageInfo.total
+    : null;
+  // A provider lastPage beyond our supported navigation window is not an
+  // exact total for this API. Never relabel the page-50 cap as total pages.
+  const totalPages = rawCount === count && pageInfoMatchesRequest
+    && Number.isSafeInteger(pageInfo?.lastPage)
+    && pageInfo.lastPage >= page
+    && pageInfo.lastPage <= 50
+    ? pageInfo.lastPage
+    : null;
+  return { page, perPage, total, totalPages, hasNext };
+}
+
+async function fetchMangaPage(options) {
+  const { query, variables } = buildMangaGraphQL(options);
+  const response = await axios.post(ANILIST_GRAPHQL_URL, { query, variables }, {
+    headers: { 'Content-Type': 'application/json' }, timeout: CATALOG_TIMEOUT_MS
+  });
+  if (response.data?.errors) throw new Error(response.data.errors.map(error => error.message).join('; '));
+  const page = safe(response, 'data.data.Page', null);
+  if (!page || !Array.isArray(page.media)) throw new Error('AniList returned an invalid manga response.');
+  return { media: page.media, pageInfo: page.pageInfo };
+}
+
+async function getMangaDiscovery(options) {
+  const key = mangaCacheKey(options);
+  const cached = mangaContentCache.get(key);
+  if (cached?.pending) return cached.pending;
+  if (cached && Date.now() < cached.expiresAt) return cached.value;
+  const pending = (async () => {
+    try {
+      const result = await fetchMangaPage(options);
+      const data = result.media.flatMap(item => {
+        try {
+          const normalized = normalizeMangaMedia(item, options.kind);
+          normalized.description = sanitizeDescription(normalized.description);
+          return normalized.contentType === options.kind ? [normalized] : [];
+        } catch (error) {
+          console.warn(`Ignoring malformed ${options.kind} record: ${error.message}`);
+          return [];
+        }
+      });
+      const value = { data, meta: mangaMeta(result.pageInfo, options.page, options.perPage, data.length, result.media.length), source: 'anilist' };
+      cacheMangaContent(key, { value, expiresAt: Date.now() + MANGA_CACHE_TTL_MS });
+      return value;
+    } catch (error) {
+      const stale = cached?.value;
+      console.warn(`AniList ${options.kind} unavailable; using ${stale ? 'cached' : 'error'} manga catalog: ${error.message}`);
+      if (stale) {
+        cacheMangaContent(key, { value: stale, expiresAt: cached.expiresAt });
+        return stale;
+      }
+      throw error;
+    } finally {
+      if (mangaContentCache.get(key)?.pending === pending) mangaContentCache.delete(key);
+    }
+  })();
+  cacheMangaContent(key, { pending, expiresAt: 0 });
+  return pending;
+}
+
+function mangaHeaders(res, result) {
+  res.setHeader('X-Content-Source', result.source);
+  res.setHeader('X-Content-Page', String(result.meta.page));
+  res.setHeader('X-Content-Per-Page', String(result.meta.perPage));
+  if (result.meta.totalPages !== null) res.setHeader('X-Content-Total-Pages', String(result.meta.totalPages));
+  res.setHeader('X-Content-Has-Next', result.meta.hasNext ? 'true' : 'false');
+  if (result.meta.total !== null) res.setHeader('X-Content-Total', String(result.meta.total));
+}
+
+function routeContentKind(req) {
+  const routeKind = req.path.split('/')[2];
+  return CONTENT_KINDS.has(routeKind) ? routeKind : normalizeContentKind(req.query.type, 'manga');
+}
+
+async function handleMangaDiscovery(req, res) {
+  const kind = routeContentKind(req);
+  const parsed = parseMangaRequest({ ...req.query, type: kind });
+  if (parsed.errors.length) return res.status(400).json({ message: parsed.errors[0] });
+  try {
+    const result = await getMangaDiscovery({ ...parsed, kind });
+    mangaHeaders(res, result);
+    return res.json(result.data);
+  } catch {
+    return res.status(502).json({ message: 'Manga catalog is temporarily unavailable.' });
+  }
+}
+
+for (const route of ['/api/manga', '/api/manhwa', '/api/manhua', '/api/manga/discover', '/api/manhwa/discover', '/api/manhua/discover']) app.get(route, handleMangaDiscovery);
+
+async function handleMangaSearch(req, res) {
+  const kind = routeContentKind(req);
+  const parsed = parseMangaRequest({ ...req.query, type: kind });
+  if (parsed.errors.length) return res.status(400).json({ message: parsed.errors[0] });
+  if (!parsed.q) return res.status(400).json({ message: 'Enter a manga name of 1 to 100 characters.' });
+  try {
+    const result = await getMangaDiscovery({ ...parsed, kind });
+    mangaHeaders(res, result);
+    return res.json(result.data);
+  } catch {
+    return res.status(502).json({ message: 'Manga search is temporarily unavailable.' });
+  }
+}
+
+for (const route of ['/api/manga/search', '/api/manhwa/search', '/api/manhua/search']) app.get(route, handleMangaSearch);
+
+async function handleMangaDetail(req, res) {
+  const kind = routeContentKind(req);
+  if (!/^\d+$/.test(req.params.id) || !Number.isSafeInteger(Number(req.params.id)) || Number(req.params.id) < 1 || Number(req.params.id) > 2147483647) {
+    return res.status(400).json({ message: 'Invalid manga ID.' });
+  }
+  const id = Number(req.params.id);
+  const key = mangaCacheKey({ kind, id });
+  const cached = mangaContentCache.get(key);
+  if (cached && Date.now() < cached.expiresAt) return res.json(cached.value);
+  try {
+    const { query, variables } = buildMangaGraphQL({ kind, detail: true, id });
+    const response = await axios.post(ANILIST_GRAPHQL_URL, { query, variables }, { headers: { 'Content-Type': 'application/json' }, timeout: CATALOG_TIMEOUT_MS });
+    if (response.data?.errors) throw new Error(response.data.errors.map(error => error.message).join('; '));
+    const media = safe(response, 'data.data.Media', null);
+    if (!media) return res.status(404).json({ message: 'Manga not found.' });
+    const item = normalizeMangaMedia(media, kind);
+    item.description = sanitizeDescription(item.description);
+    if (item.contentType !== kind) return res.status(404).json({ message: `${kind} not found.` });
+    cacheMangaContent(key, { value: item, expiresAt: Date.now() + MANGA_CACHE_TTL_MS });
+    return res.json(item);
+  } catch (error) {
+    const stale = cached?.value;
+    if (stale) return res.json(stale);
+    console.warn(`AniList ${kind} detail unavailable: ${error.message}`);
+    return res.status(502).json({ message: 'Manga details are temporarily unavailable.' });
+  }
+}
+
+for (const route of ['/api/manga/:id', '/api/manhwa/:id', '/api/manhua/:id']) app.get(route, handleMangaDetail);
 
 
 // ============================================================
@@ -1322,9 +1696,20 @@ function getLocalSuggestions(query) {
 }
 
 app.get('/api/search/suggestions', async (req, res) => {
-  const query = typeof req.query.q === 'string'
-    ? req.query.q.trim().replace(/\s+/g, ' ')
-    : '';
+  const rawQuery = typeof req.query.q === 'string' ? req.query.q : '';
+
+  // Reject control characters on the raw input before any normalization.
+  const hasControlCharacter = [...rawQuery].some(character => {
+    const codePoint = character.codePointAt(0);
+    return codePoint < 0x20 || codePoint === 0x7F;
+  });
+  if (hasControlCharacter) {
+    return res.status(400).json({
+      message: 'Search query contains characters that are not allowed.'
+    });
+  }
+
+  const query = rawQuery.trim().replace(/\s+/g, ' ');
 
   if (query.length < 2 || query.length > 100) {
     return res.status(400).json({
@@ -1371,20 +1756,30 @@ app.get('/api/search/suggestions', async (req, res) => {
   }
 });
 
+// SEARCH & DETAIL CACHING (Task P5.2)
+// ============================================================
+// /api/search and /api/anime/:id are the last AniList-backed routes without a
+// server-side cache: every repeat search or detail view paid the full upstream
+// latency and spent one of the 60/min rate-limit tokens. They now share the
+// catalog cache conventions — the same env-overridable TTL, single-flight
+// deduplication, a bounded FIFO cache, and the stale-beats-curated fallback.
+// A fallback (curated or local) is never cached, so the next request always
+// retries AniList.
+
+const SEARCH_CACHE_LIMIT = 100;
+const searchCache = new Map();
+const pendingSearchRequests = new Map();
+const DETAIL_CACHE_LIMIT = 100;
+const detailCache = new Map();
+const pendingDetailRequests = new Map();
+
 app.get('/api/search', async (req, res) => {
 
-  const query = typeof req.query.q === 'string' ? req.query.q.trim() : '';
+  const rawQuery = typeof req.query.q === 'string' ? req.query.q : '';
 
-  if (!query || query.length > 100) {
-    return res.status(400).json({
-      message: "Enter an anime name of 1 to 100 characters."
-    });
-  }
-
-  // Reject control characters: a legitimate title never contains them, and
-  // parameterized GraphQL variables ($search: String) mean rejected input
-  // can never be interpreted as a query. Printable Unicode is untouched.
-  const hasControlCharacter = [...query].some(character => {
+  // Reject control characters before trim() can normalize away tabs/newlines
+  // at the beginning or end of an otherwise valid-looking query.
+  const hasControlCharacter = [...rawQuery].some(character => {
     const codePoint = character.codePointAt(0);
     return codePoint < 0x20 || codePoint === 0x7F;
   });
@@ -1394,9 +1789,32 @@ app.get('/api/search', async (req, res) => {
     });
   }
 
-  // Try AniList GraphQL first
-  try {
-    const graphqlQuery = `
+  const query = rawQuery.trim();
+
+  if (!query || query.length > 100) {
+    return res.status(400).json({
+      message: "Enter an anime name of 1 to 100 characters."
+    });
+  }
+
+  // Fresh cache hit (case-insensitive key, like the suggestions cache) is
+  // served without touching AniList; the entry is re-inserted so hot queries
+  // age out last.
+  const cacheKey = query.toLowerCase();
+  const cached = searchCache.get(cacheKey);
+  if (cached && Date.now() < cached.expiresAt) {
+    searchCache.delete(cacheKey);
+    searchCache.set(cacheKey, cached);
+    res.setHeader('X-Catalog-Source', 'anilist');
+    return res.json(cached.results);
+  }
+  const staleResults = cached ? cached.results : null;
+
+  // Single-flight: concurrent identical queries share one upstream call.
+  let pendingSearch = pendingSearchRequests.get(cacheKey);
+  if (!pendingSearch) {
+    pendingSearch = (async () => {
+      const graphqlQuery = `
       query ($search: String) {
         Page(perPage: 10) {
           media(search: $search, type: ANIME, sort: SEARCH_MATCH) {
@@ -1428,44 +1846,66 @@ app.get('/api/search', async (req, res) => {
       }
     `;
 
-    const response = await axios.post(
-      ANILIST_GRAPHQL_URL,
-      {
-        query: graphqlQuery,
-        variables: {
-          search: query
-        }
-      },
-      {
-        headers: {
-          "Content-Type": "application/json"
+      const response = await axios.post(
+        ANILIST_GRAPHQL_URL,
+        {
+          query: graphqlQuery,
+          variables: {
+            search: query
+          }
         },
-        timeout: 15000
-      }
-    );
+        {
+          headers: {
+            "Content-Type": "application/json"
+          },
+          timeout: 15000
+        }
+      );
 
-    // Check for GraphQL errors
-    if (response.data.errors) {
-      console.error("❌ AniList GraphQL Error:", response.data.errors);
-      // Fall through to local DB
-    } else {
+      if (response.data.errors) {
+        console.error("❌ AniList GraphQL Error:", response.data.errors);
+        throw new Error(response.data.errors.map(entry => entry.message).join('; '));
+      }
+
       const mediaList = safe(response, 'data.data.Page.media', []);
-      // Deduplicate and sanitize descriptions before sending to client
-      const sanitized = deduplicateMediaList(mediaList).map(anime => ({
+      // Deduplicate and sanitize descriptions before caching and sending
+      return deduplicateMediaList(mediaList).map(anime => ({
         ...anime,
         description: sanitizeDescription(anime.description)
       }));
-      res.json(sanitized);
-      return;
-    }
-  } catch (error) {
-    console.warn('AniList search unavailable; using local catalog fallback.');
-    // AniList failed - will fall through to local DB
+    })();
+    pendingSearchRequests.set(cacheKey, pendingSearch);
   }
 
-  // Fall back to local database
-  const results = searchAnimeLocal(ANIME_DB, query).map(mapLocalAnimeToAniList);
-  res.json(deduplicateMediaList(results));
+  try {
+    const sanitized = await pendingSearch;
+    if (pendingSearchRequests.get(cacheKey) === pendingSearch) {
+      pendingSearchRequests.delete(cacheKey);
+    }
+    boundedCacheSet(
+      searchCache,
+      cacheKey,
+      { results: sanitized, expiresAt: Date.now() + CATALOG_CACHE_TTL_MS },
+      SEARCH_CACHE_LIMIT
+    );
+    res.setHeader('X-Catalog-Source', 'anilist');
+    res.json(sanitized);
+  } catch (error) {
+    if (pendingSearchRequests.get(cacheKey) === pendingSearch) {
+      pendingSearchRequests.delete(cacheKey);
+    }
+    // The last good answer outranks the curated fallback; the failure itself
+    // is never cached.
+    if (staleResults) {
+      console.warn(`AniList search unavailable; using cached results: ${error.message}`);
+      res.setHeader('X-Catalog-Source', 'anilist');
+      return res.json(staleResults);
+    }
+    console.warn('AniList search unavailable; using local catalog fallback.');
+    const results = searchAnimeLocal(ANIME_DB, query).map(mapLocalAnimeToAniList);
+    res.setHeader('X-Catalog-Source', 'local');
+    res.json(deduplicateMediaList(results));
+  }
 
 });
 
@@ -1500,6 +1940,7 @@ app.get('/api/genre/:genre', async (req, res) => {
 
   if (ADULT_GENRES.has(genre.toLowerCase())) {
 
+    res.setHeader('X-Catalog-Source', 'curated');
     return res.json([]);
 
   }
@@ -1510,7 +1951,9 @@ app.get('/api/genre/:genre', async (req, res) => {
     ? req.query.type
     : null;
 
-  res.json(await getGenreCatalog(genre, typeKey));
+  const { data, source } = await getGenreCatalog(genre, typeKey);
+  res.setHeader('X-Catalog-Source', source);
+  return res.json(data);
 
 });
 
@@ -1575,6 +2018,18 @@ app.get('/api/anime/:id', async (req, res) => {
   if (animeId < 1 || animeId > 2147483647) {
     return res.status(400).json({ message: "Anime ID is out of valid range." });
   }
+
+  // Fresh cache hit: the same conventions as the search cache — re-inserted
+  // on access so hot titles age out last, and answered as AniList data.
+  const cacheKey = String(animeId);
+  const cached = detailCache.get(cacheKey);
+  if (cached && Date.now() < cached.expiresAt) {
+    detailCache.delete(cacheKey);
+    detailCache.set(cacheKey, cached);
+    res.setHeader('X-Catalog-Source', 'anilist');
+    return res.json(cached.data);
+  }
+  const staleDetail = cached ? cached.data : null;
 
   const graphqlQuery = `
     query ($id: Int) {
@@ -1687,40 +2142,47 @@ app.get('/api/anime/:id', async (req, res) => {
     }
   `;
 
-  try {
-    const response = await axios.post(
-      ANILIST_GRAPHQL_URL,
-      {
-        query: graphqlQuery,
-        variables: { id: animeId }
-      },
-      {
-        headers: { "Content-Type": "application/json" },
-        timeout: 15000
-      }
-    );
+  // Single-flight: concurrent views of the same title share one upstream call.
+  let pendingDetail = pendingDetailRequests.get(cacheKey);
+  if (!pendingDetail) {
+    pendingDetail = (async () => {
+      const response = await axios.post(
+        ANILIST_GRAPHQL_URL,
+        {
+          query: graphqlQuery,
+          variables: { id: animeId }
+        },
+        {
+          headers: { "Content-Type": "application/json" },
+          timeout: 15000
+        }
+      );
 
-    if (response.data.errors) {
-      console.error("❌ AniList GraphQL Error:", response.data.errors);
-      // Degraded mode: a curated entry keeps the detail page usable during an
-      // AniList incident; unknown IDs keep the verified error contract.
-      const curated = buildCuratedAnimeDetail(animeId);
-      if (curated) {
-        console.warn(`AniList returned errors; serving curated details for ID ${animeId}.`);
-        res.setHeader('X-Catalog-Source', 'curated');
-        return res.status(200).json(curated);
+      if (response.data.errors) {
+        const error = new Error(response.data.errors.map(entry => entry.message).join('; '));
+        error.graphQLErrors = response.data.errors;
+        throw error;
       }
-      return res.status(500).json({
-        message: "AniList returned an error."
-      });
+
+      return safe(response, 'data.data.Media', null);
+    })();
+    pendingDetailRequests.set(cacheKey, pendingDetail);
+  }
+
+  try {
+    const anime = await pendingDetail;
+    if (pendingDetailRequests.get(cacheKey) === pendingDetail) {
+      pendingDetailRequests.delete(cacheKey);
     }
 
-    const anime = safe(response, 'data.data.Media', null);
     if (!anime) {
-      // Fall back to curated catalog if available
+      // AniList definitively answered "no such media": that is not a failure,
+      // so it is neither masked by stale data nor cached.
       const curated = buildCuratedAnimeDetail(animeId);
       if (curated) {
         console.warn(`AniList returned no entry; serving curated details for ID ${animeId}.`);
+        curated.anilistId = curated.id;
+        curated.contentKind = 'anime';
         res.setHeader('X-Catalog-Source', 'curated');
         return res.status(200).json(curated);
       }
@@ -1744,23 +2206,52 @@ app.get('/api/anime/:id', async (req, res) => {
       }
     }
 
+    anime.anilistId = anime.id;
+    anime.contentKind = 'anime';
+    boundedCacheSet(
+      detailCache,
+      cacheKey,
+      { data: anime, expiresAt: Date.now() + CATALOG_CACHE_TTL_MS },
+      DETAIL_CACHE_LIMIT
+    );
     res.setHeader('X-Catalog-Source', 'anilist');
     res.json(anime);
 
   } catch (error) {
-    console.error("❌ AniList API Error");
-    if (error.response) {
-      console.error("Status:", error.response.status);
+    if (pendingDetailRequests.get(cacheKey) === pendingDetail) {
+      pendingDetailRequests.delete(cacheKey);
+    }
+    if (error.graphQLErrors) {
+      console.error("❌ AniList GraphQL Error:", error.graphQLErrors);
     } else {
-      console.error("Message:", error.message);
+      console.error("❌ AniList API Error");
+      if (error.response) {
+        console.error("Status:", error.response.status);
+      } else {
+        console.error("Message:", error.message);
+      }
+    }
+    // The last good detail outranks the curated fallback; the failure itself
+    // is never cached, so the next view retries AniList.
+    if (staleDetail) {
+      console.warn(`AniList detail refresh failed; serving cached details for ID ${animeId}.`);
+      res.setHeader('X-Catalog-Source', 'anilist');
+      return res.json(staleDetail);
     }
     // Degraded mode: a curated entry keeps the detail page usable while
     // AniList is down; unknown IDs keep the verified error contract.
     const curated = buildCuratedAnimeDetail(animeId);
     if (curated) {
       console.warn(`AniList unavailable; serving curated details for ID ${animeId}.`);
+      curated.anilistId = curated.id;
+      curated.contentKind = 'anime';
       res.setHeader('X-Catalog-Source', 'curated');
       return res.status(200).json(curated);
+    }
+    if (error.graphQLErrors) {
+      return res.status(500).json({
+        message: "AniList returned an error."
+      });
     }
     res.status(500).json({
       message: "Could not connect to AniList API."

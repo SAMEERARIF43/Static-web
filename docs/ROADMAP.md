@@ -11,17 +11,21 @@
 - Guest-local watchlist; Supabase-backed cloud watchlist for signed-in users with consent-based migration.
 - Supabase email/password authentication with self-service, server-verified account deletion.
 - SEO (canonical/OG/Twitter/JSON-LD/robots/sitemap), legal pages, security headers, CORS allowlist, SRI on the CDN script.
-- Tests (`npm test`), lint (`npm run lint`), CI for `main`/`master`.
+- Tests (`npm test`), lint (`npm run lint`), CI on every push and pull request without branch filters.
 - Documentation baseline in `docs/` (this set) plus a corrected README.
 - Product/architecture decisions recorded 2026-10-05 (`docs/PRD.md` §7), and the authenticated account-deletion test coverage restored.
+- **Reading Lists v1 complete locally (2026-10-20):** guest manga/manhwa/manhua list management, chapter progress, filtering/sorting/summary, Continue Reading, recovery and responsive keyboard-oriented UI; cloud synchronization remains deferred.
+- **UI/UX refresh complete locally (2026-10-20):** shared visual tokens, stronger surfaces and empty/error states, consistent comic search controls, always-available card save affordances, and a dismissible/scroll-locked mobile navigation drawer. Manual viewport/keyboard QA is complete; screen-reader review and live-service verification remain open.
 
 ## NEXT — approved direction
 
 1. ~~**Unify the catalog on one canonical ID**~~ — **DONE 2026-10-06** (TASKS Phase 1): AniList IDs everywhere, live-backed trending/genre/movies/series/popular, curated layer demoted to curation + offline fallback, TV Series filtered to TV, genre filtering consistent across pages.
-2. **Extend tests**: deterministic fixtures for the AniList-dependent tests, then the untested endpoints and failure paths (TASKS P6.2–P6.6). The authenticated deletion coverage called for in P6.1 is **done** (2026-10-05).
-3. **Harden the API**: rate limiting + CSP **DONE 2026-10-07 (Phase 2)**; still open: caching for search/detail and honest failure states in the UI (TASKS P5.x).
+2. **Extend tests**: deterministic AniList fixtures, failure-path coverage, and practical behavioral replacement of brittle client assertions are **DONE** (TASKS P6.2–P6.6). Intentional CSS, VM-harness, and negative cloud-watchlist invariant guards remain. The authenticated deletion coverage called for in P6.1 is **done** (2026-10-05).
+3. **Harden the API**: rate limiting + CSP **DONE 2026-10-07 (Phase 2)**; search/detail caching **DONE 2026-10-14 (P5.2)**; P5.3 failure-state implementation, dedicated browser coverage, and independent read-only acceptance are **DONE**.
 4. **Extend the watch system** in dependency order: episode identity → progress/history schema → playback-oriented Continue Watching, with Favorites as the early independent piece (TASKS P4.x). The current title-level Continue Watching shelf is implemented; playback/history are not.
 5. **Deployment readiness**: pin Node 24.x LTS, verify the Supabase environment, split development/production projects, choose the managed PaaS, and handle the service-role secret (TASKS P8.1–P8.4).
+
+6. **Reading Lists v1** — **DONE locally 2026-10-20**. The browser-local comic reading-list domain and UI are implemented and verified with deterministic Node/Playwright checks. Live service compatibility, cloud sync, and manual accessibility review remain outside this batch.
 
 Favorites, Watch History, playback-oriented Continue Watching, and Episode-level progress are **approved but not implemented**. The current Continue Watching shelf is title-level only. Admin is **deferred** (`docs/TASKS.md` P3.4).
 

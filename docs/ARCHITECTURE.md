@@ -38,6 +38,7 @@
 - The server exposes **one origin**: static assets from `public/`, a templated `index.html`, SEO files, and JSON APIs under `/api/*`.
 - The frontend never renders server-side; `index.html` is a single document with 8 page sections toggled by `script.js` (`navigateToPage()`), plus client-side URL routing (`?page=`, `?q=`, `?id=`, `?catalogPage=`).
 - All catalog traffic goes through the server — the browser never calls AniList directly.
+- Anime routes remain backward-compatible; manga/manhwa/manhua use an isolated AniList MANGA adapter and content-aware cache keys.
 - All user-data traffic (auth, watchlist rows) goes **browser → Supabase** using the public anon key; only account deletion is server-mediated.
 
 ## 3. Request/API flow (CURRENT)
@@ -49,8 +50,8 @@
 | Movies / TV Series | Browser → `GET /api/movies` or `GET /api/series` → AniList `format_in` query → merge → re-filter to the page's own format group → JSON |
 | Genre filter | Browser → `GET /api/genre/:genre` (Series adds `?type=series`) → AniList genre query (or curated matches for a genre AniList does not define) → merge → re-filter → JSON |
 | Popular | Browser → `GET /api/popular` → cache hit (≤10 min) or AniList top-50 → `catalog-utils` merge with local curation → cached in memory → JSON |
-| Search | Browser → `GET /api/search?q=` → AniList (10 results) → dedupe + description sanitisation → JSON; on failure → local `search-utils` fallback mapped to the AniList shape |
-| Detail | Browser → `GET /api/anime/:id` → AniList Media (staff, characters, relations, recommendations, trailer) → sanitised description → JSON |
+| Search | Browser → `GET /api/search?q=` → cache hit (≤10 min) or AniList (10 results) → dedupe + description sanitisation → cached in memory → JSON; on failure → last good answer (stale cache) → local `search-utils` fallback mapped to the AniList shape |
+| Detail | Browser → `GET /api/anime/:id` → cache hit (≤10 min) or AniList Media (staff, characters, relations, recommendations, trailer) → sanitised description → cached in memory → JSON; on failure → last good detail (stale cache) → curated fallback |
 | SEO | Browser fetches `/robots.txt`, `/sitemap.xml` (crawlers); `script.js` updates title/meta/canonical/JSON-LD per page |
 
 ## 4. Authentication flow (CURRENT)
@@ -95,6 +96,7 @@
 - **Secrets:** anon key is public by design; service-role key is server-only and never returned by any endpoint (`/api/config` whitelists exactly two keys).
 - **Untrusted data:** AniList descriptions are tag-stripped server-side; client escapes text into HTML (including quotes) and restricts image URLs to HTTPS.
 - **Account deletion:** only the token-verified user can be deleted; the request body is ignored for targeting.
+- **Content boundary:** manga records are not served by anime-only routes and are not persisted into the anime watchlist. Reading-list persistence is a later milestone.
 
 ## 9. Architectural problems (CURRENT — recorded, not fixed)
 

@@ -48,7 +48,7 @@ Emoji-prefixed logs (`❌`, `🔎`, `✅`, `🚀`) and `console.warn`/`console.e
 | Main catalog sections | Trending, Popular, Movies, Series, and filtered Popular results render a section-level alert with a **Try again** button instead of leaving skeleton cards on screen |
 | Search autocomplete | Aborts stale requests; on failure shows "Suggestions unavailable. Press Enter to search." |
 | Detail page | Full-page loading text → content; **error state** "Failed to load anime details." with "Back to Home" |
-| Watchlist | Unreadable local data is logged and treated as empty; cloud load failure → toast "Could not load your cloud watchlist…"; toggle failure → toast "Could not update your watchlist…" |
+| Watchlist | Unreadable local data is logged and treated as empty; cloud load failure → toast "Could not load your cloud watchlist…" **plus** an inline "Unable to load your watchlist." error with a **Try again** button that re-runs the load (the button disables while retrying; a repeated failure re-renders the same single error state); toggle failure → toast "Could not update your watchlist…" |
 | Auth | Modal error region (live) shows provider or configuration messages; deletion failures use `alert()`; migration failures dispatch an error toast |
 | Toast | Text-only messages, auto-dismiss after 3 s, single element |
 | SEO/site-config | `legal.js` failure only logs to console |
@@ -59,6 +59,7 @@ Emoji-prefixed logs (`❌`, `🔎`, `✅`, `🚀`) and `console.warn`/`console.e
 | --- | --- |
 | Main catalog loaders | Fixed: failures now render a retryable section-level alert |
 | `refreshCatalogPage()` | Fixed for upstream failures; invalid 400 filters still reset safely |
+| Genre filter list (`loadCatalogGenreOptions`) | Fixed 2026-10-14 (P5.3): a failed `/api/genres` load was silent — the Popular-page multi-select just stayed empty. It now shows a disabled "Genre list unavailable" placeholder option, toasts the failure, and retries automatically on the next page visit (a `data-genres-loaded` flag records success, so the placeholder can never block the retry) |
 | `legal.js` (contact/DMCA) | Falls back to the "not configured" text silently |
 | `updatePageSeo()` schema injection | No failure path; runs inline |
 

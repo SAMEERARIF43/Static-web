@@ -27,6 +27,7 @@
 | `TEST_PORT` | optional | tests | Port for the spawned test server (default `3001`) |
 | `TRUST_PROXY` | optional; set behind a reverse proxy | server | Positive integer count of trusted proxy hops for client IP/rate-limit handling; unset when no trusted proxy is present |
 | `ANILIST_GRAPHQL_URL` | optional | server | AniList GraphQL endpoint override for tests or controlled environments; production public endpoints must use HTTPS |
+| `CATALOG_CACHE_TTL_MS` | optional; test override | tests | In-memory cache TTL in milliseconds for the catalog lists, `/api/search` and `/api/anime/:id` (default `600000` = 10 min); lets tests reach cache-expiry and stale-fallback paths. Must be a finite, non-negative number, otherwise the server refuses to start |
 | `JUSTWATCH_REGION` | optional | server → browser via `/api/site-config` | Availability-link region slug; defaults to `us` |
 
 `GET /api/health` is an unauthenticated, no-store liveness endpoint; it returns a small status response and performs no external service checks.

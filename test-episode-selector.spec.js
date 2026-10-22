@@ -195,4 +195,21 @@ test.describe('Episode Selector', () => {
 
     await expect(page.locator('.episode-search-input')).not.toBeVisible({ timeout: 10000 });
   });
+
+  test('clicking outside the episode selector closes episode search', async ({ page }) => {
+    await page.fill('#hero-search-input', 'Jujutsu Kaisen');
+    await page.keyboard.press('Enter');
+
+    await expect(page.locator('#page-search')).toHaveClass(/active/, { timeout: 30000 });
+    await page.waitForSelector('#search-results-grid .anime-card', { timeout: 30000 });
+    await page.locator('#search-results-grid .anime-card .card-title').first().click();
+    await expect(page.locator('.detail-title')).toBeVisible({ timeout: 15000 });
+
+    await page.locator('.detail-title').click();
+    await page.locator('.episode-selector-search').click();
+    await expect(page.locator('.episode-search-input')).toBeVisible({ timeout: 10000 });
+
+    await page.locator('.detail-title').click();
+    await expect(page.locator('.episode-search-input')).not.toBeVisible({ timeout: 10000 });
+  });
 });

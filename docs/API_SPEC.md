@@ -23,11 +23,14 @@
 | GET | `/api/movies` | Anime films (live) | AniList `format_in: [MOVIE]` + curated | none | 10-min in-memory |
 | GET | `/api/series` | TV series (live) | AniList `format_in: [TV, TV_SHORT]` + curated | none | 10-min in-memory |
 | GET | `/api/browse?…` | Strict browse backing the Popular page + **Load more**: `genre`, `year` (1960…current+1), `season`, `format` (TV/MOVIE/OVA/ONA/SPECIAL), `status` (RELEASING/FINISHED/NOT_YET_RELEASED), `minScore` 0–100, `sort` (MediaSort enums), `page` 1–50, `perPage` ≤30; repeated params rejected | AniList filtered page → curated fallback | none | 5-min in-memory (≤100, single-flight) | ⚪ |
-| GET | `/api/search?q=` | Title search (10 results); 1-100 characters, empty or control-character query → **400** | AniList → curated fallback | none | ⚫ ⚪ |
+| GET | `/api/search?q=` | Title search (10 results); 1-100 characters, empty or control-character query → **400** | AniList → curated fallback | none | 10-min in-memory (single-flight, ≤100) | ⚪ |
 | GET | `/api/genre/:genre` | Genre filter (optional `?type=series\|movies`) | AniList genre query → curated fallback | none | 10-min in-memory (≤30 genres) |
 | GET | `/api/detail/:id` | **Retired** — permanent redirect to `/api/anime/:id` | — | none | n/a | 🟡 |
 | GET | `/api/genres` | Genre list (adult genres excluded) | AniList `GenreCollection` + curated | none | 10-min in-memory | 🟡 |
-| GET | `/api/anime/:id` | Detail by **AniList** id (staff, characters, relations, recommendations, trailer); a curated entry answers (HTTP **200**) when AniList is down, labelled `X-Catalog-Source: curated` instead of `anilist` | AniList → curated fallback | none | ⚫ ⚪ |
+| GET | `/api/anime/:id` | Detail by **AniList** id (staff, characters, relations, recommendations, trailer); a curated entry answers (HTTP **200**) when AniList is down, labelled `X-Catalog-Source: curated` instead of `anilist` | AniList → curated fallback | none | 10-min in-memory (single-flight, ≤100) | ⚪ |
+| GET | `/api/manga`, `/api/manhwa`, `/api/manhua` | AniList MANGA discovery with optional query, pagination, and sorting | AniList | none | 5-min bounded in-memory |
+| GET | `/api/manga/search`, `/api/manhwa/search`, `/api/manhua/search` | Content-specific AniList MANGA search | AniList | none | 5-min bounded in-memory |
+| GET | `/api/manga/:id`, `/api/manhwa/:id`, `/api/manhua/:id` | Content-specific normalized manga detail | AniList | none | 5-min bounded in-memory |
 | POST | `/api/anime/search` | **Retired** — returns 404 | — | — | — | — |
 
 Global middleware: CORS allowlist (`CORS_ORIGINS`; foreign origins → **403**; in production the list is validated at boot — see `docs/ENVIRONMENT.md` §3), security headers including CSP, `express.json({ limit: '16kb' })`, rate limits, and a JSON error handler.
@@ -108,7 +111,7 @@ Those security headers apply to **every** response, including the JSON 404 for u
 - **Parameters:** `q` — required, trimmed, 1–100 characters; otherwise **400** `{ message: 'Enter an anime name of 1 to 100 characters.' }`.
 - **Response:** up to 10 AniList results (deduped, descriptions sanitised). On GraphQL errors or network failure: local matches mapped into the AniList shape.
 - **Timeouts:** 15 s.
-- **Caching:** ⚫ none server-side (the browser caches suggestions for 50 queries).
+- **Caching:** in-memory, 10-minute TTL (`CATALOG_CACHE_TTL_MS`), single-flight, keyed by the lowercased query, max 100 entries. On AniList failure the last good answer for that query is served; with no cache the curated fallback answers. A fallback is never cached, so the next request retries AniList. (The browser also caches suggestions for 50 queries.)
 
 ### `GET /api/genre/:genre`
 - **Parameters:** `genre` — trimmed, 1–50 characters; otherwise **400**. Optional `?type=series|movies` restricts the result to that format group (any other value is ignored).
@@ -153,7 +156,17 @@ Superseded by `GET /api/browse`, which the Popular page had already switched to 
 - **Parameters:** `id` — positive decimal AniList `Int` (1–2,147,483,647); non-numeric or non-integer path values → **400**. IDs above 100,000 are accepted; the former arbitrary cap incorrectly rejected catalog titles such as AniList ID `206949`.
 - **Response:** AniList Media with title, cover, banner, description (sanitised), episodes, status, score, genres, season/year, format, start date, duration, source, country, main studios, 6 staff edges, 6 characters with first Japanese voice actor, YouTube trailer (if any), relations, 6 recommendations.
 - **Errors:** malformed/out-of-range ID → **400**; AniList GraphQL error → **500**; not found → **404**; upstream/network failure → **500** `{ message: 'Could not connect to AniList API.' }`.
-- **Caching:** ⚫ none; called on every detail view and for cloud-watchlist hydration.
+- **Caching:** in-memory, 10-minute TTL (`CATALOG_CACHE_TTL_MS`), single-flight, keyed by the id, max 100 entries; called on every detail view and for cloud-watchlist hydration. On AniList failure the last good detail for that id is served (`X-Catalog-Source: anilist`); with no cache the curated fallback answers (`curated`). A fallback is never cached.
+
+### Manga, manhwa, and manhua discovery
+
+- Routes accept optional `q`, `page` (1–50), `perPage` (1–30), and `sort` (`popularity`, `trending`, `score`, `newest`, `title`). Popularity is the default. Search routes require a non-empty `q` of at most 100 characters.
+- Classification uses only unambiguous origin metadata: JP → manga, KR → manhwa, CN/TW → manhua. Missing or other origins remain unclassified and are not forced into a category route.
+- Normalized fields include `contentType`, `mediaType`, `format`, `chapters`, `volumes`, `author`, `authors`, `staff`, and the preserved `countryOfOrigin`. Unknown chapter/volume totals are `null`, not zero.
+- Pagination headers are `X-Content-Source`, `X-Content-Page`, `X-Content-Per-Page`, and `X-Content-Has-Next`. `X-Content-Total` is included only when the provider total is present, matches the requested page metadata, and no records were discarded. `X-Content-Total-Pages` is included only when the provider `lastPage` is present, consistent with the requested page metadata, and at or below the supported page limit of 50; if the provider has more pages than the application supports, the exact total page count is omitted rather than replaced with 50. Page 50 never advertises a next page, and page 51 is rejected.
+- `trending` maps to AniList `TRENDING_DESC`. This enum and the `countryOfOrigin_in` filter are implementation assumptions that still require a later controlled live AniList compatibility check.
+- No fabricated manga fallback is returned. A stale successful manga response may be reused; otherwise provider failure returns a neutral `502` response.
+- Manga records are not returned by anime-only routes and are not written to the existing anime watchlist.
 
 ### Global error handler
 Returns JSON `{ message }`:
@@ -181,7 +194,7 @@ Needed for features currently absent (see `docs/FEATURES.md`, `docs/WATCH_SYSTEM
 ## 4. Cross-cutting gaps
 
 - **Rate limiting is process-local:** counters reset on restart and are not shared across instances; configure `TRUST_PROXY` to match the actual production proxy topology.
-- **No server-side caching** for `/api/search` and `/api/anime/:id` (the four catalog lists and genre queries are cached for 10 minutes; `/api/browse` for 5 minutes).
+- **Caching is process-local and in-memory:** every cache (catalog lists, browse, suggestions, search, detail) resets on restart and is not shared across instances.
 - **Fixed-size list endpoints** return 20–50 items; `/api/browse` pages 30 titles at a time (`page` 1–50, `perPage` ≤30), but no endpoint supports `offset`.
 - **No API versioning** and no machine-readable schema (OpenAPI) — a candidate for a future `docs/` addition.
 - **Request correlation is minimal:** every response carries an `X-Request-ID` and the shared error handler logs it, but there is no structured request logging — only ad-hoc `console.log`/`console.error`/`console.warn`.

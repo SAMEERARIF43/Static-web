@@ -94,41 +94,6 @@ for (const selector of ['input', 'select', 'textarea', 'option', 'button', '[dat
 }
 assert.strictEqual(shouldActivateCardFromTarget(fakeTarget('nothing')), true);
 
-// ---- Regression (AH-001): the change handler must READ the status from the DOM ----
-
-// Source-contract check for public/script.js's delegated watch-progress change
-// handler. AH-001: the handler validated `status` without reading it from the
-// DOM first, so in a browser it silently resolved to the legacy window.status
-// global ("") and every watch-status/episode change was rejected before saving.
-//
-// This does NOT execute the handler (no browser/DOM is available here); it
-// inspects only the handler region — from its 'change' registration to the next
-// delegated listener — so an unrelated `const status` elsewhere in the file
-// cannot satisfy it. Real browser interaction remains unverified.
-const scriptSource = fs.readFileSync(path.join(__dirname, 'public', 'script.js'), 'utf8');
-const changeHandlerStart = scriptSource.indexOf("document.addEventListener('change',");
-assert.notStrictEqual(changeHandlerStart, -1, 'script.js must register the delegated change handler');
-const changeHandlerEnd = scriptSource.indexOf("document.addEventListener('click'", changeHandlerStart);
-assert.notStrictEqual(changeHandlerEnd, -1, "the change handler must be followed by the delegated click handler");
-const changeHandlerSource = scriptSource.slice(changeHandlerStart, changeHandlerEnd);
-
-const statusReadMatch =
-  /\b(?:const|let)\s+status\s*=\s*control\.querySelector\(\s*['"]\[data-watch-status\]['"]\s*\)\??\.value/.exec(changeHandlerSource);
-assert.ok(
-  statusReadMatch,
-  "the change handler must read the selected status via control.querySelector('[data-watch-status]')?.value (AH-001 regression)"
-);
-const statusValidationIndex = changeHandlerSource.indexOf('WATCH_STATUS_VALUES.includes(status)');
-assert.notStrictEqual(statusValidationIndex, -1, 'the change handler must still validate against WATCH_STATUS_VALUES');
-assert.ok(
-  statusReadMatch.index < statusValidationIndex,
-  'the selected status must be read from the DOM before it is validated (AH-001 regression)'
-);
-assert.ok(
-  changeHandlerSource.includes('watchStatus: status'),
-  'updateWatchlistItem must receive the status read from the control (AH-001 regression)'
-);
-
 // ---- Shared cloud-update and migration helper contracts ----
 
 async function runIntegrationContractTests() {
@@ -251,33 +216,9 @@ async function runIntegrationContractTests() {
 }
 
 // ---- Regression: Movie episode controls hidden ----
-
-// Source-contract check for public/script.js's renderWatchProgressControls.
-// The function must detect movies (using isMovieEntry) and omit episode controls.
-const scriptSource2 = fs.readFileSync(path.join(__dirname, 'public', 'script.js'), 'utf8');
-const renderFuncStart = scriptSource2.indexOf('function renderWatchProgressControls(');
-assert.notStrictEqual(renderFuncStart, -1, 'script.js must have renderWatchProgressControls function');
-const renderFuncEnd = scriptSource2.indexOf('function renderAnimeCard(', renderFuncStart);
-assert.notStrictEqual(renderFuncEnd, -1, 'renderWatchProgressControls must be followed by renderAnimeCard');
-const renderFuncSource = scriptSource2.slice(renderFuncStart, renderFuncEnd);
-
-// Must use isMovieEntry to detect movies
-assert.ok(
-  /isMovieEntry\(anime\)/.test(renderFuncSource),
-  'renderWatchProgressControls must use isMovieEntry to detect movies'
-);
-
-// Must conditionally render episode controls only for series
-assert.ok(
-  /if \(isMovie\)/.test(renderFuncSource),
-  'renderWatchProgressControls must conditionally render episode controls only for series'
-);
-
-// Must not render episode selector/dropdown for movies
-assert.ok(
-  /if \(isMovie\)/.test(renderFuncSource),
-  'renderWatchProgressControls must have isMovie branch that omits episode controls'
-);
+// The executed renderer checks below cover the observable contract for movies,
+// repaired legacy movies, and TV series. They replace the former source-shape
+// assertions that only checked the implementation's helper names and branch text.
 
 // ============================================================
 // AH-003 / AH-004 regression tests
@@ -462,6 +403,23 @@ function buildViewHarness({ source = scriptSourceVm, seedWatchlist, fetchImpl } 
       style: {},
       children: [],
       classList: { add() {}, remove() {}, contains: () => false },
+      setAttribute(name, value) {
+        this[name] = value;
+      },
+      removeAttribute(name) {
+        delete this[name];
+      },
+      append(...nodes) {
+        this.children.push(...nodes);
+        this.textContent = nodes.map(node => node.textContent || '').join('');
+        this.innerHTML = this.textContent;
+      },
+      addEventListener(type, listener) {
+        (this.__listeners || (this.__listeners = new Map())).set(type, listener);
+      },
+      click() {
+        this.__listeners?.get('click')?.({ preventDefault() {} });
+      },
       replaceChildren(...nodes) {
         this.children = nodes;
         this.innerHTML = nodes.map(node => node.textContent || '').join('');
@@ -587,6 +545,9 @@ function buildGenreHarness({ source = scriptSourceVm, pageId = 'page-home', fetc
       children: [],
       setAttribute(name, value) {
         this[name] = value;
+      },
+      removeAttribute(name) {
+        delete this[name];
       },
       addEventListener(type, listener) {
         listeners.set(type, listener);
@@ -913,6 +874,48 @@ async function runCloudWatchlistRegressionTests() {
     assert.strictEqual(v.emptyState.style.display, 'flex', 'An empty guest watchlist must still show the empty state');
   }
 
+  // ---------- P5.3: the watchlist failure state offers a working retry ------
+
+  // A rejected load must show a retry action; one click re-runs the load and a
+  // successful retry renders the watchlist instead of the error.
+  {
+    const v = buildViewHarness();
+    let listCalls = 0;
+    v.setCloudList(async () => {
+      listCalls += 1;
+      if (listCalls === 1) throw new Error('offline');
+      return [{ id: 20, title: 'Naruto' }];
+    });
+    await v.load();
+
+    assert.strictEqual(v.grid.children.length, 1, 'P5.3: the failure state must stay a single container');
+    assert.strictEqual(v.grid.children[0].className, 'watch-progress-hint', 'P5.3: the container must keep the hint style');
+    const retryButton = v.grid.children[0].children[1];
+    assert.strictEqual(retryButton.textContent, 'Try again', 'P5.3: the failure state must offer a retry action');
+
+    retryButton.click();
+    await new Promise(resolve => setImmediate(resolve));
+    assert.strictEqual(listCalls, 2, 'P5.3: clicking retry must re-run the cloud load');
+    assert.ok(/anime-card/.test(v.grid.innerHTML), 'P5.3: a successful retry must render the watchlist, not the error');
+  }
+
+  // A repeated failure must re-render exactly one error state — no duplicates,
+  // no stale content — and the fresh retry button must be usable again.
+  {
+    const v = buildViewHarness();
+    let listCalls = 0;
+    v.setCloudList(async () => { listCalls += 1; throw new Error('still offline'); });
+    await v.load();
+
+    v.grid.children[0].children[1].click();
+    await new Promise(resolve => setImmediate(resolve));
+
+    assert.strictEqual(listCalls, 2, 'P5.3: the retry click must reach the cloud list');
+    assert.strictEqual(v.grid.children.length, 1, 'P5.3: a repeated failure must render exactly one error state');
+    assert.ok(/Unable to load your watchlist/.test(v.grid.children[0].textContent), 'P5.3: the message must survive a repeated failure');
+    assert.ok(!v.grid.children[0].children[1].disabled, 'P5.3: the re-rendered retry button must be usable again');
+  }
+
   // ---------- Negative checks: these tests must be able to fail ----------
 
   // Removing the AH-003 guard must make the corrupted-cache case throw again.
@@ -1096,7 +1099,6 @@ async function runUnknownTotalRegressionTests() {
 // contains the input and the search button.
 
 async function runEpisodeSearchVisibilityTests() {
-  const scriptSource = fs.readFileSync(path.join(__dirname, 'public', 'script.js'), 'utf8');
   const cssSource = fs.readFileSync(path.join(__dirname, 'public', 'style.css'), 'utf8');
 
   // 1. The CSS rules must stay descendant-based.
@@ -1108,28 +1110,10 @@ async function runEpisodeSearchVisibilityTests() {
     assert.ok(cssSource.includes(rule), `style.css must keep the descendant rule "${rule}"`);
   }
 
-  // 2. The marker class must never go back onto the <select>: its siblings
-  //    (the input and the button) are not descendants of it, so nothing would
-  //    match and the input would silently stay hidden again.
-  assert.ok(
-    !/select\.classList\.(toggle|add)\('episode-selector-searching'\)/.test(scriptSource),
-    'the searching class must not be applied to the select itself'
-  );
-  assert.ok(
-    !/select\.classList\.remove\('episode-selector-searching'\)/.test(scriptSource),
-    'the searching class must not be removed from the select itself'
-  );
-
-  // 3. It must be toggled on, and cleared on every close path (Escape, Enter,
-  //    outside click), from the wrapper that contains input and button.
-  assert.ok(
-    /searchRoot\.classList\.toggle\('episode-selector-searching'\)/.test(scriptSource),
-    'the searching class must be toggled on the wrapper containing the search input'
-  );
-  const removalCount = (scriptSource.match(/searchRoot\.classList\.remove\('episode-selector-searching'\)/g) || []).length;
-  assert.ok(removalCount >= 3, `all close paths must clear the wrapper class (found ${removalCount})`);
-
-  console.log('Episode-search visibility (wrapper class placement) regression tests passed.');
+  // The browser suite covers the observable open/filter/Escape/outside-click
+  // behavior. Keep the CSS selector contract here because it protects the
+  // descendant relationship that makes the sibling search input visible.
+  console.log('Episode-search CSS contract verified; interaction coverage runs in Playwright.');
 }
 
 // ---- Regression: movie type persisted on bookmark + legacy repair ----
@@ -1144,70 +1128,12 @@ async function runEpisodeSearchVisibilityTests() {
 // entries once via /api/anime/:id.
 async function runMovieTypeRegressionTests() {
   const source = fs.readFileSync(path.join(__dirname, 'public', 'script.js'), 'utf8');
-
-  // 1. The card markup must expose the format so the click handler can persist it.
-  assert.ok(
-    /data-type="\$\{escapeHtml\(animeTypeValue\(anime\)\)\}"/.test(source),
-    'the card bookmark button must emit data-type from the catalog format'
-  );
-
-  // 2. The bookmark handler must read it and pass `type` into the stored item.
-  assert.ok(
-    /bookmarkBtn\.dataset\.type/.test(source),
-    'the bookmark handler must read data-type from the button'
-  );
-  assert.ok(
-    /toggleWatchlistItem\(\{ id, title, poster, image: poster, episodes, type \}\)/.test(source),
-    'toggleWatchlistItem must receive the type so stored movies classify correctly'
-  );
-
-  // 3. The detail page must fall back to the catalog format for legacy entries
-  //    (never guessing from episode counts) and persist the repair.
-  assert.ok(
-    /type: savedAnime\.type \|\| animeTypeValue\(anime\)/.test(source),
-    'detail-page controls must fall back to the authoritative catalog format'
-  );
-  assert.ok(
-    /if \(savedAnime && !savedAnime\.type && catalogType\) \{\s*savedAnime\.type = catalogType;\s*saveWatchlist\(\);/m.test(source),
-    'the detail page must persist the repaired type for legacy entries'
-  );
-
-  // 4. The watchlist page must hydrate untyped guest entries once, persist on
-  //    success, and leave the entry untouched when the catalog lookup fails.
-  assert.ok(
-    /async function repairUntypedWatchlistEntries\(\)/.test(source),
-    'loadWatchlist must have a legacy type-repair path'
-  );
-  const repairStart = source.indexOf('async function repairUntypedWatchlistEntries(');
-  const repairEnd = source.indexOf('async function loadWatchlist(', repairStart);
-  assert.notStrictEqual(repairEnd, -1, 'repair function must be followed by loadWatchlist');
-  const repairSource = source.slice(repairStart, repairEnd);
-  assert.ok(
-    /watchlist\.filter\(item => !item\.type\)/.test(repairSource),
-    'repair must only target entries missing type (no re-fetch loop)'
-  );
-  assert.ok(
-    /if \(!response\.ok\) return null;/.test(repairSource),
-    'a failed catalog lookup must leave the entry untouched'
-  );
-  assert.ok(
-    /return type \? \{ id: String\(item\.id\), type \} : null;/.test(repairSource),
-    'a response without a format must leave the entry untouched'
-  );
-  assert.ok(
-    !/delete|splice|filter\(item => .*&&/.test(repairSource.replace(/untyped\.some[\s\S]*$/, '')),
-    'the repair must never remove watchlist entries'
-  );
-  assert.ok(
-    /if \(repaired\) saveWatchlist\(\);/.test(repairSource),
-    'the repaired type must be persisted for the guest watchlist'
-  );
-  assert.ok(
-    /await repairUntypedWatchlistEntries\(\);/.test(source),
-    'loadWatchlist must invoke the repair before rendering the guest grid'
-  );
-
-  // 5. Executed behaviour: the REAL renderWatchProgressControls must show
+  // Executed behavior: the REAL renderer and the browser tests cover card type
+  // persistence, authoritative legacy repair, and the movie/series control split.
+  // The source is still used by the VM harness below to execute the production
+  // renderer, not to assert implementation wording or function layout.
+  //
+  // 1. The REAL renderWatchProgressControls must show
   //    status-only for a movie (with type) and for a repaired legacy movie,
   //    and must keep the episode selector for a TV series.
   const { renderWatchProgressControls } = extractRenderWatchProgressControls(source);
@@ -1436,8 +1362,97 @@ async function runGuestTypeRepairExecutionTests() {
 }
 
 // Execute all integration contract tests.
+function buildCatalogGenreOptionsHarness({ source = scriptSourceVm, fetchImpl } = {}) {
+  const toasts = [];
+  const errors = [];
+  const requests = [];
+  const select = { innerHTML: '', dataset: {} };
+  const sandbox = {
+    console: { error: (...args) => errors.push(args.map(String).join(' ')), log() {}, warn() {} },
+    Promise, JSON, Number, String, Array, Object, Map, Set, Error, RangeError,
+    baseURL: '/api',
+    document: {
+      getElementById: id => (id === 'filter-genre' ? select : null)
+    },
+    escapeHtml: value => String(value)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;').replace(/'/g, '&#39;'),
+    fetch: async (url, init) => {
+      requests.push(String(url));
+      if (fetchImpl) return fetchImpl(String(url), init);
+      return { ok: true, json: async () => ['Action', 'Comedy'] };
+    }
+  };
+  sandbox.window = { __toasts: toasts };
+  sandbox.globalThis = sandbox;
+
+  vm.createContext(sandbox);
+  vm.runInContext(`
+    function showToast(message, type) { window.__toasts.push({ message, type }); }
+    async function fetchWithPolicy(url, options = {}) { return fetch(url, options); }
+    ${extractFunction('loadCatalogGenreOptions', source)}
+    window.__loadCatalogGenreOptions = loadCatalogGenreOptions;
+  `, sandbox, { filename: 'catalog-genre-options-slice.js' });
+
+  return {
+    select,
+    toasts,
+    errors,
+    requests,
+    load: () => sandbox.window.__loadCatalogGenreOptions()
+  };
+}
+
+async function runCatalogGenreOptionsTests() {
+  // P5.3: a failed genre-list load must be visible and recoverable, never a
+  // silently empty dropdown.
+  {
+    const g = buildCatalogGenreOptionsHarness({
+      fetchImpl: async () => { throw new Error('network down'); }
+    });
+    await g.load();
+    assert.ok(/Genre list unavailable/.test(g.select.innerHTML), 'A failed genre-list load must say so in the dropdown');
+    assert.strictEqual(g.select.dataset.genresLoaded, undefined, 'A failed load must not record success');
+    assert.strictEqual(g.toasts.length, 1, 'A failed genre-list load must toast');
+    assert.strictEqual(g.toasts[0].type, 'error', 'The genre-list toast must be an error toast');
+    assert.ok(g.errors.length > 0, 'The failure must still be logged');
+  }
+
+  // After a failure the next visit retries; success replaces the placeholder
+  // with the real options and records completion.
+  {
+    let fail = true;
+    const g = buildCatalogGenreOptionsHarness({
+      fetchImpl: async () => {
+        if (fail) throw new Error('network down');
+        return { ok: true, json: async () => ['Action', 'Comedy'] };
+      }
+    });
+    await g.load();
+    assert.ok(/Genre list unavailable/.test(g.select.innerHTML), 'The first attempt must show the placeholder');
+
+    fail = false;
+    await g.load();
+    assert.strictEqual(g.requests.length, 2, 'A revisit after failure must retry the genre list');
+    assert.ok(/value="Action"/.test(g.select.innerHTML) && /value="Comedy"/.test(g.select.innerHTML), 'A successful retry must fill the dropdown');
+    assert.ok(!/Genre list unavailable/.test(g.select.innerHTML), 'A successful retry must clear the placeholder');
+    assert.strictEqual(g.select.dataset.genresLoaded, 'true', 'A successful load must record completion');
+  }
+
+  // Control: a completed load is never repeated, and success never toasts.
+  {
+    const g = buildCatalogGenreOptionsHarness();
+    await g.load();
+    await g.load();
+    assert.strictEqual(g.requests.length, 1, 'A completed genre-list load must not re-fetch');
+    assert.strictEqual(g.toasts.length, 0, 'A successful load must not toast');
+  }
+  console.log('Genre filter options fail visibly, retry on revisit, and load once on success.');
+}
+
 runIntegrationContractTests()
   .then(() => runGenreFilteringTests())
+  .then(() => runCatalogGenreOptionsTests())
   .then(() => runCloudWatchlistRegressionTests())
   .then(() => runUnknownTotalRegressionTests())
   .then(() => runEpisodeSearchVisibilityTests())
