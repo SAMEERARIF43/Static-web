@@ -3211,6 +3211,15 @@ document.addEventListener('DOMContentLoaded', () => {
       syncGalleryUrl();
       setupGalleryControls();
       loadGallery();
+    } else if (navName === 'admin') {
+      updatePageSeo({
+        title: 'Admin Panel — AnimeHub',
+        description: 'Content moderation, DMCA requests, and system health.',
+        url: '/?page=admin'
+      });
+      setupAdminKeyControls();
+      setupAdminActions();
+      loadAdminDashboard();
     } else if (COMIC_KINDS.includes(navName)) {
       const label = COMIC_LABELS[navName];
       updatePageSeo({
@@ -3776,6 +3785,291 @@ document.addEventListener('DOMContentLoaded', () => {
     if (retryBtn) retryBtn.addEventListener('click', loadGallery);
   }
 
+  // ============================================================
+  // ADMIN & MODERATION (Phase 6)
+  // ============================================================
+
+  const ADMIN_KEY_STORAGE_KEY = 'anime-hub-admin-key';
+  let adminUnlocked = false;
+  let _adminReports = [];
+  let _adminDmcaRequests = [];
+  let adminStats = null;
+
+  function adminHeaders() {
+    const headers = {};
+    const key = localStorage.getItem(ADMIN_KEY_STORAGE_KEY);
+    if (key) headers['X-Admin-Key'] = key;
+    return headers;
+  }
+
+  function isAdminUnlocked() {
+    return adminUnlocked;
+  }
+
+  function setAdminUnlocked(unlockState) {
+    adminUnlocked = unlockState;
+    const panel = document.getElementById('admin-locked');
+    const unlockedEl = document.getElementById('admin-unlocked');
+    if (panel) panel.hidden = unlockState;
+    if (unlockedEl) unlockedEl.hidden = !unlockState;
+    if (unlockState) {
+      loadAdminDashboard();
+    }
+  }
+
+  function setupAdminKeyControls() {
+    const submitBtn = document.getElementById('admin-key-submit');
+    const clearBtn = document.getElementById('admin-key-clear');
+    const keyInput = document.getElementById('admin-key-input');
+    if (!submitBtn || !clearBtn || !keyInput) return;
+    submitBtn.addEventListener('click', async () => {
+      const key = keyInput.value.trim();
+      if (!key) {
+        showToast('Enter an admin key.', 'error');
+        return;
+      }
+      try {
+        const res = await fetch(`${baseURL}/api/admin/stats`, {
+          headers: { ...adminHeaders(), 'X-Admin-Key': key }
+        });
+        if (res.ok) {
+          localStorage.setItem(ADMIN_KEY_STORAGE_KEY, key);
+          setAdminUnlocked(true);
+          showToast('Admin unlocked.', 'success');
+        } else {
+          showToast('Invalid admin key.', 'error');
+        }
+      } catch (error) {
+        console.error('Admin unlock failed:', error);
+        showToast('Could not verify admin key.', 'error');
+      }
+    });
+    clearBtn.addEventListener('click', () => {
+      localStorage.removeItem(ADMIN_KEY_STORAGE_KEY);
+      setAdminUnlocked(false);
+      keyInput.value = '';
+      showToast('Admin locked.', 'info');
+    });
+    // Restore unlocked state on page load if key is stored
+    if (localStorage.getItem(ADMIN_KEY_STORAGE_KEY)) {
+      setAdminUnlocked(true);
+    }
+  }
+
+  async function loadAdminDashboard() {
+    if (!isAdminUnlocked()) return;
+    await Promise.all([loadAdminReports(), loadAdminDmca(), loadAdminStats()]);
+  }
+
+  async function loadAdminReports() {
+    const tbody = document.getElementById('admin-reports-tbody');
+    const empty = document.getElementById('admin-reports-empty');
+    if (!tbody) return;
+    try {
+      const res = await fetch(`${baseURL}/api/admin/reports`, { headers: adminHeaders() });
+      if (!res.ok) throw new Error(`Reports request failed: ${res.status}`);
+      const data = await res.json();
+      const reports = data.reports || [];
+      if (reports.length === 0) {
+        tbody.replaceChildren();
+        if (empty) empty.hidden = false;
+        return;
+      }
+      if (empty) empty.hidden = true;
+      tbody.replaceChildren(
+        ...reports.map(report => {
+          const tr = document.createElement('tr');
+          tr.innerHTML = `
+            <td>${escapeHtml(report.targetTitle)}</td>
+            <td>${escapeHtml(report.type)}</td>
+            <td>${escapeHtml(report.reason)}</td>
+            <td>${escapeHtml(report.reporter)}</td>
+            <td><span class="status-badge ${report.status}">${escapeHtml(report.status)}</span></td>
+            <td style="text-align:center;">
+              <button type="button" class="btn-admin approve" data-action="approve-report" data-report-id="${escapeHtml(report.id)}">Resolve</button>
+              <button type="button" class="btn-admin dismiss" data-action="dismiss-report" data-report-id="${escapeHtml(report.id)}">Dismiss</button>
+            </td>
+          `;
+          return tr;
+        })
+      );
+    } catch (error) {
+      console.error('Error loading reports:', error);
+    }
+  }
+
+  async function loadAdminDmca() {
+    const tbody = document.getElementById('admin-dmca-tbody');
+    const empty = document.getElementById('admin-dmca-empty');
+    if (!tbody) return;
+    try {
+      const res = await fetch(`${baseURL}/api/admin/dmca`, { headers: adminHeaders() });
+      if (!res.ok) throw new Error(`DMCA request failed: ${res.status}`);
+      const data = await res.json();
+      const requests = data.requests || [];
+      if (requests.length === 0) {
+        tbody.replaceChildren();
+        if (empty) empty.hidden = false;
+        return;
+      }
+      if (empty) empty.hidden = true;
+      tbody.replaceChildren(
+        ...requests.map(req => {
+          const tr = document.createElement('tr');
+          tr.innerHTML = `
+            <td>${escapeHtml(req.artworkTitle)}</td>
+            <td>${escapeHtml(req.claimantName)}</td>
+            <td>${escapeHtml(req.reason)}</td>
+            <td><span class="status-badge ${req.status}">${escapeHtml(req.status)}</span></td>
+            <td style="text-align:center;">
+              ${req.status === 'pending'
+                ? `<button type="button" class="btn-admin approve" data-action="approve-dmca" data-dmca-id="${escapeHtml(req.id)}">Approve</button>
+                   <button type="button" class="btn-admin dismiss" data-action="dismiss-dmca" data-dmca-id="${escapeHtml(req.id)}">Dismiss</button>`
+                : `<span class="status-badge ${req.status}">${escapeHtml(req.status)}</span>`
+              }
+            </td>
+          `;
+          return tr;
+        })
+      );
+    } catch (error) {
+      console.error('Error loading DMCA requests:', error);
+    }
+  }
+
+  async function loadAdminStats() {
+    try {
+      const res = await fetch(`${baseURL}/api/admin/stats`, { headers: adminHeaders() });
+      if (!res.ok) throw new Error(`Stats request failed: ${res.status}`);
+      adminStats = await res.json();
+      renderAdminStats();
+    } catch (error) {
+      console.error('Error loading admin stats:', error);
+    }
+  }
+
+  function renderAdminStats() {
+    if (!adminStats) return;
+    const mem = adminStats.memory;
+    const mod = adminStats.moderation;
+    const caches = adminStats.caches;
+
+    const el = (id, val) => { const e = document.getElementById(id); if (e) e.textContent = val; };
+    el('admin-stat-uptime', `${adminStats.uptimeSeconds}s`);
+    el('admin-stat-nodever', adminStats.nodeVersion);
+    el('admin-stat-rss', `${mem.rssMB} MB`);
+    el('admin-stat-heap', `${mem.heapUsedMB} MB`);
+
+    // Cache table
+    const cacheTbody = document.getElementById('admin-caches-tbody');
+    if (cacheTbody) {
+      cacheTbody.replaceChildren(
+        ...Object.entries(caches).filter(([k]) => k !== 'total').map(([name, count]) => {
+          const tr = document.createElement('tr');
+          tr.innerHTML = `<td>${escapeHtml(name)}</td><td style="text-align:center;">${count}</td>`;
+          return tr;
+        })
+      );
+    }
+
+    // Moderation table
+    const modTbody = document.getElementById('admin-moderation-tbody');
+    if (modTbody) {
+      modTbody.replaceChildren(
+        ...Object.entries(mod).map(([name, count]) => {
+          const tr = document.createElement('tr');
+          tr.innerHTML = `<td>${escapeHtml(name)}</td><td style="text-align:center;">${count}</td>`;
+          return tr;
+        })
+      );
+    }
+  }
+
+  function setupAdminActions() {
+    document.addEventListener('click', async (event) => {
+      const btn = event.target.closest('.btn-admin');
+      if (!btn) return;
+      const action = btn.dataset.action;
+      const reportId = btn.dataset.reportId;
+      const dmcaId = btn.dataset.dmcaId;
+
+      if (action === 'approve-report' && reportId) {
+        event.preventDefault();
+        await updateReport(reportId, 'resolved');
+        return;
+      }
+      if (action === 'dismiss-report' && reportId) {
+        event.preventDefault();
+        await updateReport(reportId, 'dismissed');
+        return;
+      }
+      if (action === 'approve-dmca' && dmcaId) {
+        event.preventDefault();
+        await updateDmca(dmcaId, 'approved');
+        return;
+      }
+      if (action === 'dismiss-dmca' && dmcaId) {
+        event.preventDefault();
+        await updateDmca(dmcaId, 'dismissed');
+        return;
+      }
+    });
+  }
+
+  function setupAdminTabs() {
+    document.querySelectorAll('.admin-tab-tab').forEach(tab => {
+      tab.addEventListener('click', () => {
+        document.querySelectorAll('.admin-tab-tab').forEach(t => {
+          t.classList.remove('admin-tab-active');
+          t.setAttribute('aria-selected', 'false');
+        });
+        document.querySelectorAll('.admin-tab-panel').forEach(p => {
+          p.classList.remove('admin-tab-active');
+        });
+        tab.classList.add('admin-tab-active');
+        tab.setAttribute('aria-selected', 'true');
+        const panelId = `${tab.id}-panel`;
+        const panel = document.getElementById(panelId);
+        if (panel) panel.classList.add('admin-tab-active');
+      });
+    });
+  }
+  setupAdminTabs();
+
+  async function updateReport(id, status) {
+    try {
+      const res = await fetch(`${baseURL}/api/admin/reports/${id}`, {
+        method: 'POST',
+        headers: { ...adminHeaders(), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status })
+      });
+      if (!res.ok) throw new Error(`Report update failed: ${res.status}`);
+      showToast('Report updated.', 'success');
+      await loadAdminReports();
+      await loadAdminStats();
+    } catch (error) {
+      console.error('Error updating report:', error);
+      showToast('Could not update report.', 'error');
+    }
+  }
+
+  async function updateDmca(id, status) {
+    try {
+      const res = await fetch(`${baseURL}/api/admin/dmca/${id}`, {
+        method: 'POST',
+        headers: { ...adminHeaders(), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status })
+      });
+      if (!res.ok) throw new Error(`DMCA update failed: ${res.status}`);
+      showToast('DMCA request updated.', 'success');
+      await loadAdminDmca();
+      await loadAdminStats();
+    } catch (error) {
+      console.error('Error updating DMCA:', error);
+      showToast('Could not update DMCA request.', 'error');
+    }
+  }
+
   async function loadMovies() {
     renderSkeletonGrid('movies-grid', 6);
     try {
@@ -4173,7 +4467,7 @@ document.addEventListener('DOMContentLoaded', () => {
         url: `/?q=${encodeURIComponent(query)}`
       });
       await performSearch(query);
-    } else if (['home', 'popular', 'movies', 'animated-movies', 'series', 'calendar', 'gallery', 'watchlist', 'reading-list', 'profile', ...COMIC_KINDS].includes(page)) {
+    } else if (['home', 'popular', 'movies', 'animated-movies', 'series', 'calendar', 'gallery', 'admin', 'watchlist', 'reading-list', 'profile', ...COMIC_KINDS].includes(page)) {
       navigateToPage(page, false);
     } else {
       if (page) window.history.replaceState({}, '', '/');

@@ -788,6 +788,141 @@
       </div>
     </div>
 
+    <!-- ===== PAGE: ADMIN & MODERATION (Phase 6) ===== -->
+    <div class="page" id="page-admin">
+      <div class="section-container" style="padding-top: 120px; min-height: 60vh;">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:20px;flex-wrap:wrap;">
+          <div>
+            <h1 style="font-family: var(--font-head); font-size: 2rem; margin-bottom: 4px;">Admin Panel</h1>
+            <p style="font-size: 14px; color: var(--text-muted); margin: 0;">Content moderation, DMCA requests, and system health.</p>
+          </div>
+          <div style="display:flex;gap:8px;align-items:center;">
+            <input type="password" id="admin-key-input" placeholder="Admin key" aria-label="Admin key" style="padding:6px 10px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface-2);color:var(--text);font:inherit;min-width:160px;">
+            <button type="button" id="admin-key-submit" class="cta-btn primary-btn" style="padding:6px 14px;font-size:14px;">Unlock Admin</button>
+            <button type="button" id="admin-key-clear" class="cta-btn secondary-btn" style="padding:6px 14px;font-size:14px;">Lock</button>
+          </div>
+        </div>
+
+        <div id="admin-locked" style="display:none;padding:40px;text-align:center;color:var(--text-muted);">
+          <div style="font-size:48px;margin-bottom:16px;">🔒</div>
+          <h2 style="font-size:1.5rem;margin-bottom:8px;">Admin area locked</h2>
+          <p>Enter the admin key to unlock moderation tools.</p>
+        </div>
+
+        <div id="admin-unlocked" style="display:none;">
+          <div class="admin-tabs" style="display:flex;gap:8px;margin-bottom:20px;border-bottom:1px solid var(--border);">
+            <button type="button" class="admin-tab-tab admin-tab-active" id="admin-tab-dmca" role="tab" aria-selected="true">DMCA &amp; Art Takedowns</button>
+            <button type="button" class="admin-tab-tab" id="admin-tab-reviews" role="tab" aria-selected="false">Review &amp; Comment Moderation</button>
+            <button type="button" class="admin-tab-tab" id="admin-tab-stats" role="tab" aria-selected="false">System Health &amp; Cache</button>
+          </div>
+
+          <!-- DMCA & Art Takedowns Tab -->
+          <div id="admin-tab-dmca-panel" class="admin-tab-panel" style="display:block;">
+            <div class="admin-section">
+              <h2 style="font-size:1.2rem;margin-bottom:12px;color:var(--text);">DMCA Takedown Requests</h2>
+              <div class="admin-table-wrap">
+                <table class="admin-table">
+                  <thead>
+                    <tr>
+                      <th style="text-align:left;">Title</th>
+                      <th style="text-align:left;">Claimant</th>
+                      <th style="text-align:left;">Reason</th>
+                      <th style="text-align:left;">Status</th>
+                      <th style="text-align:center;">Action</th>
+                    </tr>
+                  </thead>
+                  <tbody id="admin-dmca-tbody"></tbody>
+                </table>
+              </div>
+              <div id="admin-dmca-empty" style="display:none;padding:24px;text-align:center;color:var(--text-muted);">No DMCA requests.</div>
+            </div>
+          </div>
+
+          <!-- Review & Comment Moderation Tab -->
+          <div id="admin-tab-reviews-panel" class="admin-tab-panel" style="display:none;">
+            <div class="admin-section">
+              <h2 style="font-size:1.2rem;margin-bottom:12px;color:var(--text);">Flagged Reviews &amp; Comments</h2>
+              <div class="admin-table-wrap">
+                <table class="admin-table">
+                  <thead>
+                    <tr>
+                      <th style="text-align:left;">Title</th>
+                      <th style="text-align:left;">Type</th>
+                      <th style="text-align:left;">Reason</th>
+                      <th style="text-align:left;">Reporter</th>
+                      <th style="text-align:left;">Status</th>
+                      <th style="text-align:center;">Action</th>
+                    </tr>
+                  </thead>
+                  <tbody id="admin-reviews-tbody"></tbody>
+                </table>
+              </div>
+              <div id="admin-reviews-empty" style="display:none;padding:24px;text-align:center;color:var(--text-muted);">No flagged reviews or comments.</div>
+            </div>
+          </div>
+
+          <!-- System Health & Cache Statistics Tab -->
+          <div id="admin-tab-stats-panel" class="admin-tab-panel" style="display:none;">
+            <div class="admin-section">
+              <h2 style="font-size:1.2rem;margin-bottom:12px;color:var(--text);">System Health</h2>
+              <div class="admin-stats-grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:16px;">
+                <div class="admin-stat-card">
+                  <div class="admin-stat-label">Uptime</h3>
+                  <div class="admin-stat-value" id="admin-stat-uptime">--</div>
+                </div>
+                <div class="admin-stat-card">
+                  <div class="admin-stat-label">Node Version</h3>
+                  <div class="admin-stat-value" id="admin-stat-nodever">--</div>
+                </div>
+                <div class="admin-stat-card">
+                  <div class="admin-stat-label">Memory (RSS)</h3>
+                  <div class="admin-stat-value" id="admin-stat-rss">--</div>
+                </div>
+                <div class="admin-stat-card">
+                  <div class="admin-stat-label">Heap Used</h3>
+                  <div class="admin-stat-value" id="admin-stat-heap">--</div>
+                </div>
+              </div>
+            </div>
+
+            <div class="admin-section" style="margin-top:24px;">
+              <h2 style="font-size:1.2rem;margin-bottom:12px;color:var(--text);">Cache Status</h2>
+              <div class="admin-table-wrap">
+                <table class="admin-table">
+                  <thead>
+                    <tr>
+                      <th style="text-align:left;">Cache</th>
+                      <th style="text-align:center;">Entries</th>
+                    </tr>
+                  </thead>
+                  <tbody id="admin-caches-tbody"></tbody>
+                </table>
+              </div>
+            </div>
+
+            <div class="admin-section" style="margin-top:24px;">
+              <h2 style="font-size:1.2rem;margin-bottom:12px;color:var(--text);">Moderation Summary</h2>
+              <div class="admin-table-wrap">
+                <table class="admin-table">
+                  <thead>
+                    <tr>
+                      <th style="text-align:left;">Metric</th>
+                      <th style="text-align:center;">Count</th>
+                    </tr>
+                  </thead>
+                  <tbody id="admin-moderation-tbody"></tbody>
+                </table>
+              </div>
+            </div>
+
+            <div style="margin-top:24px;">
+              <button type="button" id="admin-refresh-stats" class="cta-btn secondary-btn" style="padding:8px 16px;font-size:14px;">Refresh Stats</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
   </div><!-- /app -->
 
   <!-- ========== FOOTER ========== -->
@@ -801,6 +936,7 @@
         <a href="terms.html">Terms of Service</a>
         <a href="contact.html">Contact Us</a>
         <a href="dmca.html">Copyright / DMCA</a>
+        <a href="#" data-nav="admin" id="nav-admin" class="admin-link">Admin Panel</a>
       </nav>
     </div>
   </footer>

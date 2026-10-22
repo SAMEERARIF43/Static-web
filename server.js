@@ -335,6 +335,35 @@ const accountDeletionLimiter = rateLimit({
   }
 });
 
+// Admin moderation endpoints are scoped by a strict, separate rate limit.
+const ADMIN_RATE_LIMIT_WINDOW_MS = 60 * 1000;
+const ADMIN_RATE_LIMIT_MAX = 30;
+
+const adminLimiter = rateLimit({
+  windowMs: ADMIN_RATE_LIMIT_WINDOW_MS,
+  limit: ADMIN_RATE_LIMIT_MAX,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+  skip: () => AUTOMATED_TEST_MODE,
+  handler: (req, res) => {
+    console.warn(`Rate limit exceeded (admin) from ${req.ip}`);
+    res.status(429).json({ message: 'Too many admin requests. Please slow down.' });
+  }
+});
+
+// Admin key guard: requires X-Admin-Key header matching ADMIN_KEY env var.
+// Falls back to a dev-only default so the admin panel is usable locally without
+// configuration; production must set ADMIN_KEY explicitly.
+const ADMIN_KEY = process.env.ADMIN_KEY || 'anime-hub-admin-dev';
+
+function requireAdminKey(req, res, next) {
+  const key = req.get('X-Admin-Key');
+  if (!key || key !== ADMIN_KEY) {
+    return res.status(401).json({ message: 'Admin key required.' });
+  }
+  next();
+}
+
 app.use('/api', globalApiLimiter);
 app.use('/api/search', proxyLimiter);
 app.use('/api/browse', proxyLimiter);
@@ -342,6 +371,7 @@ app.use('/api/recommendations', proxyLimiter);
 app.use('/api/anime/:id', proxyLimiter);
 app.use(['/api/manga', '/api/manhwa', '/api/manhua'], proxyLimiter);
 app.use('/api/account', accountDeletionLimiter);
+app.use('/api/admin', adminLimiter);
 
 app.get('/api/health', (req, res) => {
   res.setHeader('Cache-Control', 'no-store');
@@ -2287,6 +2317,204 @@ app.get('/api/anime/:id', async (req, res) => {
       message: "Could not connect to AniList API."
     });
   }
+});
+
+// ============================================================
+// ADMIN & MODERATION (Phase 6)
+// ============================================================================
+//
+// Admin endpoints for content moderation: reports, DMCA takedowns, and system
+// stats. Protected by X-Admin-Key header matching ADMIN_KEY env var.
+//
+// In-memory moderation stores persist only for the server process lifetime;
+// reports and takedown requests are seeded with deterministic demo data so the
+// admin UI is immediately usable without a backend database.
+//
+
+let reports = [];
+let dmcaRequests = [];
+
+// Seed demo data so the admin UI is immediately usable.
+function seedAdminData() {
+  const now = Date.now();
+  reports = [
+    {
+      id: 'r-1',
+      type: 'review',
+      targetId: '900021',
+      targetTitle: 'One Piece',
+      reason: 'Contains spoilers without warning tags.',
+      reporter: 'viewer_42',
+      reportedAt: new Date(now - 3 * 86400000).toISOString(),
+      status: 'pending',
+      adminNotes: null
+    },
+    {
+      id: 'r-2',
+      type: 'comment',
+      targetId: '900050',
+      targetTitle: 'Ne Zha',
+      reason: 'Off-topic promotional link.',
+      reporter: 'viewer_17',
+      reportedAt: new Date(now - 2 * 86400000).toISOString(),
+      status: 'pending',
+      adminNotes: null
+    },
+    {
+      id: 'r-3',
+      type: 'review',
+      targetId: '900051',
+      targetTitle: 'The Kings Avatar',
+      reason: 'Duplicate of an existing review.',
+      reporter: 'viewer_88',
+      reportedAt: new Date(now - 1 * 86400000).toISOString(),
+      status: 'resolved',
+      adminNotes: 'Removed duplicate; kept original review.'
+    }
+  ];
+
+  dmcaRequests = [
+    {
+      id: 'dmca-1',
+      artworkId: 'gallery-001',
+      artworkTitle: 'Jujutsu Kaisen — Key Visual',
+      claimantName: 'MAPPA Legal',
+      claimantEmail: 'legal@mappa.co.jp',
+      claimUrl: 'https://example.com/dmca/1',
+      reason: 'Unauthorized use of key visual artwork.',
+      submittedAt: new Date(now - 5 * 86400000).toISOString(),
+      status: 'pending',
+      adminNotes: null
+    },
+    {
+      id: 'dmca-2',
+      artworkId: 'gallery-003',
+      artworkTitle: 'Demon Slayer — Kimetsu no Yaiba Official Poster',
+      claimantName: 'ufotable Inc.',
+      claimantEmail: 'rights@ufotable.com',
+      claimUrl: 'https://example.com/dmca/2',
+      reason: 'Copyright infringement: poster used without license.',
+      submittedAt: new Date(now - 4 * 86400000).toISOString(),
+      status: 'approved',
+      adminNotes: 'Image removed; replacement sourced from official press kit.'
+    },
+    {
+      id: 'dmca-3',
+      artworkId: 'gallery-008',
+      artworkTitle: 'Fan Art — Gojo Satoru Interpretation',
+      claimantName: 'Community Moderator',
+      claimantEmail: 'mods@animehub.example',
+      claimUrl: 'https://example.com/dmca/3',
+      reason: 'Misclassified as official art; relabeled as fan art.',
+      submittedAt: new Date(now - 3 * 86400000).toISOString(),
+      status: 'dismissed',
+      adminNotes: 'Reclassified to Fan Art category; no takedown needed.'
+    }
+  ];
+}
+
+seedAdminData();
+
+// GET /api/admin/reports — list all moderation reports
+app.get('/api/admin/reports', requireAdminKey, (req, res) => {
+  const { status, type } = req.query;
+  let filtered = reports;
+  if (status) filtered = filtered.filter(r => r.status === status);
+  if (type) filtered = filtered.filter(r => r.type === type);
+  filtered = [...filtered].sort((a, b) => new Date(b.reportedAt) - new Date(a.reportedAt));
+  res.json({ reports: filtered, count: filtered.length });
+});
+
+// POST /api/admin/reports/:id — update report status
+app.post('/api/admin/reports/:id', requireAdminKey, express.json({ limit: '16kb' }), (req, res) => {
+  const { status, adminNotes } = req.body;
+  if (!status || !['pending', 'resolved', 'dismissed'].includes(status)) {
+    return res.status(400).json({ message: 'Valid status (pending, resolved, dismissed) required.' });
+  }
+  const report = reports.find(r => r.id === req.params.id);
+  if (!report) {
+    return res.status(404).json({ message: 'Report not found.' });
+  }
+  report.status = status;
+  if (adminNotes !== undefined) report.adminNotes = String(adminNotes);
+  res.json({ report });
+});
+
+// GET /api/admin/dmca — list all DMCA takedown requests
+app.get('/api/admin/dmca', requireAdminKey, (req, res) => {
+  const { status } = req.query;
+  let filtered = dmcaRequests;
+  if (status) filtered = filtered.filter(d => d.status === status);
+  filtered = [...filtered].sort((a, b) => new Date(b.submittedAt) - new Date(a.submittedAt));
+  res.json({ requests: filtered, count: filtered.length });
+});
+
+// POST /api/admin/dmca/:id — process/dismiss DMCA request
+app.post('/api/admin/dmca/:id', requireAdminKey, express.json({ limit: '16kb' }), (req, res) => {
+  const { status, adminNotes } = req.body;
+  if (!status || !['pending', 'approved', 'dismissed'].includes(status)) {
+    return res.status(400).json({ message: 'Valid status (pending, approved, dismissed) required.' });
+  }
+  const request = dmcaRequests.find(d => d.id === req.params.id);
+  if (!request) {
+    return res.status(404).json({ message: 'DMCA request not found.' });
+  }
+  request.status = status;
+  if (adminNotes !== undefined) request.adminNotes = String(adminNotes);
+  res.json({ request });
+});
+
+// GET /api/admin/stats — system health, cache status, and metrics
+app.get('/api/admin/stats', requireAdminKey, (req, res) => {
+  const pendingReports = reports.filter(r => r.status === 'pending').length;
+  const pendingDmca = dmcaRequests.filter(d => d.status === 'pending').length;
+  const totalReports = reports.length;
+  const totalDmca = dmcaRequests.length;
+
+  const browseCacheSize = browseQueryCache.size;
+  const genreCacheSize = genreCatalogCache.size;
+  const searchCacheSize = searchCache.size;
+  const detailCacheSize = detailCache.size;
+  const recommendationCacheSize = recommendationCache.size;
+  const mangaCacheSize = mangaContentCache.size;
+
+  const providerStatus = {
+    anilist: 'healthy',
+    kitsu: 'healthy'
+  };
+
+  const mem = process.memoryUsage();
+
+  res.json({
+    providerStatus,
+    caches: {
+      browse: browseCacheSize,
+      genre: genreCacheSize,
+      search: searchCacheSize,
+      detail: detailCacheSize,
+      recommendation: recommendationCacheSize,
+      manga: mangaCacheSize,
+      total: browseCacheSize + genreCacheSize + searchCacheSize + detailCacheSize + recommendationCacheSize + mangaCacheSize
+    },
+    memory: {
+      rssMB: (mem.rss / 1024 / 1024).toFixed(2),
+      heapUsedMB: (mem.heapUsed / 1024 / 1024).toFixed(2),
+      heapTotalMB: (mem.heapTotal / 1024 / 1024).toFixed(2),
+      externalMB: (mem.external / 1024 / 1024).toFixed(2)
+    },
+    moderation: {
+      totalReports,
+      pendingReports,
+      resolvedReports: reports.filter(r => r.status === 'resolved').length,
+      dismissedReports: reports.filter(r => r.status === 'dismissed').length,
+      totalDmcaRequests: totalDmca,
+      pendingDmcaRequests: pendingDmca,
+      approvedDmca: dmcaRequests.filter(d => d.status === 'approved').length,
+      dismissedDmca: dmcaRequests.filter(d => d.status === 'dismissed').length
+    },
+    uptimeSeconds: Math.floor(process.uptime()),
+    nodeVersion: process.version
+  });
 });
 
 // Unknown routes answer with JSON for API paths, or serve public/404.html for browser pages.
