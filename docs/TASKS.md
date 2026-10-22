@@ -4,6 +4,33 @@
 > Each task lists its evidence and the decision/blocker that must be resolved first.
 > IDs are stable references for later work; `docs/ROADMAP.md` summarises the same sequence.
 
+## Milestone 2 — Reading Lists v1 — **DONE locally 2026-10-20**
+
+The guest foundation and vanilla UI are implemented without changing anime
+watchlist/authentication/cloud behavior. Local verification uses deterministic
+fixtures and a closed-loopback AniList endpoint; live AniList/Supabase
+compatibility and manual accessibility review remain open.
+
+| Area | Evidence |
+| --- | --- |
+| Storage and contracts | `public/reading-list-utils.js`, `test-reading-list.js`: versioned key, composite identity, strict progress, totals/completion, duplicate/recovery rules, metadata refresh, rollback and anime-key isolation |
+| User experience | `public/index.html`, `public/script.js`, `public/style.css`: add/remove, five statuses, progress, filters, sorting, summary, Continue Reading, recovery/clear states, focus/keyboard/mobile/reduced-motion paths |
+| Browser verification | `test-reading-list.spec.js`: 31 focused desktop cases; fresh full configured suite 475 passed across five Chromium projects |
+| Deferred | Authenticated/cloud synchronization, Supabase schema/RLS, live-service compatibility, manual screen-reader/contrast audit |
+
+## Milestone 3 — UI/UX refresh — **DONE locally 2026-10-20**
+
+The existing vanilla Anime Hub was polished in place. The unrelated `frontend/`
+workspace was inspected read-only as a generic React/Vite registration template
+and was not executed, copied, or modified.
+
+| Area | Evidence |
+| --- | --- |
+| Design patterns adopted | Template-informed neutral card/form surfaces, explicit control grouping, and restrained spacing hierarchy; no template framework, dependency, or asset was imported |
+| Navigation | Mobile drawer scrim, Escape close, focus restoration, and body scroll lock; `test-ui-ux.spec.js` |
+| Visual consistency | Shared surface/border/focus tokens, responsive grid rhythm, comic search select styling, stronger empty/error states, visible card save affordances |
+| Deferred / unverified | Manual visual comparison, screen-reader/contrast-tool review, live AniList/Supabase compatibility |
+
 ## Phase 1 — Architecture / data correctness — **DONE 2026-10-06**
 
 Approved and implemented in one pass (owner greenlit 2026-10-06). `npm test` and `npm run lint` both pass.
@@ -57,8 +84,8 @@ Approved and implemented in one pass (owner greenlit 2026-10-06). `npm test` and
 | ID | Task | Evidence |
 | --- | --- | --- |
 | P5.1 | **DONE 2026-10-07** — rate limiting on the public AniList proxy endpoints | `server.js`: `express-rate-limit` 120/min per client IP on `/api` (only `/api/site-config` and `/api/config` exempt), 60/min on `/api/search` and `/api/anime/:id`, 5 per 15 min on `/api/account`; 429 responses carry the security headers. Verified by `test-security.js` |
-| P5.2 | Add server-side caching for `/api/search` and `/api/anime/:id` | Only `/api/popular` is cached |
-| P5.3 | Add user-visible failure states + retry for Popular/Movies/Series/genre paths | `ERROR_HANDLING.md` §3 silent failures |
+| P5.2 | Add server-side caching for `/api/search` and `/api/anime/:id` | **DONE 2026-10-14** — both routes now use the catalog cache conventions: in-memory 10-minute TTL (`CATALOG_CACHE_TTL_MS`), single-flight, bounded ≤100 entries via `boundedCacheSet`, keyed by the lowercased query / the id. On AniList failure the last good answer is served stale (`X-Catalog-Source: anilist` on detail); a fallback is never cached, so the next request retries AniList. Verified by `test-security.js` (repeat → 1 upstream call, stale-after-TTL, key isolation, fallback-not-cached) |
+| P5.3 | Add user-visible failure states + retry for Popular/Movies/Series/genre paths | **DONE — accepted by the independent read-only audit** — `test-p5-3-browser.spec.js` covers `/api/genres` failure/recovery, URL rehydration, successful genre filtering, plus a real sign-in modal/client flow into authenticated watchlist loading with controlled cloud failure, keyboard retry, loading suppression, successful recovery, and repeated failure across all five configured Chromium projects. The focused regression set passed 155/155 and the complete suite passed 235/235 before acceptance |
 | P5.4 | **DONE 2026-10-07** — Content-Security-Policy (+ HSTS in production) | The generated inline `onerror=` attributes were replaced by a mutation-observer image fallback in `public/script.js`, so `script-src` is `'self' https://cdn.jsdelivr.net` with no `unsafe-inline`. Verified in a browser (Home, detail, search: no console errors, no CSP violations) and by `test-security.js` |
 | P5.5 | Version the API or publish an OpenAPI document | No versioning today |
 | P5.6 | **DONE** — health endpoint | `GET /api/health` → `{ "status": "ok" }` with `Cache-Control: no-store`; unauthenticated and free of external service checks (`docs/ENVIRONMENT.md`) |
@@ -69,10 +96,10 @@ Approved and implemented in one pass (owner greenlit 2026-10-06). `npm test` and
 | --- | --- | --- |
 | P6.1 | **DONE 2026-10-05** — restored the authenticated account-deletion assertions (mock Supabase auth server, token verification, Admin API target = verified user, service-role header checks) | `TESTING.md` §3; an instrumented run shows 8 deletion-related assertions executing |
 | P6.2 | **DONE 2026-10-06** — added coverage for `/api/movies`, `/api/series`, `/api/genre/:genre` (incl. `?type=`, curated-only, unknown and adult genres), `/api/genres`, the retired `/api/detail/:id` and `/api/anime/1`, plus the canonical-ID invariant across every catalog endpoint. The `/api/anime/:id` 400/404/500 and AniList-outage paths are now covered by `test-security.js` (2026-10-07) | `TESTING.md` §2, §4 |
-| P6.3 | Introduce a mocked AniList (fixtures) so search/popular tests are deterministic | Live-API flakiness |
-| P6.4 | Replace brittle `script.js` substring assertions with behavioural tests where practical | Source-matching brittleness |
-| P6.5 | Add failure-path tests (AniList down, 400/413/500 payloads, unknown routes) | **PARTIAL 2026-10-07** — `test-security.js` covers the AniList outage + fallback contract, unknown routes (404 JSON), 400 validation, 429 rate limits and every account-deletion failure code; 413/500 error-middleware payloads are still untested |
-| P6.6 | Decide whether CI should run on the active branches, not only `main`/`master` | `.github/workflows/ci.yml` |
+| P6.3 | Introduce a mocked AniList (fixtures) so search/popular tests are deterministic | **DONE** — `test-fixtures/anilist-mock.js` is consumed by `test-search.js`, `test-security.js`, and `test-manga-api.js`; Node catalog/search tests use deterministic local fixtures rather than live AniList |
+| P6.4 | **DONE — replaced brittle `script.js` assertions with behavioural tests where practical** | Verified behavior covers autocomplete debounce/empty/stale/keyboard flows (`test-search-overlay-escape.spec.js`), search filtering/reset and main-search races (`test-search-cache.spec.js`), safe title rendering and image fallback (`test-search-cache.spec.js`), detail canonical metadata/banner fallback/recommendations and stale recommendation cleanup (`test-detail-race.spec.js`), home/series and Popular/catalog genre-button ARIA transitions, URL synchronization, and retry state (`test-genre-loading.spec.js`), invalid watch-status rejection, movie/series persistence, and guest storage preservation (`test-watch-controls.spec.js`), episode-search outside-click closing (`test-episode-selector.spec.js`), and renderer/movie-type paths (`test-watchlist.js`). Recommendation cards have a poster-card contract; the unused recommendation `banner` field is not a visible banner requirement. Retained CSS token contracts, VM extraction, and negative cloud-watchlist mutation guards are intentional invariants rather than unresolved source-string replacements |
+| P6.5 | Add failure-path tests (AniList down, 400/413/500 payloads, unknown routes) | **DONE — accepted by the independent read-only audit** — `test-security.js` covers the AniList outage + fallback contract, unknown routes (404 JSON), 400 validation, generic 500 error-middleware payloads, 413 payloads, 429 rate limits and every account-deletion failure code |
+| P6.6 | Decide whether CI should run on the active branches, not only `main`/`master` | **DONE — CI is intentionally branch-unrestricted:** `.github/workflows/ci.yml` triggers on every `push` and `pull_request`, with no branch filters; the current CI behavior is documented in `docs/TESTING.md` §6 |
 
 ## Phase 7 — Admin (only if P3.4 approves)
 

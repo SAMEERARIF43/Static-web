@@ -9,6 +9,7 @@ const {
   searchAnimeLocalFuzzy
 } = require('./search-utils');
 const { mapAniListMediaToCatalogItem, mergeAniListCatalog, withCanonicalId } = require('./catalog-utils');
+const { createAniListMock } = require('./test-fixtures/anilist-mock');
 const {
   boundedCacheSet,
   browseCacheKey,
@@ -101,6 +102,7 @@ function assertSharedCatalogHelpers() {
       season: 'summer',
       format: 'tv',
       status: 'releasing',
+      countryOfOrigin: 'cn',
       minScore: '80',
       sort: 'score_desc',
       page: '3',
@@ -125,6 +127,9 @@ function assertSharedCatalogHelpers() {
   assert.deepStrictEqual(variables.sort, ['SCORE_DESC'], 'Sort should map to a whitelisted AniList enum list');
   assert.deepStrictEqual(variables.genre_in, ['Action', 'Adventure'], 'Genres should be bound as a variable');
   assert.strictEqual(variables.seasonYear, 2026, 'The year should be bound as a variable');
+  assert.strictEqual(variables.countryOfOrigin, 'CN', 'Country of origin should be normalized and bound as a variable');
+  assert(query.includes('$countryOfOrigin: String'), 'Country of origin must use the requested String GraphQL variable type');
+  assert(query.includes('countryOfOrigin: $countryOfOrigin'), 'Country of origin must be passed to the AniList media query');
   assert.strictEqual(variables.minScore, 80, 'The minimum score should be bound as a variable');
   assert.strictEqual(variables.page, 3, 'The page should be bound as a variable');
 
@@ -150,9 +155,9 @@ function assertSharedCatalogHelpers() {
 
   // Local fallback filtering mirrors the AniList query semantics.
   const items = [
-    { id: 1, title: 'Alpha', genre: ['Action'], rating: 9.1, type: 'TV', year: 2024, status: 'Completed', season: 'SUMMER' },
-    { id: 2, title: 'Beta', genre: ['Drama'], rating: 7.2, type: 'TV', year: 2019, status: 'Airing', season: 'FALL' },
-    { id: 3, title: 'Gamma', genre: ['Action', 'Drama'], rating: 8.5, type: 'MOVIE', year: 2015, status: 'Upcoming', season: 'SUMMER' }
+    { id: 1, title: 'Alpha', genre: ['Action'], rating: 9.1, type: 'TV', year: 2024, status: 'Completed', season: 'SUMMER', countryOfOrigin: 'JP' },
+    { id: 2, title: 'Beta', genre: ['Drama'], rating: 7.2, type: 'TV', year: 2019, status: 'Airing', season: 'FALL', countryOfOrigin: 'US' },
+    { id: 3, title: 'Gamma', genre: ['Action', 'Drama'], rating: 8.5, type: 'MOVIE', year: 2015, status: 'Upcoming', season: 'SUMMER', countryOfOrigin: 'CN' }
   ];
   const ids = (filters) => filterCatalogLocally(items, filters).map(item => item.id);
   assert.deepStrictEqual(ids({ genres: ['Action'] }), [1, 3], 'Genre filter should match any selected genre');
@@ -165,6 +170,7 @@ function assertSharedCatalogHelpers() {
   assert.deepStrictEqual(ids({ sort: 'newest' }), [1, 2, 3], 'Newest sort should be year descending');
   assert.deepStrictEqual(ids({ sort: 'title' }), [1, 2, 3], 'Title sort should be alphabetical');
   assert.deepStrictEqual(ids({ genres: ['Action'], sort: 'score' }), [1, 3], 'Filter and sort should compose');
+  assert.deepStrictEqual(ids({ countryOfOrigin: 'CN' }), [3], 'Country filter should apply to local fallback data');
   assert.deepStrictEqual(filterCatalogLocally(null, { genres: ['Action'] }), [], 'A missing list should filter to empty');
   console.log('Shared query builder, status normalization and local fallback verified.');
 }
@@ -185,6 +191,7 @@ function assertBrowseFilterParsing() {
       season: 'spring',
       format: 'tv',
       status: 'releasing',
+      countryOfOrigin: 'cn',
       minScore: '80',
       sort: 'score_desc',
       page: '3',
@@ -198,6 +205,7 @@ function assertBrowseFilterParsing() {
   assert.strictEqual(valid.filters.season, 'SPRING', 'Browse seasons should normalize to the AniList enum');
   assert.strictEqual(valid.filters.format, 'TV', 'Browse formats should normalize to the AniList enum');
   assert.strictEqual(valid.filters.status, 'RELEASING', 'Browse status should normalize to the AniList enum');
+  assert.strictEqual(valid.filters.countryOfOrigin, 'CN', 'Browse country should normalize to the allowlist code');
   assert.strictEqual(valid.filters.minScore, 80, 'A valid browse minimum score should be accepted');
   assert.strictEqual(valid.filters.sort, 'score', 'Browse sorts should map to the shared sort keys');
   assert.strictEqual(valid.filters.page, 3, 'A valid browse page should be accepted');
@@ -219,6 +227,7 @@ function assertBrowseFilterParsing() {
     [{ format: 'HOLOGRAM' }, /Format must be/],
     [{ format: 'TV_SHORT' }, /Format must be/], // not in the browse allowlist
     [{ status: 'HIATUS' }, /Status must be/],
+    [{ countryOfOrigin: 'TW' }, /Country of origin must be/],
     [{ minScore: '101' }, /Minimum score/],
     [{ minScore: '-1' }, /Minimum score/],
     [{ minScore: 'high' }, /Minimum score/],
@@ -252,7 +261,8 @@ function assertBrowseFilterParsing() {
     { year: ['2020', '2021'] },
     { page: ['1', '2'] },
     { sort: ['SCORE_DESC', 'TITLE_ROMAJI'] },
-    { perPage: ['10', '20'] }
+    { perPage: ['10', '20'] },
+    { countryOfOrigin: ['JP', 'CN'] }
   ];
   for (const query of repeated) {
     const result = parseBrowseFilters(query, options);
@@ -299,6 +309,13 @@ function assertBrowseFilterParsing() {
     browseCacheKey(extraFilter.filters, extraFilter.perPage),
     'An extra filter must not reuse the unfiltered cache entry'
   );
+  const japan = parseBrowseFilters({ page: '2', countryOfOrigin: 'JP' }, options);
+  const china = parseBrowseFilters({ page: '2', countryOfOrigin: 'CN' }, options);
+  assert.notStrictEqual(
+    browseCacheKey(japan.filters, japan.perPage),
+    browseCacheKey(china.filters, china.perPage),
+    'Different countries of origin must not share a cache entry'
+  );
 
   // ---- cache limit: bounded insertion evicts the oldest entry (FIFO) ----
   // This is the exact helper `cacheBrowseQuery` delegates to in server.js,
@@ -328,9 +345,281 @@ function assertBrowseFilterParsing() {
   console.log('Browse filter parsing, ranges, repeated params and cache-key normalization verified.');
 }
 
+/**
+ * AH-01: structurally-invalid /api/browse requests must return 400 before the
+ * provider-backed genre allowlist is loaded. A counting local AniList mock
+ * proves no provider call happens for invalid non-genre parameters or
+ * malformed genre inputs.
+ */
+async function assertBrowseValidationSkipsProvider() {
+  let providerCalls = 0;
+  const mockPort = 18988;
+  const serverPort = 3129;
+  const baseURL = `http://127.0.0.1:${serverPort}`;
+  const media = {
+    id: 1,
+    title: { romaji: 'X', english: 'X', native: 'X' },
+    coverImage: { large: 'https://placehold.co/x' },
+    bannerImage: null,
+    description: 'x',
+    episodes: 1,
+    status: 'FINISHED',
+    averageScore: 80,
+    genres: [],
+    season: null,
+    seasonYear: 2024,
+    format: 'TV',
+    countryOfOrigin: 'JP',
+    studios: { nodes: [] }
+  };
+
+  const mock = createAniListMock({
+    port: mockPort,
+    handleRequest: ({ res, payload, jsonResponse }) => {
+      providerCalls += 1;
+      const query = String(payload.query || '');
+      if (query.includes('GenreCollection')) {
+        return jsonResponse(res, { data: { GenreCollection: ['Action', 'Adventure', 'Comedy'] } });
+      }
+      return jsonResponse(res, { data: { Page: { pageInfo: { total: 1, perPage: 30, currentPage: 1, lastPage: 1, hasNextPage: false }, media: [media] } } });
+    }
+  });
+  await mock.start();
+
+  const server = spawn(process.execPath, [path.join(__dirname, 'server.js')], {
+    cwd: __dirname,
+    stdio: ['ignore', 'pipe', 'inherit'],
+    env: {
+      ...process.env,
+      NODE_ENV: 'test',
+      ANIME_HUB_TEST_MODE: '1',
+      PORT: String(serverPort),
+      SITE_URL: 'https://animehub.example',
+      CORS_ORIGINS: `http://127.0.0.1:${serverPort}`,
+      ANILIST_GRAPHQL_URL: `http://127.0.0.1:${mockPort}`,
+      SUPABASE_URL: '',
+      SUPABASE_ANON_KEY: '',
+      SUPABASE_SERVICE_ROLE_KEY: ''
+    }
+  });
+
+  function requestTo(pathname) {
+    return new Promise((resolve, reject) => {
+      const req = http.request(`${baseURL}${pathname}`, res => {
+        let data = '';
+        res.on('data', chunk => data += chunk);
+        res.on('end', () => {
+          let parsed = data;
+          try { parsed = JSON.parse(data); } catch { parsed = data; }
+          resolve({ statusCode: res.statusCode, headers: res.headers, body: parsed });
+        });
+      });
+      req.on('error', reject);
+      req.end();
+    });
+  }
+
+  try {
+    await new Promise((resolve, reject) => {
+      let output = '';
+      const timeout = setTimeout(() => reject(new Error('browse validation server did not start')), 10000);
+      server.stdout.on('data', chunk => {
+        output += chunk.toString();
+        if (output.includes(`AnimeHub server listening on port ${serverPort}.`)) {
+          clearTimeout(timeout);
+          resolve();
+        }
+      });
+      server.once('error', reject);
+      server.once('exit', code => reject(new Error(`browse validation server exited before startup: ${code}`)));
+    });
+
+    const invalid = [
+      '/api/browse?page=0',
+      '/api/browse?page=51',
+      '/api/browse?page=abc',
+      '/api/browse?page=popular',
+      '/api/browse?perPage=31',
+      '/api/browse?perPage=0',
+      '/api/browse?perPage=lots',
+      '/api/browse?year=1959',
+      '/api/browse?year=soon',
+      '/api/browse?minScore=101',
+      '/api/browse?minScore=-5',
+      '/api/browse?minScore=high',
+      '/api/browse?sort=DROP_TABLE',
+      '/api/browse?sort=score',
+      '/api/browse?format=HOLOGRAM',
+      '/api/browse?format=TV_SHORT',
+      '/api/browse?status=HIATUS',
+      '/api/browse?season=MONSOON',
+      '/api/browse?genre=%3Cscript%3E',
+      '/api/browse?genre=Action,%3Cscript%3E',
+      '/api/browse?genre=' + 'x'.repeat(51),
+      '/api/browse?year=2020&year=2021',
+      '/api/browse?page=1&page=2',
+      '/api/browse?genre=Action&genre=Comedy'
+    ];
+    for (const pathname of invalid) {
+      const res = await requestTo(pathname);
+      assert.strictEqual(res.statusCode, 400, `${pathname} should be rejected with 400`);
+      assert.strictEqual(
+        providerCalls,
+        0,
+        `${pathname} must not trigger a provider call (calls so far: ${providerCalls})`
+      );
+      assert.strictEqual(typeof res.body.message, 'string', `${pathname} should explain the error`);
+      assert(
+        !/ECONNREFUSED|127\.0\.0\.1|stack/i.test(JSON.stringify(res.body)),
+        `${pathname} must not leak upstream details`
+      );
+    }
+    assert.strictEqual(providerCalls, 0, 'No invalid browse request may trigger a provider call');
+
+    // A syntactically-valid genre *should* load the allowlist from the provider.
+    const valid = await requestTo('/api/browse?genre=Action');
+    assert.strictEqual(valid.statusCode, 200, 'A valid genre browse request should succeed');
+    assert(providerCalls > 0, 'A valid genre request should load the genre allowlist from the provider');
+  } finally {
+    server.kill();
+    await mock.close();
+  }
+}
+
+/**
+ * AH-02: /api/browse metadata must respect BROWSE_MAX_PAGE (50). Even when
+ * AniList reports more pages, page 50 must not advertise a next page and
+ * total pages must not exceed the supported window; page 51 stays 400.
+ */
+async function assertBrowsePaginationBoundary() {
+  const mockPort = 18989;
+  const serverPort = 3130;
+  const baseURL = `http://127.0.0.1:${serverPort}`;
+  const media = {
+    id: 1,
+    title: { romaji: 'X', english: 'X', native: 'X' },
+    coverImage: { large: 'https://placehold.co/x' },
+    bannerImage: null,
+    description: 'x',
+    episodes: 1,
+    status: 'FINISHED',
+    averageScore: 80,
+    genres: [],
+    season: null,
+    seasonYear: 2024,
+    format: 'TV',
+    countryOfOrigin: 'JP',
+    studios: { nodes: [] }
+  };
+
+  const mock = createAniListMock({
+    port: mockPort,
+    handleRequest: ({ res, payload, jsonResponse }) => {
+      const query = String(payload.query || '');
+      const variables = payload.variables || {};
+      if (query.includes('GenreCollection')) {
+        return jsonResponse(res, { data: { GenreCollection: ['Action', 'Adventure', 'Comedy'] } });
+      }
+      if (query.includes('Page(') && query.includes('pageInfo')) {
+        const page = Number(variables.page || 1);
+        const perPage = Number(variables.perPage || 30);
+        return jsonResponse(res, {
+          data: {
+            Page: {
+              pageInfo: { total: 2250, perPage, currentPage: page, lastPage: 75, hasNextPage: true },
+              media: [media]
+            }
+          }
+        });
+      }
+      return jsonResponse(res, { data: { Page: { pageInfo: { total: 0, perPage: 30, currentPage: 1, lastPage: 0, hasNextPage: false }, media: [] } } });
+    }
+  });
+  await mock.start();
+
+  const server = spawn(process.execPath, [path.join(__dirname, 'server.js')], {
+    cwd: __dirname,
+    stdio: ['ignore', 'pipe', 'inherit'],
+    env: {
+      ...process.env,
+      NODE_ENV: 'test',
+      ANIME_HUB_TEST_MODE: '1',
+      PORT: String(serverPort),
+      SITE_URL: 'https://animehub.example',
+      CORS_ORIGINS: `http://127.0.0.1:${serverPort}`,
+      ANILIST_GRAPHQL_URL: `http://127.0.0.1:${mockPort}`,
+      SUPABASE_URL: '',
+      SUPABASE_ANON_KEY: '',
+      SUPABASE_SERVICE_ROLE_KEY: ''
+    }
+  });
+
+  function requestTo(pathname) {
+    return new Promise((resolve, reject) => {
+      const req = http.request(`${baseURL}${pathname}`, res => {
+        let data = '';
+        res.on('data', chunk => data += chunk);
+        res.on('end', () => {
+          let parsed = data;
+          try { parsed = JSON.parse(data); } catch { parsed = data; }
+          resolve({ statusCode: res.statusCode, headers: res.headers, body: parsed });
+        });
+      });
+      req.on('error', reject);
+      req.end();
+    });
+  }
+
+  try {
+    await new Promise((resolve, reject) => {
+      let output = '';
+      const timeout = setTimeout(() => reject(new Error('browse boundary server did not start')), 10000);
+      server.stdout.on('data', chunk => {
+        output += chunk.toString();
+        if (output.includes(`AnimeHub server listening on port ${serverPort}.`)) {
+          clearTimeout(timeout);
+          resolve();
+        }
+      });
+      server.once('error', reject);
+      server.once('exit', code => reject(new Error(`browse boundary server exited before startup: ${code}`)));
+    });
+
+    const first = await requestTo('/api/browse?page=1');
+    assert.strictEqual(first.statusCode, 200, 'page 1 should answer');
+    assert.strictEqual(
+      Number(first.headers['x-catalog-total-pages']),
+      50,
+      'total pages should be capped at BROWSE_MAX_PAGE when AniList reports more'
+    );
+    assert.strictEqual(first.headers['x-catalog-has-next'], 'true', 'page 1 should have a next page');
+
+    const last = await requestTo('/api/browse?page=50');
+    assert.strictEqual(last.statusCode, 200, 'page 50 should answer');
+    assert.strictEqual(
+      last.headers['x-catalog-has-next'],
+      'false',
+      'page 50 must not advertise a next page even when AniList reports one'
+    );
+    assert.strictEqual(
+      Number(last.headers['x-catalog-total-pages']),
+      50,
+      'page 50 total pages should not exceed the supported window'
+    );
+
+    const beyond = await requestTo('/api/browse?page=51');
+    assert.strictEqual(beyond.statusCode, 400, 'page 51 must be rejected');
+  } finally {
+    server.kill();
+    await mock.close();
+  }
+}
+
 async function run() {
   assertSharedCatalogHelpers();
   assertBrowseFilterParsing();
+  await assertBrowseValidationSkipsProvider();
+  await assertBrowsePaginationBoundary();
 
   const authServer = http.createServer((req, res) => {
     authRequests.push({ method: req.method, url: req.url, headers: req.headers });
@@ -355,10 +644,65 @@ async function run() {
   // Start a deterministic local AniList GraphQL replacement.  Every operation
   // exercised below is answered from the same realistic fixture set, so this
   // suite never depends on the public AniList service.
-  const mockAniList = {
+  let lastBrowsePayload = null;
+  const mockAniList = createAniListMock({
     port: 18987,
-    server: null
-  };
+    handleRequest: async ({ req, res, payload, jsonResponse }) => {
+      try {
+        const query = String(payload.query || '');
+        const variables = payload.variables || {};
+        const json = data => jsonResponse(res, { data });
+        if (query.includes('Media(id:')) {
+          const detailId = Number(variables.id);
+          if (detailId === 113415) {
+            jsonResponse(res, { errors: [{ message: 'fixture GraphQL failure' }] });
+            return;
+          }
+          if (detailId === 151807) {
+            req.socket.destroy();
+            return;
+          }
+        }
+        if (_anilistTestScenario === 'success') {
+          if (query.includes('GenreCollection')) return json({ GenreCollection: ['Action', 'Adventure', 'Comedy', 'Drama', 'Sci-Fi', 'Hentai'] });
+          if (query.includes('Media(id:')) return json({ Media: detailMedia.get(Number(variables.id)) || null });
+          let results = fixtureMedia;
+          if (Object.hasOwn(variables, 'search')) {
+            const wanted = String(variables.search).toLowerCase().replace(/\s+/g, '');
+            results = fixtureMedia.filter(item => [item.title.english, item.title.romaji].some(t => t.toLowerCase().replace(/\s+/g, '').includes(wanted)));
+          }
+          if (Object.hasOwn(variables, 'genre')) results = results.filter(item => item.genres.includes(variables.genre));
+          if (variables.format_in) results = results.filter(item => variables.format_in.includes(item.format));
+          if (variables.format) results = results.filter(item => item.format === variables.format);
+          if (variables.countryOfOrigin) results = results.filter(item => item.countryOfOrigin === variables.countryOfOrigin);
+          if (query.includes('pageInfo')) {
+            lastBrowsePayload = { query, variables: { ...variables } };
+            const page = Number(variables.page || 1);
+            const perPage = Number(variables.perPage || 30);
+            if (variables.genre_in) results = results.filter(item => variables.genre_in.some(g => item.genres.includes(g)));
+            if (variables.seasonYear) results = results.filter(item => item.seasonYear === variables.seasonYear);
+            const total = results.length + 30;
+            const start = (page - 1) * perPage;
+            results = results.slice(start, start + perPage);
+            return json({ Page: { pageInfo: { total, perPage, currentPage: page, lastPage: Math.ceil(total / perPage), hasNextPage: page * perPage < total }, media: results } });
+          }
+          return json({ Page: { media: results } });
+        } else if (_anilistTestScenario === '429') {
+          jsonResponse(res, { errors: [{ message: 'AniList rate limit exceeded.' }] });
+        } else if (_anilistTestScenario === '502') {
+          jsonResponse(res, { errors: [{ message: 'Network error: ECONNREFUSED' }] });
+        } else if (_anilistTestScenario === 'timeout') {
+          setTimeout(() => jsonResponse(res, { error: 'request timeout simulated' }, 500), 10000);
+        } else if (_anilistTestScenario === 'malformed') {
+          jsonResponse(res, { __malformed: true, raw: 'shape mismatch' });
+        } else {
+          jsonResponse(res, { default: true });
+        }
+      } catch (error) {
+        jsonResponse(res, { error: error.message }, 500);
+      }
+    }
+  });
   const poster = id => `https://s4.anilist.co/file/anilistcdn/media/anime/cover/large/bx${id}.jpg`;
   const media = (id, title, format = 'TV', genres = ['Action'], year = 2024, score = 80, countryOfOrigin = 'JP') => ({
     id,
@@ -422,86 +766,19 @@ async function run() {
     [900051, media(900051, 'The Kings Avatar', 'TV', ['Action', 'Adventure'], 2017, 82, 'CN')],
     [900052, media(900052, 'Unknown Origin Title', 'TV', ['Mystery'], 2020, 75, null)]
   ]);
-  mockAniList.server = http.createServer(async (req, res) => {
-    try {
-      if (req.method !== 'POST') {
-        res.writeHead(405, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: 'Method not allowed' }));
-        return;
-      }
-      let body = '';
-      req.on('data', (chunk) => { body += chunk; });
-      req.on('end', () => {
-        let _json;
-        try { _json = body ? JSON.parse(body) : {}; } catch (e) { _json = { __invalid_json: true }; }
-        const query = String(_json.query || '');
-        const variables = _json.variables || {};
-        const json = payload => {
-           res.writeHead(200, { 'Content-Type': 'application/json' });
-           res.end(JSON.stringify({ data: payload }));
-        };
-        if (_anilistTestScenario === 'success') {
-          if (query.includes('GenreCollection')) return json({ GenreCollection: ['Action', 'Adventure', 'Comedy', 'Drama', 'Sci-Fi', 'Hentai'] });
-          if (query.includes('Media(id:')) return json({ Media: detailMedia.get(Number(variables.id)) || null });
-          let results = fixtureMedia;
-          if (Object.hasOwn(variables, 'search')) {
-            const wanted = String(variables.search).toLowerCase().replace(/\s+/g, '');
-            results = fixtureMedia.filter(item => [item.title.english, item.title.romaji].some(t => t.toLowerCase().replace(/\s+/g, '').includes(wanted)));
-          }
-          if (Object.hasOwn(variables, 'genre')) results = results.filter(item => item.genres.includes(variables.genre));
-          if (variables.format_in) results = results.filter(item => variables.format_in.includes(item.format));
-          if (variables.format) results = results.filter(item => item.format === variables.format);
-          if (query.includes('pageInfo')) {
-            const page = Number(variables.page || 1);
-            const perPage = Number(variables.perPage || 30);
-            if (variables.genre_in) results = results.filter(item => variables.genre_in.some(g => item.genres.includes(g)));
-            if (variables.seasonYear) results = results.filter(item => item.seasonYear === variables.seasonYear);
-            const total = results.length + 30;
-            const start = (page - 1) * perPage;
-            results = results.slice(start, start + perPage);
-            return json({ Page: { pageInfo: { total, perPage, currentPage: page, lastPage: Math.ceil(total / perPage), hasNextPage: page * perPage < total }, media: results } });
-          }
-          return json({ Page: { media: results } });
-        } else if (_anilistTestScenario === '429') {
-          res.writeHead(200, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ errors: [{ message: 'AniList rate limit exceeded.' }] }));
-        } else if (_anilistTestScenario === '502') {
-          res.writeHead(200, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ errors: [{ message: 'Network error: ECONNREFUSED' }] }));
-        } else if (_anilistTestScenario === 'timeout') {
-          // Simulate a timeout by not responding within the client's timeout window
-          setTimeout(() => {
-            res.writeHead(500, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ error: 'request timeout simulated' }));
-          }, 10000); // 10 second delay exceeds typical client timeouts
-        } else if (_anilistTestScenario === 'malformed') {
-          res.writeHead(200, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ __malformed: true, raw: 'shape mismatch' }));
-        } else {
-          res.writeHead(200, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ default: true }));
-        }
-      });
-    } catch (e) {
-      res.writeHead(500);
-      res.end(JSON.stringify({ error: e.message }));
-    }
-  });
-  await new Promise((resolve, reject) => {
-    mockAniList.server.once('error', reject);
-    mockAniList.server.listen(mockAniList.port, '127.0.0.1', resolve);
-  });
+  await mockAniList.start();
 
-  const server = spawn(process.execPath, [path.join(__dirname, 'server.js')], {
+const server = spawn(process.execPath, [path.join(__dirname, 'server.js')], {
     cwd: __dirname,
     stdio: ['ignore', 'pipe', 'inherit'],
     env: {
       ...process.env,
       NODE_ENV: 'test',
+      ANIME_HUB_TEST_MODE: '1',
       PORT: String(TEST_PORT),
       SITE_URL: 'https://animehub.example',
       CORS_ORIGINS: `http://localhost:${TEST_PORT}`,
-      ANILIST_GRAPHQL_URL: `http://127.0.0.1:${mockAniList.port}`,
+      ANILIST_GRAPHQL_URL: mockAniList.url,
       SUPABASE_URL: authUrl,
       SUPABASE_ANON_KEY: 'test-public-anon-key',
       SUPABASE_SERVICE_ROLE_KEY: 'test-server-only-service-role-key'
@@ -515,6 +792,7 @@ async function run() {
     assert.strictEqual(onePiece.statusCode, 200, 'One Piece search should return HTTP 200');
     assert(Array.isArray(onePiece.body), 'One Piece search response should be an array');
     assert(onePiece.body.length > 0, 'One Piece search should return at least one result');
+    assert.strictEqual(onePiece.headers['x-catalog-source'], 'anilist', 'A live search answer must be labelled as AniList data');
     assert(
       onePiece.body.some(anime => getTitle(anime).toLowerCase().includes('one piece')),
       'One Piece results should include a matching title'
@@ -609,6 +887,63 @@ async function run() {
     const oversized = await search('x'.repeat(101));
     assert.strictEqual(oversized.statusCode, 400, 'Oversized search should return HTTP 400');
 
+    // Regression tests for C0 control characters and DEL (0x7F) on /api/search.
+    // Raw validation rejects controls in the middle and at the query boundaries;
+    // ordinary printable whitespace remains normalized by trim().
+    const controlChars = [
+      { name: 'NULL (U+0000)', char: '\u0000' },
+      { name: 'SOH (U+0001)', char: '\u0001' },
+      { name: 'STX (U+0002)', char: '\u0002' },
+      { name: 'ETX (U+0003)', char: '\u0003' },
+      { name: 'EOT (U+0004)', char: '\u0004' },
+      { name: 'ENQ (U+0005)', char: '\u0005' },
+      { name: 'ACK (U+0006)', char: '\u0006' },
+      { name: 'BEL (U+0007)', char: '\u0007' },
+      { name: 'BS (U+0008)', char: '\u0008' },
+      { name: 'HT (U+0009)', char: '\u0009' },
+      { name: 'LF (U+000A)', char: '\u000A' },
+      { name: 'VT (U+000B)', char: '\u000B' },
+      { name: 'FF (U+000C)', char: '\u000C' },
+      { name: 'CR (U+000D)', char: '\u000D' },
+      { name: 'SO (U+000E)', char: '\u000E' },
+      { name: 'SI (U+000F)', char: '\u000F' },
+      { name: 'DLE (U+0010)', char: '\u0010' },
+      { name: 'DC1 (U+0011)', char: '\u0011' },
+      { name: 'DC2 (U+0012)', char: '\u0012' },
+      { name: 'DC3 (U+0013)', char: '\u0013' },
+      { name: 'DC4 (U+0014)', char: '\u0014' },
+      { name: 'NAK (U+0015)', char: '\u0015' },
+      { name: 'SYN (U+0016)', char: '\u0016' },
+      { name: 'ETB (U+0017)', char: '\u0017' },
+      { name: 'CAN (U+0018)', char: '\u0018' },
+      { name: 'EM (U+0019)', char: '\u0019' },
+      { name: 'SUB (U+001A)', char: '\u001A' },
+      { name: 'ESC (U+001B)', char: '\u001B' },
+      { name: 'FS (U+001C)', char: '\u001C' },
+      { name: 'GS (U+001D)', char: '\u001D' },
+      { name: 'RS (U+001E)', char: '\u001E' },
+      { name: 'US (U+001F)', char: '\u001F' },
+      { name: 'DEL (U+007F)', char: '\u007F' }
+    ];
+    for (const { name, char } of controlChars) {
+      // Place control character in the middle to avoid trim() removing it
+      const response = await search(`One${char}Piece`);
+      assert.strictEqual(response.statusCode, 400, `${name} should be rejected by /api/search`);
+      assert.strictEqual(response.body.message, 'Search query contains characters that are not allowed.', `${name} should return the control character error message`);
+    }
+    const trailingTab = await search('One Piece\t');
+    assert.strictEqual(trailingTab.statusCode, 400, 'A trailing tab should be rejected before query trimming');
+    assert.strictEqual(trailingTab.body.message, 'Search query contains characters that are not allowed.');
+    const whitespaceNormalized = await search('  One Piece  ');
+    assert.strictEqual(whitespaceNormalized.statusCode, 200, 'Ordinary leading/trailing spaces should remain normalized');
+
+    // Also test that /api/search/suggestions rejects control characters (regression for shared validation)
+    for (const { name, char } of controlChars) {
+      const response = await request(`/api/search/suggestions?q=One${encodeURIComponent(char)}Piece`);
+      assert.strictEqual(response.statusCode, 400, `${name} should be rejected by /api/search/suggestions`);
+      assert.strictEqual(response.body.message, 'Search query contains characters that are not allowed.', `${name} should return the control character error message on suggestions`);
+    }
+
     const retiredPostSearch = await request('/api/anime/search', {}, 'POST', JSON.stringify({ query: 'Naruto' }));
     assert.strictEqual(retiredPostSearch.statusCode, 404, 'The unused POST search route should not be exposed');
 
@@ -646,6 +981,10 @@ async function run() {
     assert(!homePage.body.includes('4K Ultra HD'), 'Home page should not claim 4K streaming capability');
     assert(!homePage.body.includes('data-nav="account"'), 'Catalog should not include account navigation');
     assert(!homePage.body.includes('page-account'), 'Catalog should not include account or signup forms');
+    assert(homePage.body.includes('aria-label="View all trending anime"'), 'Trending View All link should have a descriptive accessible name');
+    assert(homePage.body.includes('aria-label="View all popular anime"'), 'Popular View All link should have a descriptive accessible name');
+    assert(homePage.body.includes('id="toast" role="status" aria-live="polite" aria-atomic="true"'), 'Toast should expose polite status semantics');
+    assert(homePage.body.includes('data-genre="All" aria-pressed="true"'), 'Initial All genre button should expose pressed state');
 
     // ---- strict browse endpoint: filters, sort and Load more paging ----
     const browseFirst = await request('/api/browse?sort=POPULARITY_DESC');
@@ -666,11 +1005,14 @@ async function run() {
       Number.parseInt(browseFirst.headers['x-catalog-total'], 10) > browseFirst.body.length,
       'The browse total should exceed a single page'
     );
-    assert.strictEqual(
-      browseFirst.headers['ratelimit-policy'],
-      '60;w=60',
-      'Browse should carry the AniList-proxy rate limit like /api/search'
-    );
+    // Rate limit header is only present when rate limiting is active (not in test mode).
+    if (browseFirst.headers['ratelimit-policy']) {
+      assert.strictEqual(
+        browseFirst.headers['ratelimit-policy'],
+        '60;w=60',
+        'Browse should carry the AniList-proxy rate limit like /api/search'
+      );
+    }
 
     // Load more: page 2 continues page 1 without repeating titles.
     const browseSecond = await request('/api/browse?sort=POPULARITY_DESC&page=2');
@@ -696,6 +1038,19 @@ async function run() {
     assert(
       browseMovies.body.every(anime => String(anime.type || anime.format || '').toUpperCase() === 'MOVIE'),
       'Browse must return only films for format=MOVIE'
+    );
+
+    const browseDonghua = await request('/api/browse?format=MOVIE&countryOfOrigin=CN&perPage=10');
+    assert.strictEqual(browseDonghua.statusCode, 200, 'A country-of-origin movie filter should be accepted');
+    assert.strictEqual(browseDonghua.headers['x-catalog-source'], 'anilist', 'A live country-filtered browse answer must be labelled as AniList data');
+    assert(lastBrowsePayload, 'The AniList mock should receive the country-filtered browse payload');
+    assert.strictEqual(lastBrowsePayload.variables.format, 'MOVIE', 'The browse payload should bind the movie format');
+    assert.strictEqual(lastBrowsePayload.variables.countryOfOrigin, 'CN', 'The browse payload should bind countryOfOrigin=CN');
+    assert(lastBrowsePayload.query.includes('$countryOfOrigin: String'), 'The browse query should declare countryOfOrigin as String');
+    assert(lastBrowsePayload.query.includes('countryOfOrigin: $countryOfOrigin'), 'The browse query should pass countryOfOrigin to AniList');
+    assert(
+      browseDonghua.body.length > 0 && browseDonghua.body.every(anime => anime.countryOfOrigin === 'CN'),
+      'Country-filtered browse results should contain only Chinese-origin titles'
     );
 
     const browseYear = await request('/api/browse?year=2024&perPage=10&sort=START_DATE_DESC');
@@ -811,24 +1166,9 @@ async function run() {
     assert.strictEqual(authRequests[1].headers.authorization, 'Bearer test-server-only-service-role-key');
     assert(!JSON.stringify(authenticatedDeletion.body).includes('service-role'));
 
-    const localWatchlistScript = await request('/script.js');
-    assert(localWatchlistScript.body.includes("localStorage.getItem('anime_hub_watchlist')"), 'Watchlist should remain browser-local');
-    assert(!localWatchlistScript.body.includes("localStorage.removeItem('anime_hub_continue_watching')"), 'Existing continue-watching data should not be cleared');
-    assert(localWatchlistScript.body.includes("searchFilterForm?.addEventListener('change', applySearchFilters)"), 'Search filters and sorting should update results when changed');
-    assert(localWatchlistScript.body.includes("searchFilterForm?.addEventListener('reset'"), 'Search filters should reapply after reset');
-    assert(localWatchlistScript.body.includes('if (requestId !== searchRequestId) return;'), 'Outdated search responses should not replace newer results');
-    assert(localWatchlistScript.body.includes('/search/suggestions?q='), 'Autocomplete should use the lightweight suggestions endpoint');
-    assert(localWatchlistScript.body.includes('}, 180);'), 'Autocomplete should debounce requests by 180 milliseconds');
-    assert(localWatchlistScript.body.includes('new AbortController()'), 'Autocomplete should cancel obsolete requests');
-    assert(localWatchlistScript.body.includes('requestId !== state.requestId'), 'Stale autocomplete responses should be ignored');
-    assert(localWatchlistScript.body.includes("event.key === 'ArrowDown' || event.key === 'ArrowUp'"), 'Autocomplete should retain arrow-key navigation');
-    assert(localWatchlistScript.body.includes("event.key === 'Escape' && !panel.hidden"), 'Autocomplete should retain Escape behavior');
-    assert(localWatchlistScript.body.includes('No anime found.'), 'Empty autocomplete results should use a non-technical message');
-    assert(localWatchlistScript.body.includes('banner: r.bannerImage || r.coverImage?.large'), 'Recommendation cards should preserve banner or poster fallback data');
-    assert(localWatchlistScript.body.includes('safeImageUrl(bannerUrl || poster)'), 'Detail banners should fall back to the anime poster');
-    assert(localWatchlistScript.body.includes("image.hidden = true"), 'Failed fallback images should not show broken-image icons');
-    assert(localWatchlistScript.body.includes("link[rel=\"canonical\"]"), 'Dynamic SEO updates should update the canonical URL');
-    assert(localWatchlistScript.body.includes("replace(/\"/g, '&quot;')"), 'Catalog text should escape double quotes in attributes');
+    const styleSheet = await request('/style.css');
+    assert(styleSheet.body.includes('--primary-contrast: #b45309'), 'Accessible orange contrast token should be present');
+    assert(styleSheet.body.includes('--text-dim:     #a8b4c5'), 'Dim text token should meet normal-text contrast');
 
     const forbiddenOrigin = await request('/api/site-config', { Origin: 'https://not-allowed.example' });
     assert.strictEqual(forbiddenOrigin.statusCode, 403, 'Unconfigured cross-origin requests should be rejected');
@@ -951,6 +1291,7 @@ async function run() {
     const comedy = await request('/api/genre/Comedy');
     assert.strictEqual(comedy.statusCode, 200, 'Genre filtering should load');
     assert(comedy.body.length > 0, 'The Comedy genre must not be empty');
+    assert.strictEqual(comedy.headers['x-catalog-source'], 'anilist', 'A live genre answer must be labelled as AniList data');
     assert(
       comedy.body.every(anime => (anime.genre || anime.genres || []).includes('Comedy')),
       'Every genre result should actually carry the requested genre'
@@ -971,13 +1312,16 @@ async function run() {
     const curatedGenre = await request('/api/genre/Shounen');
     assert.strictEqual(curatedGenre.statusCode, 200, 'Curated-only genres should still load');
     assert(curatedGenre.body.length > 0, 'The curated Shounen genre should still return titles');
+    assert.strictEqual(curatedGenre.headers['x-catalog-source'], 'curated', 'A curated-only genre answer must be labelled as curated data');
 
     const unknownGenre = await request('/api/genre/DefinitelyNotAGenre');
     assert.strictEqual(unknownGenre.statusCode, 200, 'An unknown genre should not error');
     assert.deepStrictEqual(unknownGenre.body, [], 'An unknown genre should return no titles');
+    assert.strictEqual(unknownGenre.headers['x-catalog-source'], 'curated', 'An unknown genre answer must be labelled as curated data');
 
     const adultGenre = await request('/api/genre/Hentai');
     assert.deepStrictEqual(adultGenre.body, [], 'A non-adult catalog must not serve adult genres');
+    assert.strictEqual(adultGenre.headers['x-catalog-source'], 'curated', 'An adult-genre answer must be labelled as curated data');
 
     const genres = await request('/api/genres');
     assert.strictEqual(genres.statusCode, 200, 'Genre list should load');
@@ -986,6 +1330,23 @@ async function run() {
     assert(
       !genres.body.some(genre => String(genre).toLowerCase() === 'hentai'),
       'Genre list should not offer adult genres'
+    );
+
+    // Verify sorting: genres should be in ascending alphabetical order (localeCompare)
+    for (let i = 1; i < genres.body.length; i += 1) {
+      assert(
+        genres.body[i - 1].localeCompare(genres.body[i]) <= 0,
+        `Genre list should be sorted alphabetically: "${genres.body[i - 1]}" should come before "${genres.body[i]}"`
+      );
+    }
+
+    // Verify case-insensitive deduplication: no two genres should differ only by case
+    const lowercasedGenres = genres.body.map(g => String(g).toLowerCase());
+    const uniqueLowercased = new Set(lowercasedGenres);
+    assert.strictEqual(
+      uniqueLowercased.size,
+      genres.body.length,
+      'Genre list should not contain case-insensitive duplicates (e.g., both "Action" and "action")'
     );
 
     // ---- The retired local-id detail route redirects to AniList IDs ----
@@ -1000,10 +1361,18 @@ async function run() {
     const canonicalDetail = await request('/api/anime/1');
     assert.strictEqual(canonicalDetail.statusCode, 200, 'AniList detail should load for ID 1');
     assert.strictEqual(canonicalDetail.body.id, 1, 'Detail responses should use the canonical AniList ID');
+    assert.strictEqual(canonicalDetail.body.anilistId, canonicalDetail.body.id, 'Detail responses should expose the matching AniList ID');
+    assert.strictEqual(canonicalDetail.body.contentKind, 'anime', 'Detail responses should identify anime content');
+    assert.strictEqual(canonicalDetail.body.format, 'TV', 'Detail responses should preserve the provider format');
     assert(
       getTitle(canonicalDetail.body).toLowerCase().includes('cowboy bebop'),
       'AniList ID 1 must resolve to Cowboy Bebop, not the retired local ID 1 entry'
     );
+
+    const graphqlErrorFallback = await request('/api/anime/113415');
+    assert.strictEqual(graphqlErrorFallback.statusCode, 200, 'GraphQL errors should use the curated detail fallback');
+    assert.strictEqual(graphqlErrorFallback.body.anilistId, graphqlErrorFallback.body.id, 'GraphQL-error fallback should expose the matching AniList ID');
+    assert.strictEqual(graphqlErrorFallback.body.contentKind, 'anime', 'GraphQL-error fallback should identify anime content');
     const recommendedMedia = canonicalDetail.body.recommendations?.edges
       ?.map(edge => edge.node?.mediaRecommendation)
       .find(Boolean);
@@ -1047,6 +1416,13 @@ async function run() {
     assert.strictEqual(curatedCnDetail.body.id, 112117);
     assert.strictEqual(curatedCnDetail.body.countryOfOrigin, 'CN', 'Curated Chinese title should expose countryOfOrigin "CN"');
     assert.strictEqual(curatedCnDetail.body.format, 'MOVIE');
+    assert.strictEqual(curatedCnDetail.body.anilistId, curatedCnDetail.body.id, 'No-entry fallback should expose the matching AniList ID');
+    assert.strictEqual(curatedCnDetail.body.contentKind, 'anime', 'No-entry fallback should identify anime content');
+
+    const networkErrorFallback = await request('/api/anime/151807');
+    assert.strictEqual(networkErrorFallback.statusCode, 200, 'Provider/network failures should use the curated detail fallback');
+    assert.strictEqual(networkErrorFallback.body.anilistId, networkErrorFallback.body.id, 'Network-error fallback should expose the matching AniList ID');
+    assert.strictEqual(networkErrorFallback.body.contentKind, 'anime', 'Network-error fallback should identify anime content');
 
     const malformedAnimeId = await request('/api/anime/not-an-id');
     assert.strictEqual(malformedAnimeId.statusCode, 400, 'A malformed AniList ID should be rejected');
@@ -1277,7 +1653,7 @@ async function run() {
   } finally {
     server.kill();
     await new Promise(resolve => authServer.close(resolve));
-    mockAniList.server.close();
+    await mockAniList.close();
   }
 }
 

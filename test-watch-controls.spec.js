@@ -18,6 +18,7 @@ const { test, expect } = require('@playwright/test');
  */
 
 const WATCHLIST_KEY = 'anime_hub_watchlist';
+const CONTINUE_WATCHING_KEY = 'anime_hub_continue_watching';
 const MOVIE_ID = 20954;
 const SERIES_ID = 21;
 
@@ -203,6 +204,25 @@ test.describe('Watch controls: movie vs TV series', () => {
     expect(persisted[0].type).toBe('TV');
   });
 
+  test('invalid watch status is rejected without mutating the saved item', async ({ page }) => {
+    await setupRoutes(page);
+    await seedAndGo(page, [typedSeries({ watchStatus: 'watching', currentEpisode: 7 })], `/?id=${SERIES_ID}`);
+
+    await expect(page.locator('.detail-title')).toHaveText('ONE PIECE', { timeout: 20000 });
+    const controls = page.locator('.detail-info [data-watch-controls]');
+    const status = controls.locator('[data-watch-status]');
+
+    await status.evaluate(element => {
+      element.value = 'not-a-valid-status';
+      element.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+
+    await expect(page.locator('#toast')).toContainText('Enter a valid watch status.', { timeout: 5000 });
+    const stored = await readWatchlist(page);
+    expect(stored[0].watchStatus).toBe('watching');
+    expect(stored[0].currentEpisode).toBe(7);
+  });
+
   test('watchlist page: movie card is status-only (after repair), series card keeps its episode selector', async ({ page }) => {
     await setupRoutes(page);
     await seedAndGo(page, [legacyMovie(), typedSeries()], '/?page=watchlist');
@@ -335,5 +355,36 @@ test.describe('Watch controls: movie vs TV series', () => {
     await expect(shelf).toBeVisible({ timeout: 15000 });
     await expect(shelf.locator('.anime-card')).toHaveCount(1);
     await expect(shelf).toContainText('ONE PIECE');
+  });
+
+  test('unrelated navigation and watchlist updates preserve guest storage', async ({ page }) => {
+    await setupRoutes(page);
+    const continueWatchingSentinel = JSON.stringify([{ id: SERIES_ID, currentEpisode: 7 }]);
+    await page.goto('/api/health');
+    await page.evaluate(([watchlistKey, continueKey, entry, sentinel]) => {
+      localStorage.setItem(watchlistKey, JSON.stringify([entry]));
+      localStorage.setItem(continueKey, sentinel);
+    }, [WATCHLIST_KEY, CONTINUE_WATCHING_KEY, typedSeries({ currentEpisode: 7, watchStatus: 'watching' }), continueWatchingSentinel]);
+
+    await page.goto('/?page=watchlist', { waitUntil: 'domcontentloaded' });
+    await expect(page.locator('#watchlist-grid .anime-card')).toHaveCount(1, { timeout: 20000 });
+    const controls = page.locator('#watchlist-grid [data-watch-controls]');
+    await controls.locator('[data-watch-status]').selectOption('completed');
+    await page.waitForFunction(([key, id]) => {
+      const list = JSON.parse(localStorage.getItem(key) || '[]');
+      return list.some(item => String(item.id) === String(id) && item.watchStatus === 'completed');
+    }, [WATCHLIST_KEY, SERIES_ID], { timeout: 15000 });
+
+    await page.goto('/', { waitUntil: 'domcontentloaded' });
+    await page.goto('/?page=watchlist', { waitUntil: 'domcontentloaded' });
+    await expect(page.locator('#watchlist-grid .anime-card')).toHaveCount(1, { timeout: 20000 });
+
+    const stored = await page.evaluate(([watchlistKey, continueKey]) => ({
+      watchlist: JSON.parse(localStorage.getItem(watchlistKey) || '[]'),
+      continueWatching: localStorage.getItem(continueKey)
+    }), [WATCHLIST_KEY, CONTINUE_WATCHING_KEY]);
+    expect(stored.watchlist[0].watchStatus).toBe('completed');
+    expect(stored.watchlist[0].currentEpisode).toBe(1100);
+    expect(stored.continueWatching).toBe(continueWatchingSentinel);
   });
 });

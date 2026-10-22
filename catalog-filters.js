@@ -117,8 +117,14 @@ function buildGenreLookup(knownGenres) {
  * Returns the canonical spellings; the first problem is pushed into `errors`
  * and an empty list is returned. Adult genres never reach this point: the
  * caller deletes them from the lookup, so they are rejected as unknown.
+ *
+ * When `skipGenreMembership` is true the allowlist membership check is
+ * deferred: malformed or over-length values are still rejected, but a
+ * syntactically-valid genre is accepted without loading the provider-backed
+ * allowlist. The caller is then responsible for confirming membership (and
+ * canonical spelling) once the allowlist is available.
  */
-function collectGenres(rawValue, genreLookup, errors) {
+function collectGenres(rawValue, genreLookup, errors, skipGenreMembership = false) {
   const requested = String(rawValue).split(',').map(part => part.trim()).filter(Boolean);
   if (requested.length > MAX_GENRE_FILTERS) {
     errors.push(`Select at most ${MAX_GENRE_FILTERS} genres.`);
@@ -135,13 +141,13 @@ function collectGenres(rawValue, genreLookup, errors) {
       return [];
     }
     const lower = name.toLowerCase();
-    if (!genreLookup.has(lower)) {
+    if (!skipGenreMembership && genreLookup && !genreLookup.has(lower)) {
       errors.push(`Unknown genre: "${name}".`);
       return [];
     }
     if (!genres.some(existing => existing.toLowerCase() === lower)) {
       // Keep the known-canonical spelling so AniList matches case-sensitively.
-      genres.push(genreLookup.get(lower));
+      genres.push(skipGenreMembership ? name : (genreLookup ? genreLookup.get(lower) : name));
     }
   }
   return genres;
@@ -198,10 +204,11 @@ function buildCatalogGraphQL(filters, { perPage = CATALOG_PER_PAGE } = {}) {
     variableDefinitions.push('$season: MediaSeason');
     variables.season = filters.season;
   }
-  if (filters.year) {
+  const seasonYear = filters.seasonYear ?? filters.year;
+  if (seasonYear) {
     args.push('seasonYear: $seasonYear');
     variableDefinitions.push('$seasonYear: Int');
-    variables.seasonYear = filters.year;
+    variables.seasonYear = seasonYear;
   }
   if (filters.format) {
     args.push('format: $format');
@@ -212,6 +219,11 @@ function buildCatalogGraphQL(filters, { perPage = CATALOG_PER_PAGE } = {}) {
     args.push('status: $status');
     variableDefinitions.push('$status: MediaStatus');
     variables.status = filters.status;
+  }
+  if (filters.countryOfOrigin) {
+    args.push('countryOfOrigin: $countryOfOrigin');
+    variableDefinitions.push('$countryOfOrigin: String');
+    variables.countryOfOrigin = filters.countryOfOrigin;
   }
   if (filters.minScore !== null && filters.minScore !== undefined) {
     args.push('averageScore_greater: $minScore');
@@ -261,6 +273,12 @@ function genresOf(item) {
   return (Array.isArray(value) ? value : [value]).map(entry => String(entry).toLowerCase());
 }
 
+/** Normalize a local catalog item's country into the browse allowlist. */
+function browseCountryOf(item) {
+  const country = String(item?.countryOfOrigin || '').trim().toUpperCase();
+  return BROWSE_COUNTRIES.includes(country) ? country : 'OTHER';
+}
+
 /**
  * Filter and sort catalog items locally. Used for the curated fallback so the
  * same filter/sort semantics apply when AniList is unreachable.
@@ -269,6 +287,7 @@ function filterCatalogLocally(items, filters) {
   const list = Array.isArray(items) ? items : [];
   const wantedGenres = filters.genres || [];
   const wantedStatus = filters.status || null;
+  const wantedCountry = filters.countryOfOrigin || null;
 
   const matched = list.filter(item => {
     if (!item) return false;
@@ -278,13 +297,15 @@ function filterCatalogLocally(items, filters) {
       // Mirrors AniList's genre_in: match ANY of the selected genres.
       if (!wantedGenres.some(genre => genres.includes(String(genre).toLowerCase()))) return false;
     }
-    if (filters.year !== null && filters.year !== undefined && yearOf(item) !== filters.year) return false;
+    const seasonYear = filters.seasonYear ?? filters.year;
+    if (seasonYear !== null && seasonYear !== undefined && yearOf(item) !== seasonYear) return false;
     if (filters.season) {
       const season = String(item?.season || '').trim().toUpperCase();
       if (!season || season !== filters.season) return false;
     }
     if (filters.format && formatOf(item) !== filters.format) return false;
     if (wantedStatus && normalizeStatus(item?.status) !== wantedStatus) return false;
+    if (wantedCountry && browseCountryOf(item) !== wantedCountry) return false;
     if (filters.minScore !== null && filters.minScore !== undefined && scoreOf(item) < filters.minScore) return false;
     return true;
   });
@@ -316,6 +337,7 @@ function titleOf(item) {
 const BROWSE_SEASONS = ['WINTER', 'SPRING', 'SUMMER', 'FALL'];
 const BROWSE_FORMATS = ['TV', 'MOVIE', 'OVA', 'ONA', 'SPECIAL'];
 const BROWSE_STATUSES = ['RELEASING', 'FINISHED', 'NOT_YET_RELEASED'];
+const BROWSE_COUNTRIES = ['JP', 'CN', 'US', 'KR', 'IN', 'FR', 'GB', 'CA', 'BR', 'OTHER'];
 const BROWSE_SORTS = ['POPULARITY_DESC', 'SCORE_DESC', 'START_DATE_DESC', 'TITLE_ROMAJI'];
 const DEFAULT_BROWSE_SORT = 'POPULARITY_DESC';
 const BROWSE_MIN_YEAR = 1960;
@@ -349,6 +371,7 @@ const BROWSE_SORT_KEYS = {
 function parseBrowseFilters(query, options = {}) {
   const errors = [];
   const maxYear = Number.isInteger(options.maxYear) ? options.maxYear : new Date().getFullYear() + 1;
+  const skipGenreMembership = options.skipGenreMembership === true;
   const genreLookup = buildGenreLookup(options.knownGenres);
   // Adult genres are not part of the public allowlist: removing them from the
   // lookup means `genre=Hentai` is rejected as unknown instead of silently
@@ -358,9 +381,11 @@ function parseBrowseFilters(query, options = {}) {
   const filters = {
     genres: [],
     year: null,
+    seasonYear: null,
     season: null,
     format: null,
     status: null,
+    countryOfOrigin: null,
     minScore: null,
     sort: BROWSE_SORT_KEYS[DEFAULT_BROWSE_SORT],
     page: 1
@@ -370,19 +395,26 @@ function parseBrowseFilters(query, options = {}) {
   // ---- genre (comma-separated multi-select, allowlisted) ------------------
   const rawGenre = readStrictParam(query, 'genre', errors);
   if (rawGenre !== null && rawGenre.trim() !== '') {
-    filters.genres = collectGenres(rawGenre, genreLookup, errors);
+    filters.genres = collectGenres(rawGenre, genreLookup, errors, skipGenreMembership);
   }
 
-  // ---- year (1960 .. current year + 1) ------------------------------------
+  // ---- year / seasonYear (1960 .. current year + 1) ------------------------
   const rawYear = readStrictParam(query, 'year', errors);
-  if (rawYear !== null && rawYear.trim() !== '') {
-    const year = parseInteger(rawYear);
+  const rawSeasonYear = readStrictParam(query, 'seasonYear', errors);
+  const hasYear = rawYear !== null && rawYear.trim() !== '';
+  const hasSeasonYear = rawSeasonYear !== null && rawSeasonYear.trim() !== '';
+  if (hasYear && hasSeasonYear) {
+    errors.push('Use either year or seasonYear, not both.');
+  } else if (hasYear || hasSeasonYear) {
+    const rawValue = hasSeasonYear ? rawSeasonYear : rawYear;
+    const year = parseInteger(rawValue);
     if (year === null || Number.isNaN(year)) {
-      errors.push('Year must be a whole number.');
+      errors.push('Year/seasonYear must be a whole number.');
     } else if (year < BROWSE_MIN_YEAR || year > maxYear) {
       errors.push(`Year must be between ${BROWSE_MIN_YEAR} and ${maxYear}.`);
     } else {
       filters.year = year;
+      filters.seasonYear = year;
     }
   }
 
@@ -416,6 +448,17 @@ function parseBrowseFilters(query, options = {}) {
       errors.push(`Status must be one of: ${BROWSE_STATUSES.join(', ')}.`);
     } else {
       filters.status = status;
+    }
+  }
+
+  // ---- country of origin (allowlisted, case-normalized) --------------------
+  const rawCountryOfOrigin = readStrictParam(query, 'countryOfOrigin', errors);
+  if (rawCountryOfOrigin !== null && rawCountryOfOrigin.trim() !== '') {
+    const countryOfOrigin = rawCountryOfOrigin.trim().toUpperCase();
+    if (!BROWSE_COUNTRIES.includes(countryOfOrigin)) {
+      errors.push(`Country of origin must be one of: ${BROWSE_COUNTRIES.join(', ')}.`);
+    } else {
+      filters.countryOfOrigin = countryOfOrigin;
     }
   }
 
@@ -483,15 +526,125 @@ function parseBrowseFilters(query, options = {}) {
 function browseCacheKey(filters, perPage) {
   return JSON.stringify([
     [...(filters.genres || [])].map(genre => genre.toLowerCase()).sort(),
-    filters.year ?? null,
+    filters.seasonYear ?? filters.year ?? null,
     filters.season ?? null,
     filters.format ?? null,
     filters.status ?? null,
+    filters.countryOfOrigin ? String(filters.countryOfOrigin).trim().toUpperCase() : null,
     filters.minScore ?? null,
     filters.sort ?? null,
     filters.page ?? 1,
     Number.isInteger(perPage) ? perPage : BROWSE_DEFAULT_PER_PAGE
   ]);
+}
+
+const RECOMMENDATIONS_MAX_GENRES = 20;
+const RECOMMENDATIONS_MAX_FAVORITE_IDS = 30;
+const RECOMMENDATIONS_MAX_RESULTS = 30;
+const RECOMMENDATION_GENRE_PATTERN = /^[\p{L}\p{N}\s'.-]+$/u;
+
+/**
+ * Validate the untrusted, client-owned recommendation inputs. The server never
+ * persists this data; it is only used to bind a short-lived AniList request.
+ */
+function parseRecommendationInput(input) {
+  const errors = [];
+  const body = input && typeof input === 'object' && !Array.isArray(input) ? input : {};
+  const genreWeights = Object.create(null);
+  const rawWeights = body.genreWeights;
+  if (rawWeights !== undefined) {
+    if (!rawWeights || typeof rawWeights !== 'object' || Array.isArray(rawWeights)) {
+      errors.push('genreWeights must be an object of genre names to positive weights.');
+    } else {
+      const entries = Object.entries(rawWeights);
+      if (entries.length > RECOMMENDATIONS_MAX_GENRES) {
+        errors.push(`Provide at most ${RECOMMENDATIONS_MAX_GENRES} genre weights.`);
+      } else {
+        for (const [rawGenre, rawWeight] of entries) {
+          const genre = String(rawGenre).trim();
+          const weight = typeof rawWeight === 'number' ? rawWeight : NaN;
+          const lowerGenre = genre.toLowerCase();
+          if (!genre || genre.length > MAX_GENRE_LENGTH || !RECOMMENDATION_GENRE_PATTERN.test(genre) || ADULT_GENRES.has(lowerGenre) || ['__proto__', 'constructor', 'prototype'].includes(lowerGenre)) {
+            errors.push('Recommendation genres contain an invalid or adult genre.');
+            break;
+          }
+          if (!Number.isFinite(weight) || weight <= 0 || weight > 100) {
+            errors.push('Recommendation genre weights must be finite numbers greater than 0 and at most 100.');
+            break;
+          }
+          const key = lowerGenre;
+          if (!Object.hasOwn(genreWeights, key)) genreWeights[key] = { name: genre, weight };
+        }
+      }
+    }
+  }
+
+  const favoriteIds = [];
+  const rawFavoriteIds = body.favoriteIds;
+  if (rawFavoriteIds !== undefined) {
+    if (!Array.isArray(rawFavoriteIds)) {
+      errors.push('favoriteIds must be an array of AniList IDs.');
+    } else if (rawFavoriteIds.length > RECOMMENDATIONS_MAX_FAVORITE_IDS) {
+      errors.push(`Provide at most ${RECOMMENDATIONS_MAX_FAVORITE_IDS} favorite IDs.`);
+    } else {
+      for (const value of rawFavoriteIds) {
+        const normalized = typeof value === 'string' && /^\d+$/.test(value.trim()) ? Number(value) : value;
+        if (!Number.isSafeInteger(normalized) || normalized < 1 || normalized > 2147483647) {
+          errors.push('favoriteIds must contain valid positive AniList IDs.');
+          break;
+        }
+        if (!favoriteIds.includes(normalized)) favoriteIds.push(normalized);
+      }
+    }
+  }
+
+  if (!errors.length && !Object.keys(genreWeights).length && !favoriteIds.length) {
+    errors.push('Provide genreWeights or favoriteIds to build recommendations.');
+  }
+  return {
+    genreWeights: Object.values(genreWeights),
+    favoriteIds,
+    errors
+  };
+}
+
+/** Build the recommendation query without interpolating client values. */
+function buildRecommendationsGraphQL(input, { perPage = RECOMMENDATIONS_MAX_RESULTS } = {}) {
+  const genreWeights = Array.isArray(input?.genreWeights) ? input.genreWeights : [];
+  const favoriteIds = Array.isArray(input?.favoriteIds) ? input.favoriteIds : [];
+  const variables = { perPage };
+  const definitions = ['$perPage: Int!'];
+  const fields = [];
+  if (genreWeights.length) {
+    definitions.push('$genres: [String!]');
+    variables.genres = genreWeights.map(entry => entry.name);
+    fields.push(`genrePage: Page(page: 1, perPage: $perPage) {
+    media(type: ANIME, isAdult: false, genre_in: $genres, sort: POPULARITY_DESC) {
+      ${CATALOG_MEDIA_FIELDS}
+    }
+  }`);
+  }
+  if (favoriteIds.length) {
+    definitions.push('$favoriteIds: [Int!]');
+    variables.favoriteIds = favoriteIds;
+    fields.push(`favoritePage: Page(page: 1, perPage: $perPage) {
+    media(type: ANIME, isAdult: false, id_in: $favoriteIds) {
+      recommendations(sort: RATING_DESC, perPage: $perPage) {
+        edges {
+          node {
+            mediaRecommendation {
+              ${CATALOG_MEDIA_FIELDS}
+            }
+          }
+        }
+      }
+    }
+  }`);
+  }
+  return {
+    query: `query (${definitions.join(', ')}) {\n${fields.join('\n')}\n}`,
+    variables
+  };
 }
 
 /**
@@ -514,13 +667,21 @@ module.exports = {
   CATALOG_SORTS,
   CATALOG_STATUSES,
   CATALOG_PER_PAGE,
+  BROWSE_SEASONS,
+  BROWSE_FORMATS,
+  BROWSE_STATUSES,
+  BROWSE_COUNTRIES,
+  BROWSE_MAX_PAGE,
   MAX_GENRE_FILTERS,
   MAX_GENRE_LENGTH,
   STATUS_LABELS,
   browseCacheKey,
   boundedCacheSet,
   buildCatalogGraphQL,
+  buildRecommendationsGraphQL,
   filterCatalogLocally,
   normalizeStatus,
-  parseBrowseFilters
+  parseBrowseFilters,
+  parseRecommendationInput,
+  RECOMMENDATIONS_MAX_RESULTS
 };

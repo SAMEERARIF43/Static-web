@@ -15,6 +15,7 @@ const http = require('http');
 const assert = require('assert');
 const { spawn } = require('child_process');
 const path = require('path');
+const { createAniListMock } = require('./test-fixtures/anilist-mock');
 
 // Jujutsu Kaisen: a curated entry, so it has a local fallback while AniList is down.
 const CURATED_ANILIST_ID = 113415;
@@ -199,7 +200,8 @@ async function runOutageAndHeaderScenario(deadPort, port) {
     ANILIST_GRAPHQL_URL: `http://127.0.0.1:${deadPort}/graphql`,
     SUPABASE_URL: `https://127.0.0.1:${deadPort}`,
     SUPABASE_ANON_KEY: ANON_KEY,
-    SUPABASE_SERVICE_ROLE_KEY: SERVICE_ROLE_KEY
+    SUPABASE_SERVICE_ROLE_KEY: SERVICE_ROLE_KEY,
+    ANIME_HUB_TEST_ERROR_ROUTE: '1'
   });
 
   try {
@@ -270,6 +272,27 @@ async function runOutageAndHeaderScenario(deadPort, port) {
       typeof missingPage.body === 'string' && missingPage.body.includes('Page Not Found'),
       'Unknown non-API browser paths should serve public/404.html'
     );
+
+    const internalFailure = await request(baseURL, '/api/test/error-middleware');
+    assert.strictEqual(internalFailure.statusCode, 500, 'Generic errors should return HTTP 500');
+    assert.strictEqual(typeof internalFailure.body, 'object', 'Generic errors should return JSON');
+    assert.deepStrictEqual(
+      Object.keys(internalFailure.body).sort(),
+      ['message'],
+      'Generic errors should expose only the documented message field'
+    );
+    assert.strictEqual(
+      internalFailure.body.message,
+      'An internal server error occurred.',
+      'Generic errors should use the neutral documented message'
+    );
+    const internalFailureText = JSON.stringify(internalFailure.body);
+    assert(
+      !/P6\.5|stack|at |server\.js|127\.0\.0\.1|token|secret|fixture internal detail/i.test(internalFailureText),
+      'Generic errors must not expose internal exception details'
+    );
+    assertSecurityHeaders(internalFailure, 'generic 500 response');
+    console.log('Generic 500 error middleware contract verified.');
 
     const forbiddenOrigin = await request(baseURL, '/api/site-config', {
       Origin: 'https://not-allowed.example'
@@ -372,7 +395,55 @@ async function runOutageAndHeaderScenario(deadPort, port) {
       400,
       'An empty search query should be rejected'
     );
+
+    // ---- /api/popular degrades to the curated catalog during an outage ----
+    const popularFallback = await request(baseURL, '/api/popular');
+    assert.strictEqual(popularFallback.statusCode, 200, 'Popular should survive an AniList outage');
+    assert(
+      Array.isArray(popularFallback.body) && popularFallback.body.length > 0,
+      'The curated catalog should answer the popular request instead'
+    );
+    assert(
+      popularFallback.body.every(anime => anime.id === anime.anilistId),
+      'Popular fallback entries must keep the AniList ID as their only id'
+    );
     console.log('AniList outage falls back to curated data with honest status codes.');
+
+    // ---- suggestions: AniList down and nothing matches locally => documented 502 ----
+    const suggestionsOutage = await request(baseURL, '/api/search/suggestions?q=anime%20that%20does%20not%20exist%20anywhere');
+    assert.strictEqual(
+      suggestionsOutage.statusCode,
+      502,
+      'Suggestions should fail with 502 when AniList is down and no local match exists'
+    );
+    assert.strictEqual(
+      suggestionsOutage.body.message,
+      'Suggestions are temporarily unavailable.',
+      'The suggestions failure must use the documented neutral message'
+    );
+    assert(
+      !/ECONNREFUSED|127\.0\.0\.1/.test(JSON.stringify(suggestionsOutage.body)),
+      'Suggestions failures must not leak upstream connection details'
+    );
+    assertSecurityHeaders(suggestionsOutage, '502 suggestions response');
+
+    // ---- error middleware contract: a body over the 16 kb JSON limit => 413 ----
+    const oversizedBody = JSON.stringify({ padding: 'x'.repeat(32 * 1024) });
+    const tooLarge = await request(
+      baseURL,
+      '/api/does-not-exist',
+      { 'Content-Type': 'application/json' },
+      'POST',
+      oversizedBody
+    );
+    assert.strictEqual(tooLarge.statusCode, 413, 'A body over the 16 kb limit should be rejected with 413');
+    assert.strictEqual(
+      tooLarge.body.message,
+      'Request body is too large.',
+      'The 413 payload must match the documented contract'
+    );
+    assertSecurityHeaders(tooLarge, '413 response');
+    console.log('Suggestion outages and oversized bodies keep their documented contracts.');
 
     // Score on the 0-100 scale, used by the browse assertions below.
     const scoreOf = item => (Number.isFinite(item.averageScore) && item.averageScore > 0
@@ -724,6 +795,262 @@ async function runUnconfiguredScenario(port) {
   }
 }
 
+/**
+ * Stale-cache fallback: a catalog list answers from the previous successful
+ * load when a later AniList refresh fails. This needs a controllable upstream
+ * (unlike the dead-port scenarios) and a short cache TTL so the entry expires
+ * on demand — CATALOG_CACHE_TTL_MS is overridden only for this server.
+ *
+ * LIMITATION: The cache is fully encapsulated in the createCatalogLoader closure
+ * (server.js). There is no test-only hook to advance time or force expiry. The
+ * test uses a 200 ms TTL and a fixed 500 ms wait (2.5x) which passes reliably
+ * but is timing-dependent. A deterministic alternative would require production
+ * test hooks or refactoring the loader, which is not justified for this one test.
+ */
+async function runStaleCacheScenario(port) {
+  const baseURL = `http://localhost:${port}`;
+  const mockPort = await findClosedPort();
+  let anilistUp = true;
+
+  // Unique id/title: absent from the curated catalog, so its presence in a
+  // response proves the live load (or its stale copy) is being served.
+  const fixtureMedia = {
+    id: 999001,
+    title: { romaji: 'Stale Cache Fixture', english: 'Stale Cache Fixture', native: 'Stale Cache Fixture' },
+    coverImage: { large: 'https://s4.anilist.co/file/anilistcdn/media/anime/cover/large/bx999001.jpg' },
+    description: 'Fixture title used to prove the stale-cache fallback path.',
+    episodes: 12,
+    status: 'FINISHED',
+    averageScore: 88,
+    genres: ['Action'],
+    season: 'WINTER',
+    seasonYear: 2024,
+    format: 'TV',
+    countryOfOrigin: 'JP',
+    studios: { nodes: [{ name: 'Fixture Studio' }] }
+  };
+
+  const mock = createAniListMock({
+    port: mockPort,
+    handleRequest: ({ res, jsonResponse }) => {
+      if (!anilistUp) {
+        jsonResponse(res, { error: 'AniList unavailable for this scenario' }, 500);
+        return;
+      }
+      jsonResponse(res, { data: { Page: { media: [fixtureMedia] } } });
+    }
+  });
+  await mock.start();
+
+  const server = await startServer(port, {
+    ANILIST_GRAPHQL_URL: mock.url,
+    CATALOG_CACHE_TTL_MS: '200'
+  });
+
+  try {
+    const first = await request(baseURL, '/api/popular');
+    assert.strictEqual(first.statusCode, 200, 'The initial load should succeed while AniList is up');
+    assert(Array.isArray(first.body) && first.body.length > 0, 'The initial load should return a catalog');
+    assert(
+      first.body.some(anime => anime.id === 999001 && anime.anilistId === 999001),
+      'The live fixture must be part of the first answer'
+    );
+
+    // Fail the upstream, then let the 200 ms cache entry expire (wait 500 ms).
+    anilistUp = false;
+    await new Promise(resolve => setTimeout(resolve, 500));
+
+    const second = await request(baseURL, '/api/popular');
+    assert.strictEqual(
+      second.statusCode,
+      200,
+      'A failed refresh must not break the endpoint after a successful load'
+    );
+    assert.deepStrictEqual(
+      second.body,
+      first.body,
+      'AniList failing after a successful load must serve the stale cached catalog, not an error or a silently different curated-only body'
+    );
+    assert(
+      second.body.some(anime => anime.id === 999001),
+      'The stale answer must still carry the previously loaded fixture'
+    );
+    console.log('Stale catalog cache is served when a later AniList refresh fails.');
+  } finally {
+    await stopServer(server);
+    await mock.close();
+  }
+}
+
+// Task P5.2: /api/search and /api/anime/:id carry the same cache conventions
+// as the catalog lists. Proves, against a controllable mock that counts its
+// own upstream requests: repeat requests are answered from cache (one upstream
+// call per distinct key), a failing upstream after TTL expiry serves the stale
+// copy (fixture entries the curated catalog lacks must survive), keys are
+// isolated during an outage, and a fallback answer is never cached.
+async function runSearchDetailCacheScenario(port) {
+  const baseURL = `http://localhost:${port}`;
+  const mockPort = await findClosedPort();
+  let anilistUp = true;
+  let searchCalls = 0;
+  let detailCalls = 0;
+
+  // Unique ids/titles: absent from the curated catalog, so their presence in
+  // a response proves the live answer (or its stale copy) is being served.
+  const fixtureFields = {
+    coverImage: { large: 'https://s4.anilist.co/file/anilistcdn/media/anime/cover/large/bx999010.jpg' },
+    description: 'Fixture title proving the search and detail caches work.',
+    episodes: 12,
+    status: 'FINISHED',
+    averageScore: 88,
+    genres: ['Action'],
+    season: 'WINTER',
+    seasonYear: 2024,
+    format: 'TV',
+    countryOfOrigin: 'JP',
+    studios: { nodes: [{ name: 'Fixture Studio' }] }
+  };
+  const searchFixture = {
+    id: 999010,
+    title: { romaji: 'Cache Probe Fixture', english: 'Cache Probe Fixture', native: 'Cache Probe Fixture' },
+    ...fixtureFields
+  };
+  const detailFixture = {
+    id: 999011,
+    title: { romaji: 'Detail Cache Fixture', english: 'Detail Cache Fixture', native: 'Detail Cache Fixture' },
+    ...fixtureFields
+  };
+
+  const mock = createAniListMock({
+    port: mockPort,
+    handleRequest: ({ res, payload, jsonResponse }) => {
+      if (!anilistUp) {
+        jsonResponse(res, { error: 'AniList unavailable for this scenario' }, 500);
+        return;
+      }
+      const query = String(payload.query || '');
+      if (query.includes('Media(id:')) {
+        detailCalls += 1;
+        jsonResponse(res, { data: { Media: detailFixture } });
+        return;
+      }
+      searchCalls += 1;
+      jsonResponse(res, { data: { Page: { media: [searchFixture] } } });
+    }
+  });
+  await mock.start();
+
+  const server = await startServer(port, {
+    ANILIST_GRAPHQL_URL: mock.url,
+    // A 500 ms TTL leaves a comfortable window for the cache-hit assertions
+    // below (localhost roundtrips take single-digit ms) while keeping the
+    // expiry wait short.
+    CATALOG_CACHE_TTL_MS: '500'
+  });
+
+  try {
+    // 1. Repeat queries share one cache entry (case-insensitive key): the
+    //    second request must be answered without a second upstream call.
+    const first = await request(baseURL, '/api/search?q=Cache%20Probe');
+    assert.strictEqual(first.statusCode, 200, 'The initial search should succeed while AniList is up');
+    assert(first.body.some(anime => anime.id === 999010), 'The live fixture must be part of the first search answer');
+    assert.strictEqual(
+      first.headers['x-catalog-source'],
+      'anilist',
+      'A live search answer must be labelled as AniList data'
+    );
+
+    const repeat = await request(baseURL, '/api/search?q=cache%20probe');
+    assert.strictEqual(repeat.statusCode, 200, 'A repeated query should still succeed');
+    assert.deepStrictEqual(
+      repeat.body,
+      first.body,
+      'A repeated search must be answered from cache with the identical body'
+    );
+    assert.strictEqual(searchCalls, 1, 'A repeated search must not trigger a second AniList call');
+
+    const detailFirst = await request(baseURL, '/api/anime/999011');
+    assert.strictEqual(detailFirst.statusCode, 200, 'The initial detail view should succeed');
+    assert.strictEqual(
+      detailFirst.headers['x-catalog-source'],
+      'anilist',
+      'A live detail answer must be labelled as AniList data'
+    );
+
+    const detailRepeat = await request(baseURL, '/api/anime/999011');
+    assert.deepStrictEqual(
+      detailRepeat.body,
+      detailFirst.body,
+      'A repeated detail view must be answered from cache with the identical body'
+    );
+    assert.strictEqual(detailCalls, 1, 'A repeated detail view must not trigger a second AniList call');
+
+    // 2. Fail the upstream, then let the 500 ms cache entries expire (1.2 s).
+    //    Both endpoints must now serve their stale copies.
+    anilistUp = false;
+    await new Promise(resolve => setTimeout(resolve, 1200));
+
+    const staleSearch = await request(baseURL, '/api/search?q=Cache%20Probe');
+    assert.strictEqual(staleSearch.statusCode, 200, 'A failed refresh must not break search after a successful load');
+    assert.deepStrictEqual(
+      staleSearch.body,
+      first.body,
+      'AniList failing after a successful search must serve the stale cached results, not an error or a curated-only body'
+    );
+    assert(staleSearch.body.some(anime => anime.id === 999010), 'The stale search answer must still carry the previously loaded fixture');
+    assert.strictEqual(
+      staleSearch.headers['x-catalog-source'],
+      'anilist',
+      'A stale search answer is still AniList data and must say so'
+    );
+
+    const staleDetail = await request(baseURL, '/api/anime/999011');
+    assert.strictEqual(staleDetail.statusCode, 200, 'A failed refresh must not break the detail view after a successful load');
+    assert.deepStrictEqual(
+      staleDetail.body,
+      detailFirst.body,
+      'AniList failing after a successful detail load must serve the stale cached detail, not an error or a curated-only body'
+    );
+    assert.strictEqual(
+      staleDetail.headers['x-catalog-source'],
+      'anilist',
+      'A stale detail answer is still AniList data and must say so'
+    );
+
+    // 3. Key isolation during the outage: an uncached query falls back to
+    //    curated data — never to another key's stale body.
+    const fallback = await request(baseURL, '/api/search?q=Uncached%20Probe');
+    assert.strictEqual(fallback.statusCode, 200, 'An uncached query should still answer during an outage');
+    assert(
+      !fallback.body.some(anime => anime.id === 999010),
+      "A failure must never serve another query's stale results"
+    );
+    assert.strictEqual(
+      fallback.headers['x-catalog-source'],
+      'local',
+      'An uncached search fallback during an outage must be labelled as local data'
+    );
+
+    // 4. Fallbacks are never cached: upstream recovers, the same query goes
+    //    live again instead of replaying the fallback answer.
+    anilistUp = true;
+    const recovered = await request(baseURL, '/api/search?q=Uncached%20Probe');
+    assert(
+      recovered.body.some(anime => anime.id === 999010),
+      'A curated fallback must never be cached; the next request must retry AniList'
+    );
+    assert.strictEqual(
+      recovered.headers['x-catalog-source'],
+      'anilist',
+      'A recovered search answer must be labelled as AniList data'
+    );
+    console.log('Search and detail caches serve repeats, stale copies on failure, and never cache fallbacks.');
+  } finally {
+    await stopServer(server);
+    await mock.close();
+  }
+}
+
 async function run() {
   const deadPort = await findClosedPort();
   const authServer = createAuthServer();
@@ -738,6 +1065,8 @@ async function run() {
     await runAccountVerificationScenario(mockAuthUrl, 3012);
     await runAccountDeletionScenario(mockAuthUrl, 3013);
     await runUnconfiguredScenario(3014);
+    await runStaleCacheScenario(3015);
+    await runSearchDetailCacheScenario(3016);
     console.log('All Phase 2 security and resilience tests passed.');
   } finally {
     if (typeof authServer.closeAllConnections === 'function') authServer.closeAllConnections();

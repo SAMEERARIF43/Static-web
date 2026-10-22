@@ -31,11 +31,35 @@ const ONE_PIECE_FIXTURE = {
   trailer: null
 };
 
+const FILTER_FIXTURES = [
+  { ...ONE_PIECE_FIXTURE, id: 900001, anilistId: 900001, title: { english: 'Comedy One' }, genres: ['Comedy'], format: 'TV', type: 'TV', averageScore: 80, seasonYear: 2022 },
+  { ...ONE_PIECE_FIXTURE, id: 900002, anilistId: 900002, title: { english: 'Drama Two' }, genres: ['Drama'], format: 'MOVIE', type: 'MOVIE', averageScore: 90, seasonYear: 2024 },
+  { ...ONE_PIECE_FIXTURE, id: 900003, anilistId: 900003, title: { english: 'Comedy Three' }, genres: ['Comedy'], format: 'TV', type: 'TV', averageScore: 70, seasonYear: 2023 }
+];
+
+const UNSAFE_TITLE_FIXTURE = {
+  ...ONE_PIECE_FIXTURE,
+  id: 900004,
+  anilistId: 900004,
+  title: { english: 'Unsafe " title <img src=x onerror=alert(1)>' }
+};
+
+const BROKEN_IMAGE_FIXTURE = {
+  ...ONE_PIECE_FIXTURE,
+  id: 900005,
+  anilistId: 900005,
+  title: { english: 'Broken Image' },
+  coverImage: { extraLarge: 'https://example.test/missing-poster.jpg', large: 'https://example.test/missing-poster.jpg' }
+};
+
 // Deterministic fixture backend: any non-empty query resolves to the same
 // fixture title, so every step of these tests (first search, cache hit,
 // failure, retry) is observable through the public UI no matter which query
 // drives it.
 function searchResults(query) {
+  if (query.toLowerCase().includes('filter')) return FILTER_FIXTURES;
+  if (query.toLowerCase().includes('unsafe')) return [UNSAFE_TITLE_FIXTURE];
+  if (query.toLowerCase().includes('broken')) return [BROKEN_IMAGE_FIXTURE];
   return query.trim() ? [ONE_PIECE_FIXTURE] : [];
 }
 
@@ -201,5 +225,92 @@ test.describe('Search Cache Behavior on Network Failure', () => {
 
     const retryTitle = await retryCard.textContent();
     expect(retryTitle).toContain('ONE PIECE');
+  });
+
+  test('Search filter changes and reset update visible results and counts', async ({ page }) => {
+    await runSearch(page, 'Filter Test');
+    await expect(page.locator('#page-search')).toHaveClass(/active/, { timeout: 30000 });
+    await expect(page.locator('#search-results-grid .anime-card')).toHaveCount(3, { timeout: 15000 });
+    await expect(page.locator('#search-result-count')).toHaveText('3 anime titles found');
+
+    await page.selectOption('#search-filter-genre', 'Comedy');
+    await expect(page.locator('#search-results-grid .anime-card')).toHaveCount(2);
+    await expect(page.locator('#search-result-count')).toHaveText('Showing 2 of 3 titles');
+    await expect(page.locator('#search-results-grid .card-title').nth(0)).toContainText('Comedy One');
+    await expect(page.locator('#search-results-grid .card-title').nth(1)).toContainText('Comedy Three');
+
+    await page.selectOption('#search-filter-type', 'MOVIE');
+    await expect(page.locator('#search-results-grid')).toBeHidden();
+    await expect(page.locator('#search-filter-empty')).toBeVisible();
+    await expect(page.locator('#search-result-count')).toHaveText('0 of 3 titles match filters');
+
+    await page.click('#search-filter-reset-btn');
+    await expect(page.locator('#search-results-grid .anime-card')).toHaveCount(3);
+    await expect(page.locator('#search-filter-empty')).toBeHidden();
+    await expect(page.locator('#search-result-count')).toHaveText('3 anime titles found');
+    await expect(page.locator('#search-filter-genre')).toHaveValue('');
+    await expect(page.locator('#search-filter-type')).toHaveValue('');
+  });
+
+  test('A newer search response wins over a delayed older response', async ({ page }) => {
+    await page.unroute('**/api/search*');
+    const requests = [];
+    let releaseOldResponse;
+    await page.route('**/api/search*', async route => {
+      const url = new URL(route.request().url());
+      const query = url.searchParams.get('q') || '';
+      requests.push(query);
+      if (query === 'Old Query') {
+        await new Promise(resolve => { releaseOldResponse = resolve; });
+        try {
+          await route.fulfill({
+            status: 200,
+            contentType: 'application/json',
+            body: JSON.stringify([{ ...ONE_PIECE_FIXTURE, title: { english: 'OLD SEARCH RESPONSE' } }])
+          });
+        } catch {
+          // The application may abort the obsolete request before it resolves.
+        }
+        return;
+      }
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify([{ ...ONE_PIECE_FIXTURE, title: { english: 'NEW SEARCH RESPONSE' } }])
+      });
+    });
+
+    await runSearch(page, 'Old Query');
+    await expect.poll(() => requests).toContain('Old Query');
+
+    await page.click('#nav-search-trigger');
+    await expect(page.locator('#search-overlay')).toHaveClass(/open/);
+    await page.fill('#search-overlay-input', 'New Query');
+    await page.keyboard.press('Enter');
+
+    await expect(page.locator('#search-results-grid .card-title').first()).toContainText('NEW SEARCH RESPONSE', { timeout: 15000 });
+    releaseOldResponse?.();
+    await page.waitForTimeout(100);
+    await expect(page.locator('#search-results-grid .card-title').first()).toContainText('NEW SEARCH RESPONSE');
+  });
+
+  test('search result titles are rendered as text rather than injected markup', async ({ page }) => {
+    await runSearch(page, 'Unsafe');
+    await expect(page.locator('#page-search')).toHaveClass(/active/, { timeout: 30000 });
+    const title = page.locator('#search-results-grid .card-title').first();
+    await expect(title).toContainText('<img src=x onerror=alert(1)>', { timeout: 15000 });
+    await expect(title.locator('img')).toHaveCount(0);
+    await expect(page.locator('#search-results-grid .anime-card').first()).toHaveAttribute(
+      'aria-label',
+      'View details for Unsafe " title <img src=x onerror=alert(1)>'
+    );
+  });
+
+  test('a broken result image falls back and then hides after the fallback fails', async ({ page }) => {
+    await runSearch(page, 'Broken Image');
+    await expect(page.locator('#page-search')).toHaveClass(/active/, { timeout: 30000 });
+    const image = page.locator('#search-results-grid .anime-card img').first();
+    await expect(image).toBeVisible({ timeout: 15000 });
+    await expect.poll(() => image.evaluate(element => element.hidden), { timeout: 15000 }).toBe(true);
   });
 });

@@ -11,7 +11,7 @@ npm install
 npm start
 ```
 
-Open <http://localhost:3000>. `npm test` runs `test-search.js`, `test-security.js`, and `test-watchlist.js` in sequence: deterministic API/catalog and SEO checks, security and outage checks, and watchlist plus genre-filter regression checks.
+Open <http://localhost:3000>. `npm test` runs the deterministic Node contract chain in sequence: `test-content-utils.js`, `test-manga-api.js`, `test-search.js`, `test-security.js`, `test-watchlist.js`, and `test-reading-list.js` — covering content classification, catalog/search/API behavior, security headers and outage fallbacks, watchlist, and reading-list contracts. `npm run lint` runs ESLint. The Playwright browser suite (`npx playwright test`) runs 475 tests across five Chromium projects against a hermetic local server; verified 475 passed, 0 failed. It does not require live AniList or Supabase.
 
 ## Configuration
 
