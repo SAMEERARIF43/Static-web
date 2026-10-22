@@ -36,6 +36,7 @@ const {
   parseRecommendationInput,
   RECOMMENDATIONS_MAX_RESULTS
 } = require('./catalog-filters');
+const { fetchKitsuFallback } = require('./provider-router');
 const {
   CONTENT_KINDS,
   normalizeContentKind,
@@ -1378,6 +1379,25 @@ async function getBrowsePage(filters, perPage) {
       // Load more keeps honest boundaries while AniList is unavailable.
       const matches = filterCatalogLocally(CURATED_CATALOG, filters);
       const start = (filters.page - 1) * perPage;
+      const curatedResults = matches.slice(start, start + perPage);
+      // If curated returns nothing, try Kitsu as a final fallback.
+      if (curatedResults.length === 0 && process.env.KITSU_ENABLED === '1') {
+        const kitsuGenre = filters.genres && filters.genres.length ? filters.genres[0] : '';
+        const kitsuResults = await fetchKitsuFallback(kitsuGenre, perPage);
+        if (kitsuResults.length > 0) {
+          return {
+            data: kitsuResults,
+            source: 'kitsu',
+            meta: {
+              page: filters.page,
+              perPage,
+              total: kitsuResults.length,
+              totalPages: 1,
+              hasNext: false
+            }
+          };
+        }
+      }
       return {
         data: matches.slice(start, start + perPage),
         source: 'curated',
@@ -1445,6 +1465,7 @@ app.get('/api/browse', async (req, res) => {
   res.setHeader('X-Catalog-Total-Pages', String(meta.totalPages));
   res.setHeader('X-Catalog-Has-Next', meta.hasNext ? 'true' : 'false');
   if (meta.total !== null) res.setHeader('X-Catalog-Total', String(meta.total));
+  if (source === 'kitsu') res.setHeader('X-Catalog-Provider', 'kitsu');
   res.json(data);
 });
 
@@ -1903,6 +1924,15 @@ app.get('/api/search', async (req, res) => {
     }
     console.warn('AniList search unavailable; using local catalog fallback.');
     const results = searchAnimeLocal(ANIME_DB, query).map(mapLocalAnimeToAniList);
+    if (results.length === 0 && process.env.KITSU_ENABLED === '1') {
+      // Final fallback: try Kitsu provider.
+      const kitsuResults = await fetchKitsuFallback(query, 10);
+      if (kitsuResults.length > 0) {
+        res.setHeader('X-Catalog-Source', 'kitsu');
+        res.setHeader('X-Catalog-Provider', 'kitsu');
+        return res.json(deduplicateMediaList(kitsuResults));
+      }
+    }
     res.setHeader('X-Catalog-Source', 'local');
     res.json(deduplicateMediaList(results));
   }
