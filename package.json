@@ -8,7 +8,7 @@
   },
   "scripts": {
     "start": "node server.js",
-    "test": "node test-content-utils.js && node test-manga-api.js && node test-search.js && node test-security.js && node test-watchlist.js && node test-reading-list.js && node test-provider-router.js",
+    "test": "node test-content-utils.js && node test-manga-api.js && node test-api-defects.js && node test-search.js && node test-security.js && node test-watchlist.js && node test-reading-list.js && node test-provider-router.js",
     "lint": "eslint .",
     "audit": "npm audit --omit=dev"
   },
