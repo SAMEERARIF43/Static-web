@@ -1167,7 +1167,7 @@ const server = spawn(process.execPath, [path.join(__dirname, 'server.js')], {
     assert(!JSON.stringify(authenticatedDeletion.body).includes('service-role'));
 
     const styleSheet = await request('/style.css');
-    assert(styleSheet.body.includes('--primary-contrast: #b45309'), 'Accessible orange contrast token should be present');
+    assert(styleSheet.body.includes('--emerald-contrast: #0891b2'), 'Accessible emerald contrast token should be present');
     assert(styleSheet.body.includes('--text-dim:     #a8b4c5'), 'Dim text token should meet normal-text contrast');
 
     const forbiddenOrigin = await request('/api/site-config', { Origin: 'https://not-allowed.example' });
