@@ -13,9 +13,11 @@
  */
 const http = require('http');
 const assert = require('assert');
+const crypto = require('crypto');
 const { spawn } = require('child_process');
 const path = require('path');
 const { createAniListMock } = require('./test-fixtures/anilist-mock');
+const { requestHeaders, sanitizeForwardHeaders } = require('./stream-proxy');
 
 // Jujutsu Kaisen: a curated entry, so it has a local fallback while AniList is down.
 const CURATED_ANILIST_ID = 113415;
@@ -24,6 +26,7 @@ const UNKNOWN_ANILIST_ID = 987654321;
 const verifiedUserId = '01234567-89ab-cdef-0123-456789abcdef';
 const ANON_KEY = 'test-public-anon-key';
 const SERVICE_ROLE_KEY = 'test-server-only-service-role-key';
+const STREAM_PROXY_TEST_SECRET = 'stage04-stream-proxy-test-secret';
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 const authRequests = [];
@@ -71,6 +74,33 @@ function cspDirectives(response) {
   );
 }
 
+function createTestStreamToken(url) {
+  const payload = Buffer.from(JSON.stringify({
+    url,
+    exp: Date.now() + 60 * 1000
+  })).toString('base64url');
+  const signature = crypto
+    .createHmac('sha256', STREAM_PROXY_TEST_SECRET)
+    .update(payload)
+    .digest('base64url');
+  return `${payload}.${signature}`;
+}
+
+/**
+ * Reset only the current test client's in-memory buckets before a scenario
+ * whose first assertion is intentionally unauthenticated. This keeps the
+ * security assertion focused on authentication rather than request history.
+ */
+async function resetRateLimitState(baseURL) {
+  const response = await request(
+    baseURL,
+    '/__test/reset-rate-limits',
+    { 'X-Test-Rate-Limit-Reset': '1' },
+    'POST'
+  );
+  assert.strictEqual(response.statusCode, 204, 'Test rate-limit reset must be available in NODE_ENV=test');
+}
+
 /** Every response must carry the hardened header set, including errors. */
 function assertSecurityHeaders(response, label) {
   assert.strictEqual(response.headers['x-content-type-options'], 'nosniff', `${label}: nosniff header`);
@@ -109,6 +139,9 @@ async function startServer(port, env) {
     env: {
       ...process.env,
       NODE_ENV: 'test',
+      // Keep rate-limit assertions enabled even if the parent shell exported
+      // ANIME_HUB_TEST_MODE for another local test process.
+      ANIME_HUB_TEST_MODE: '0',
       PORT: String(port),
       SITE_URL: 'https://animehub.example',
       CORS_ORIGINS: `http://localhost:${port}`,
@@ -205,6 +238,8 @@ async function runOutageAndHeaderScenario(deadPort, port) {
   });
 
   try {
+    await resetRateLimitState(baseURL);
+
     // ---- security headers and CSP on a normal response ----
     const home = await request(baseURL, '/');
     assert.strictEqual(home.statusCode, 200, 'Home page should render');
@@ -619,6 +654,8 @@ async function runAccountVerificationScenario(mockAuthUrl, port) {
   });
 
   try {
+    await resetRateLimitState(baseURL);
+
     // A cleartext Supabase origin must never be trusted for credentials.
     assert.strictEqual(
       cspDirectives(await request(baseURL, '/')).get('connect-src'),
@@ -678,6 +715,8 @@ async function runAccountDeletionScenario(mockAuthUrl, port) {
   });
 
   try {
+    await resetRateLimitState(baseURL);
+
     authMode = 'deleteFail';
     const deleteFailure = await request(baseURL, '/api/account', { Authorization: 'Bearer test-access-token' }, 'DELETE');
     assert.strictEqual(
@@ -765,6 +804,8 @@ async function runUnconfiguredScenario(port) {
   });
 
   try {
+    await resetRateLimitState(baseURL);
+
     const unconfigured = await request(
       baseURL,
       '/api/account',
@@ -792,6 +833,52 @@ async function runUnconfiguredScenario(port) {
   } catch (error) {
     await stopServer(server);
     throw error;
+  }
+}
+
+/** Stream proxy SSRF rejection and inbound-header sanitization. */
+async function runStreamProxySecurityScenario(port) {
+  const baseURL = `http://localhost:${port}`;
+  const server = await startServer(port, {
+    STREAM_PROXY_SECRET: STREAM_PROXY_TEST_SECRET,
+    STREAM_PROXY_ALLOWED_HOSTS: 'media.example.com',
+    STREAM_PROVIDER_URL: 'https://provider.example/authorized-stream'
+  });
+
+  try {
+    const blockedTargets = [
+      'http://127.0.0.1/private.m3u8',
+      'http://10.0.0.8/private.m3u8',
+      'http://172.16.0.9/private.m3u8',
+      'http://192.168.1.7/private.m3u8',
+      'http://169.254.169.254/latest/meta-data/',
+      'https://unlisted.example/private.m3u8'
+    ];
+    for (const target of blockedTargets) {
+      const token = createTestStreamToken(target);
+      const response = await request(baseURL, `/api/stream/proxy?token=${encodeURIComponent(token)}`);
+      assert.strictEqual(response.statusCode, 403, `${target} must be rejected before an upstream connection`);
+      assert.strictEqual(response.body.message, 'The stream host is not allowed.');
+    }
+
+    const inbound = sanitizeForwardHeaders({
+      Accept: 'video/*',
+      Range: 'bytes=0-',
+      Authorization: 'Bearer should-not-forward',
+      Cookie: 'session=should-not-forward',
+      'X-Admin-Token': 'should-not-forward'
+    });
+    assert.deepStrictEqual(inbound, { Accept: 'video/*', Range: 'bytes=0-' });
+
+    const forwarded = requestHeaders(new URL('https://media.example.com/video.m3u8'), inbound);
+    assert.strictEqual(forwarded.Accept, 'video/*', 'Allowed media headers should be preserved');
+    assert.strictEqual(forwarded.Range, 'bytes=0-', 'Range should remain available for media seeking');
+    for (const sensitive of ['authorization', 'cookie', 'x-admin-token']) {
+      assert(!Object.keys(forwarded).some(name => name.toLowerCase() === sensitive), `${sensitive} must not reach upstream`);
+    }
+    console.log('Stream proxy SSRF targets are rejected and sensitive headers are stripped.');
+  } finally {
+    await stopServer(server);
   }
 }
 
@@ -1065,6 +1152,7 @@ async function run() {
     await runAccountVerificationScenario(mockAuthUrl, 3012);
     await runAccountDeletionScenario(mockAuthUrl, 3013);
     await runUnconfiguredScenario(3014);
+    await runStreamProxySecurityScenario(3017);
     await runStaleCacheScenario(3015);
     await runSearchDetailCacheScenario(3016);
     console.log('All Phase 2 security and resilience tests passed.');

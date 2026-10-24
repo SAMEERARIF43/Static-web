@@ -1,0 +1,43 @@
+{
+  "images": [
+    {
+      "filename": "favicon-192.svg",
+      "idiom": "iphone",
+      "scale": "2x",
+      "size": "60x60",
+      "sourceAsset": "public/assets/favicon-192.svg"
+    },
+    {
+      "filename": "favicon-512.svg",
+      "idiom": "iphone",
+      "scale": "3x",
+      "size": "60x60",
+      "sourceAsset": "public/assets/favicon-512.svg"
+    },
+    {
+      "filename": "favicon-192.svg",
+      "idiom": "ipad",
+      "scale": "2x",
+      "size": "76x76",
+      "sourceAsset": "public/assets/favicon-192.svg"
+    },
+    {
+      "filename": "favicon-512.svg",
+      "idiom": "ipad",
+      "scale": "2x",
+      "size": "83.5x83.5",
+      "sourceAsset": "public/assets/favicon-512.svg"
+    },
+    {
+      "filename": "favicon-512.svg",
+      "idiom": "ios-marketing",
+      "scale": "1x",
+      "size": "1024x1024",
+      "sourceAsset": "public/assets/favicon-512.svg"
+    }
+  ],
+  "info": {
+    "author": "xcode",
+    "version": 1
+  }
+}

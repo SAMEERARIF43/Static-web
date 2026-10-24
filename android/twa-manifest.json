@@ -1,0 +1,18 @@
+{
+  "name": "Anime Hub",
+  "packageId": "com.animehub.app",
+  "webManifest": "../public/manifest.json",
+  "startUrl": "../public/",
+  "scope": "../public/",
+  "display": "standalone",
+  "offlineServiceWorker": "../public/sw.js",
+  "icons": {
+    "192": "../public/assets/favicon-192.svg",
+    "512": "../public/assets/favicon-512.svg"
+  },
+  "notes": [
+    "This is a local wrapper manifest source; a TWA still needs a secure deployed web origin for Digital Asset Links.",
+    "The web manifest remains the source of truth for browser/PWA metadata.",
+    "No external package or build pipeline is added by this configuration."
+  ]
+}

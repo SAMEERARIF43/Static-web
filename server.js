@@ -32,6 +32,7 @@ const {
   buildCatalogGraphQL,
   buildRecommendationsGraphQL,
   filterCatalogLocally,
+  normalizeBrowsePageMeta,
   parseBrowseFilters,
   parseRecommendationInput,
   RECOMMENDATIONS_MAX_RESULTS
@@ -45,6 +46,14 @@ const {
   buildMangaGraphQL,
   mangaCacheKey
 } = require('./content-utils');
+const {
+  createStreamToken,
+  extractStreamUrl,
+  proxyStreamRequest,
+  proxySubtitleRequest,
+  proxyUrlForToken,
+  subtitleProxyUrlForToken
+} = require('./stream-proxy');
 
 const app = express();
 
@@ -293,6 +302,7 @@ const RATE_LIMIT_WINDOW_MS = 60 * 1000;
 const RATE_LIMIT_GLOBAL_MAX = 120;
 const RATE_LIMIT_PROXY_MAX = 60;
 const RATE_LIMIT_ACCOUNT_MAX = 5;
+const STREAM_RATE_LIMIT_MAX = 30;
 const AUTOMATED_TEST_MODE = process.env.NODE_ENV === 'test' && process.env.ANIME_HUB_TEST_MODE === '1';
 
 const globalApiLimiter = rateLimit({
@@ -335,6 +345,17 @@ const accountDeletionLimiter = rateLimit({
   }
 });
 
+const streamLimiter = rateLimit({
+  windowMs: RATE_LIMIT_WINDOW_MS,
+  limit: STREAM_RATE_LIMIT_MAX,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+  handler: (req, res) => {
+    console.warn(`Rate limit exceeded (stream gateway) from ${req.ip}`);
+    res.status(429).json({ message: 'Too many stream requests. Please slow down.' });
+  }
+});
+
 // Admin moderation endpoints are scoped by a strict, separate rate limit.
 const ADMIN_RATE_LIMIT_WINDOW_MS = 60 * 1000;
 const ADMIN_RATE_LIMIT_MAX = 30;
@@ -350,6 +371,35 @@ const adminLimiter = rateLimit({
     res.status(429).json({ message: 'Too many admin requests. Please slow down.' });
   }
 });
+
+const rateLimiters = [
+  globalApiLimiter,
+  proxyLimiter,
+  accountDeletionLimiter,
+  streamLimiter,
+  adminLimiter
+];
+
+/**
+ * Clear one client's in-memory limiter buckets. This is deliberately exposed
+ * only through the test-only reset route below; production has no reset hook.
+ */
+async function resetRateLimitState(key) {
+  await Promise.all(rateLimiters.map(limiter => {
+    if (typeof limiter.resetKey !== 'function') return undefined;
+    return limiter.resetKey(key);
+  }));
+}
+
+if (process.env.NODE_ENV === 'test') {
+  app.post('/__test/reset-rate-limits', async (req, res) => {
+    if (req.get('X-Test-Rate-Limit-Reset') !== '1') {
+      return res.status(404).end();
+    }
+    await resetRateLimitState(req.ip);
+    return res.status(204).end();
+  });
+}
 
 // Admin key guard: requires X-Admin-Key header matching ADMIN_KEY env var.
 // Falls back to a dev-only default so the admin panel is usable locally without
@@ -372,6 +422,7 @@ app.use('/api/anime/:id', proxyLimiter);
 app.use(['/api/manga', '/api/manhwa', '/api/manhua'], proxyLimiter);
 app.use('/api/account', accountDeletionLimiter);
 app.use('/api/admin', adminLimiter);
+app.use('/api/stream', streamLimiter);
 
 app.get('/api/health', (req, res) => {
   res.setHeader('Cache-Control', 'no-store');
@@ -434,6 +485,69 @@ app.get('/api/config', (req, res) => {
     SUPABASE_ANON_KEY: process.env.SUPABASE_ANON_KEY || ''
   });
 });
+
+// ============================================================
+// AUTHORIZED STREAM GATEWAY
+// ============================================================
+// The provider is operator-configured and the returned source URLs are signed
+// before the browser can use the local HLS/segment proxy. No catalog endpoint
+// is changed by this flow.
+
+app.get('/api/stream/extract', async (req, res) => {
+  const animeId = String(req.query.animeId || '').trim();
+  const episode = String(req.query.episode || req.query.episodeNum || '').trim();
+  if (!/^\d+$/.test(animeId) || Number(animeId) < 1 || !/^\d+$/.test(episode) || Number(episode) < 1) {
+    return res.status(400).json({ message: 'animeId and episode must be positive integers.' });
+  }
+
+  try {
+    const sources = await extractStreamUrl(animeId, episode);
+    return res.json({
+      animeId: Number(animeId),
+      episode: Number(episode),
+      expiresInSeconds: 600,
+      sources: sources.map(source => {
+        const token = createStreamToken(source.url);
+        return {
+          quality: source.quality,
+          type: source.type,
+          host: source.host,
+          url: proxyUrlForToken(token),
+          subtitles: (source.subtitles || []).map(track => ({
+            label: track.label,
+            language: track.language,
+            kind: track.kind,
+            format: track.format,
+            default: track.default,
+            url: subtitleProxyUrlForToken(createStreamToken(track.url))
+          })),
+          audioTracks: source.audioTracks || []
+        };
+      })
+    });
+  } catch (error) {
+    if (error.code === 'STREAM_PROVIDER_NOT_CONFIGURED') {
+      return res.status(503).json({ message: 'Authorized stream playback is not configured on this server.' });
+    }
+    if (error.code === 'INVALID_STREAM_REQUEST') {
+      return res.status(400).json({ message: error.message });
+    }
+    if (error.code === 'NO_STREAM_SOURCES') {
+      return res.status(404).json({ message: 'No authorized stream source is available for this episode.' });
+    }
+    console.error(`Stream extraction failed [${req.id || 'no-request-id'}]: ${error.message}`);
+    return res.status(502).json({ message: 'Could not retrieve an authorized stream source.' });
+  }
+});
+
+app.get('/api/stream/proxy', proxyStreamRequest);
+app.options('/api/stream/subtitles', (req, res) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Range, Content-Type');
+  res.status(204).end();
+});
+app.get('/api/stream/subtitles', proxySubtitleRequest);
 
 app.delete('/api/account', async (req, res) => {
   const authorization = req.get('authorization') || '';
@@ -943,23 +1057,39 @@ async function fetchAniListPage(query, variables = {}) {
       timeout: CATALOG_TIMEOUT_MS
     }
   );
-  if (response.data.errors) {
+  if (response.data?.errors) {
     throw new Error(response.data.errors.map(error => error.message).join('; '));
   }
 
-  const media = safe(response, 'data.data.Page.media', null);
-  if (!Array.isArray(media)) {
+  const page = safe(response, 'data.data.Page', null);
+  if (!page || typeof page !== 'object' || Array.isArray(page) || !Array.isArray(page.media)) {
     throw new Error('AniList returned an invalid catalog response.');
   }
 
-  const pageInfo = safe(response, 'data.data.Page.pageInfo', null);
+  const pageInfo = page.pageInfo;
+  if (pageInfo !== null && pageInfo !== undefined
+    && (typeof pageInfo !== 'object' || Array.isArray(pageInfo))) {
+    throw new Error('AniList returned invalid catalog pagination metadata.');
+  }
   return {
-    media: media.map(anime => ({
+    media: page.media.map(anime => ({
       ...anime,
       description: sanitizeDescription(anime.description)
     })),
-    pageInfo: pageInfo && typeof pageInfo === 'object' ? pageInfo : null
+    pageInfo: pageInfo || null
   };
+}
+
+/** Validate the search payload before it can be cached or labelled as live. */
+function extractAniListSearchMedia(response) {
+  if (response.data?.errors) {
+    throw new Error(response.data.errors.map(error => error.message).join('; '));
+  }
+  const page = safe(response, 'data.data.Page', null);
+  if (!page || typeof page !== 'object' || Array.isArray(page) || !Array.isArray(page.media)) {
+    throw new Error('AniList returned an invalid search response.');
+  }
+  return page.media;
 }
 
 async function fetchAniListMedia(query, variables = {}) {
@@ -979,12 +1109,15 @@ async function fetchLiveCatalog(query, variables = {}) {
 function createCatalogLoader({ label, query, filter, fallback }) {
   const cache = {
     data: null,
+    source: null,
     expiresAt: 0,
     pending: null
   };
 
   return async function loadCatalog() {
-    if (cache.data && Date.now() < cache.expiresAt) return cache.data;
+    if (cache.data && Date.now() < cache.expiresAt) {
+      return { data: cache.data, source: cache.source || 'anilist' };
+    }
     if (cache.pending) return cache.pending;
 
     const staleCatalog = cache.data;
@@ -996,11 +1129,13 @@ function createCatalogLoader({ label, query, filter, fallback }) {
         // carry a curated series nor a series list a curated film.
         const catalog = filter ? liveCatalog.filter(filter) : liveCatalog;
         cache.data = catalog;
+        cache.source = 'anilist';
         cache.expiresAt = Date.now() + CATALOG_CACHE_TTL_MS;
-        return catalog;
+        return { data: catalog, source: 'anilist' };
       } catch (error) {
         console.warn(`AniList ${label} catalog unavailable; using ${staleCatalog ? 'cached' : 'curated'} catalog: ${error.message}`);
-        return staleCatalog || fallback();
+        if (staleCatalog) return { data: staleCatalog, source: 'anilist' };
+        return { data: fallback(), source: 'curated' };
       } finally {
         cache.pending = null;
       }
@@ -1277,11 +1412,9 @@ app.post('/api/recommendations', async (req, res) => {
 // ============================================================
 
 app.get('/api/trending', async (req, res) => {
-
-  const trending = await getTrendingCatalog();
-
-  res.json(trending);
-
+  const result = await getTrendingCatalog();
+  res.setHeader('X-Catalog-Source', result.source);
+  return res.json(result.data);
 });
 
 
@@ -1290,11 +1423,9 @@ app.get('/api/trending', async (req, res) => {
 // ============================================================
 
 app.get('/api/movies', async (req, res) => {
-
-  const movies = await getMoviesCatalog();
-
-  res.json(movies);
-
+  const result = await getMoviesCatalog();
+  res.setHeader('X-Catalog-Source', result.source);
+  return res.json(result.data);
 });
 
 
@@ -1303,11 +1434,9 @@ app.get('/api/movies', async (req, res) => {
 // ============================================================
 
 app.get('/api/series', async (req, res) => {
-
-  const series = await getSeriesCatalog();
-
-  res.json(series);
-
+  const result = await getSeriesCatalog();
+  res.setHeader('X-Catalog-Source', result.source);
+  return res.json(result.data);
 });
 
 
@@ -1316,8 +1445,9 @@ app.get('/api/series', async (req, res) => {
 // ============================================================
 
 app.get('/api/popular', async (req, res) => {
-  const popular = await getPopularCatalog();
-  res.json(popular);
+  const result = await getPopularCatalog();
+  res.setHeader('X-Catalog-Source', result.source);
+  return res.json(result.data);
 });
 
 
@@ -1331,22 +1461,14 @@ app.get('/api/popular', async (req, res) => {
  * window: the browse API never navigates beyond `BROWSE_MAX_PAGE`, so page 50
  * is the last navigable page even when AniList reports more results.
  */
-function pageMeta(pageInfo, page, itemCount, fallbackPerPage = CATALOG_PER_PAGE, maxPage = Infinity) {
-  const total = Number.isInteger(pageInfo?.total) ? pageInfo.total : null;
-  const lastPage = Number.isInteger(pageInfo?.lastPage) ? pageInfo.lastPage : null;
-  const rawHasNext = typeof pageInfo?.hasNextPage === 'boolean'
-    ? pageInfo.hasNextPage
-    : itemCount >= fallbackPerPage;
-  // Never advertise a next page beyond the supported navigation window, and
-  // never report more total pages than the application permits.
-  const hasNext = page < maxPage && rawHasNext;
-  return {
+function pageMeta(pageInfo, page, itemCount, fallbackPerPage = CATALOG_PER_PAGE, maxPage = BROWSE_MAX_PAGE, totalCount = null) {
+  return normalizeBrowsePageMeta(pageInfo, {
     page,
-    perPage: Number.isInteger(pageInfo?.perPage) ? pageInfo.perPage : fallbackPerPage,
-    total,
-    totalPages: lastPage !== null ? Math.min(Math.max(1, lastPage), maxPage) : Math.max(1, page + (hasNext ? 1 : 0)),
-    hasNext
-  };
+    perPage: fallbackPerPage,
+    itemCount,
+    totalCount,
+    maxPage
+  });
 }
 
 
@@ -1418,26 +1540,14 @@ async function getBrowsePage(filters, perPage) {
           return {
             data: kitsuResults,
             source: 'kitsu',
-            meta: {
-              page: filters.page,
-              perPage,
-              total: kitsuResults.length,
-              totalPages: 1,
-              hasNext: false
-            }
+             meta: pageMeta(null, filters.page, kitsuResults.length, perPage, BROWSE_MAX_PAGE, kitsuResults.length)
           };
         }
       }
       return {
         data: matches.slice(start, start + perPage),
         source: 'curated',
-        meta: {
-          page: filters.page,
-          perPage,
-          total: matches.length,
-          totalPages: Math.max(1, Math.ceil(matches.length / perPage)),
-          hasNext: start + perPage < matches.length
-        }
+        meta: pageMeta(null, filters.page, curatedResults.length, perPage, BROWSE_MAX_PAGE, matches.length)
       };
     }
   })();
@@ -1913,12 +2023,7 @@ app.get('/api/search', async (req, res) => {
         }
       );
 
-      if (response.data.errors) {
-        console.error("❌ AniList GraphQL Error:", response.data.errors);
-        throw new Error(response.data.errors.map(entry => entry.message).join('; '));
-      }
-
-      const mediaList = safe(response, 'data.data.Page.media', []);
+      const mediaList = extractAniListSearchMedia(response);
       // Deduplicate and sanitize descriptions before caching and sending
       return deduplicateMediaList(mediaList).map(anime => ({
         ...anime,
@@ -1998,6 +2103,16 @@ app.get('/api/genre/:genre', async (req, res) => {
     });
   }
 
+  if (Array.isArray(req.query.type)) {
+    return res.status(400).json({ message: 'Genre type must be provided once.' });
+  }
+  if (req.query.type !== undefined && typeof req.query.type !== 'string') {
+    return res.status(400).json({ message: 'Genre type must be a string.' });
+  }
+  if (req.query.type && !Object.hasOwn(TYPE_FILTERS, req.query.type)) {
+    return res.status(400).json({ message: 'Genre type must be one of: series, movies.' });
+  }
+
   if (ADULT_GENRES.has(genre.toLowerCase())) {
 
     res.setHeader('X-Catalog-Source', 'curated');
@@ -2007,9 +2122,7 @@ app.get('/api/genre/:genre', async (req, res) => {
 
   // `?type=series|movies` keeps a page's genre filter inside its own format
   // group, so filtering by genre can never reintroduce the wrong type.
-  const typeKey = typeof req.query.type === 'string' && Object.hasOwn(TYPE_FILTERS, req.query.type)
-    ? req.query.type
-    : null;
+  const typeKey = req.query.type || null;
 
   const { data, source } = await getGenreCatalog(genre, typeKey);
   res.setHeader('X-Catalog-Source', source);

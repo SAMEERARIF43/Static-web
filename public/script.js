@@ -622,6 +622,304 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   // ============================================================
+  // AUTHORIZED HLS PLAYER
+  // ============================================================
+
+  const streamPlayerState = {
+    sources: [],
+    selectedQuality: '',
+    selectedHost: '',
+    selectedSubtitle: 'off',
+    selectedAudio: 'auto',
+    hls: null,
+    lastFocus: null
+  };
+
+  function streamPlayerElements() {
+    return {
+      modal: document.getElementById('stream-player-modal'),
+      title: document.getElementById('stream-player-title'),
+      video: document.getElementById('stream-player-video'),
+      host: document.getElementById('stream-host-select'),
+      subtitles: document.getElementById('stream-subtitle-select'),
+      audio: document.getElementById('stream-audio-select'),
+      qualities: document.getElementById('stream-quality-toggles'),
+      status: document.getElementById('stream-player-status')
+    };
+  }
+
+  function setStreamPlayerStatus(message, type = '') {
+    const status = streamPlayerElements().status;
+    if (!status) return;
+    status.textContent = message;
+    status.dataset.state = type;
+  }
+
+  function destroyStreamPlayerEngine() {
+    if (streamPlayerState.hls) {
+      streamPlayerState.hls.destroy();
+      streamPlayerState.hls = null;
+    }
+    const video = streamPlayerElements().video;
+    if (video) {
+      video.pause();
+      video.removeAttribute('src');
+      video.querySelectorAll('track[data-stream-track]').forEach(track => track.remove());
+      video.load();
+    }
+  }
+
+  function closeStreamPlayer(restoreFocus = true) {
+    const { modal } = streamPlayerElements();
+    destroyStreamPlayerEngine();
+    if (modal) modal.hidden = true;
+    streamPlayerState.sources = [];
+    streamPlayerState.selectedQuality = '';
+    streamPlayerState.selectedHost = '';
+    streamPlayerState.selectedSubtitle = 'off';
+    streamPlayerState.selectedAudio = 'auto';
+    if (restoreFocus) streamPlayerState.lastFocus?.focus?.();
+    streamPlayerState.lastFocus = null;
+  }
+
+  function loadHlsLibrary() {
+    if (window.Hls) return Promise.resolve(window.Hls);
+    if (window.__animeHubHlsPromise) return window.__animeHubHlsPromise;
+    window.__animeHubHlsPromise = new Promise((resolve, reject) => {
+      const script = document.createElement('script');
+      script.src = 'https://cdn.jsdelivr.net/npm/hls.js@1.5.17/dist/hls.min.js';
+      script.async = true;
+      script.onload = () => window.Hls ? resolve(window.Hls) : reject(new Error('HLS.js did not load.'));
+      script.onerror = () => reject(new Error('HLS.js could not be loaded.'));
+      document.head.appendChild(script);
+    });
+    return window.__animeHubHlsPromise;
+  }
+
+  function streamQualities() {
+    const preferred = ['1080p', '720p', '360p', 'Auto'];
+    const values = [...new Set(streamPlayerState.sources.map(source => source.quality || 'Auto'))];
+    return values.sort((a, b) => {
+      const aIndex = preferred.indexOf(a);
+      const bIndex = preferred.indexOf(b);
+      if (aIndex >= 0 || bIndex >= 0) return (aIndex < 0 ? preferred.length : aIndex) - (bIndex < 0 ? preferred.length : bIndex);
+      return String(a).localeCompare(String(b));
+    });
+  }
+
+  function selectedStreamSources() {
+    const qualityMatches = streamPlayerState.sources.filter(source =>
+      !streamPlayerState.selectedQuality || source.quality === streamPlayerState.selectedQuality
+    );
+    return qualityMatches.length ? qualityMatches : streamPlayerState.sources;
+  }
+
+  function selectedStreamSource() {
+    return selectedStreamSources().find(entry => entry.host === streamPlayerState.selectedHost) || selectedStreamSources()[0];
+  }
+
+  function subtitleTracksForSource(source) {
+    return Array.isArray(source?.subtitles) ? source.subtitles.filter(track => track?.url) : [];
+  }
+
+  function audioTracksForSource(source) {
+    return Array.isArray(source?.audioTracks) ? source.audioTracks : [];
+  }
+
+  function setSubtitleMode(value) {
+    const video = streamPlayerElements().video;
+    if (!video) return;
+    video.textTracks && Array.from(video.textTracks).forEach(track => {
+      track.mode = value !== 'off' && track.language === value ? 'showing' : 'disabled';
+    });
+  }
+
+  function renderSubtitleOptions(source) {
+    const { subtitles } = streamPlayerElements();
+    if (!subtitles) return;
+    const options = [{ value: 'off', label: 'Off' }, ...subtitleTracksForSource(source).map(track => ({
+      value: track.language,
+      label: track.label || track.language.toUpperCase()
+    }))];
+    const seen = new Set();
+    subtitles.replaceChildren(...options.filter(option => {
+      if (seen.has(option.value)) return false;
+      seen.add(option.value);
+      return true;
+    }).map(optionData => {
+      const option = document.createElement('option');
+      option.value = optionData.value;
+      option.textContent = optionData.label;
+      option.selected = optionData.value === streamPlayerState.selectedSubtitle;
+      return option;
+    }));
+    if (!options.some(option => option.value === streamPlayerState.selectedSubtitle)) {
+      streamPlayerState.selectedSubtitle = 'off';
+      subtitles.value = 'off';
+    }
+    subtitles.onchange = () => {
+      streamPlayerState.selectedSubtitle = subtitles.value || 'off';
+      setSubtitleMode(streamPlayerState.selectedSubtitle);
+    };
+  }
+
+  function renderAudioOptions(source, hlsTracks = null) {
+    const { audio } = streamPlayerElements();
+    if (!audio) return;
+    const tracks = Array.isArray(hlsTracks) && hlsTracks.length
+      ? hlsTracks.map((track, index) => ({
+        value: `hls:${index}`,
+        label: track.name || track.lang || track.language || `Audio ${index + 1}`
+      }))
+      : audioTracksForSource(source).map((track, index) => ({
+        value: `provider:${track.id || index}`,
+        label: track.label || track.language?.toUpperCase() || `Audio ${index + 1}`
+      }));
+    const options = [{ value: 'auto', label: 'Auto' }, ...tracks];
+    audio.replaceChildren(...options.map(optionData => {
+      const option = document.createElement('option');
+      option.value = optionData.value;
+      option.textContent = optionData.label;
+      option.selected = optionData.value === streamPlayerState.selectedAudio;
+      return option;
+    }));
+    if (!options.some(option => option.value === streamPlayerState.selectedAudio)) {
+      streamPlayerState.selectedAudio = 'auto';
+      audio.value = 'auto';
+    }
+    audio.onchange = () => {
+      streamPlayerState.selectedAudio = audio.value || 'auto';
+      if (streamPlayerState.hls && streamPlayerState.selectedAudio.startsWith('hls:')) {
+        streamPlayerState.hls.audioTrack = Number(streamPlayerState.selectedAudio.slice(4));
+        setStreamPlayerStatus('Audio track switched.', 'ready');
+      } else if (streamPlayerState.selectedAudio.startsWith('provider:')) {
+        setStreamPlayerStatus('This source exposes audio metadata but no switchable HLS audio group.', 'info');
+      }
+    };
+  }
+
+  function renderStreamControls() {
+    const { host, qualities } = streamPlayerElements();
+    if (!host || !qualities) return;
+    const qualityValues = streamQualities();
+    if (!qualityValues.includes(streamPlayerState.selectedQuality)) {
+      streamPlayerState.selectedQuality = qualityValues[0] || '';
+    }
+    qualities.replaceChildren(...qualityValues.map(quality => {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = `stream-quality-btn${quality === streamPlayerState.selectedQuality ? ' active' : ''}`;
+      button.textContent = quality;
+      button.setAttribute('aria-pressed', String(quality === streamPlayerState.selectedQuality));
+      button.addEventListener('click', () => {
+        streamPlayerState.selectedQuality = quality;
+        streamPlayerState.selectedHost = '';
+        renderStreamControls();
+        void playSelectedStream();
+      });
+      return button;
+    }));
+
+    const hosts = [...new Map(selectedStreamSources().map(source => [source.host, source])).values()];
+    if (!hosts.some(source => source.host === streamPlayerState.selectedHost)) {
+      streamPlayerState.selectedHost = hosts[0]?.host || '';
+    }
+    host.replaceChildren(...hosts.map(source => {
+      const option = document.createElement('option');
+      option.value = source.host;
+      option.textContent = source.host;
+      option.selected = source.host === streamPlayerState.selectedHost;
+      return option;
+    }));
+    host.onchange = () => {
+      streamPlayerState.selectedHost = host.value;
+      void playSelectedStream();
+    };
+    renderSubtitleOptions(selectedStreamSource());
+    renderAudioOptions(selectedStreamSource());
+  }
+
+  async function playSelectedStream() {
+    const { video } = streamPlayerElements();
+    const source = selectedStreamSource();
+    if (!video || !source?.url) return;
+    destroyStreamPlayerEngine();
+    setStreamPlayerStatus(`Loading ${source.quality || 'Auto'} from ${source.host}…`);
+    const streamUrl = new URL(source.url, window.location.href).href;
+    renderSubtitleOptions(source);
+    renderAudioOptions(source);
+    subtitleTracksForSource(source).forEach(track => {
+      const element = document.createElement('track');
+      element.dataset.streamTrack = 'true';
+      element.kind = track.kind || 'subtitles';
+      element.label = track.label || track.language;
+      element.srclang = track.language || 'und';
+      element.src = new URL(track.url, window.location.href).href;
+      element.default = track.default === true;
+      video.appendChild(element);
+    });
+    setSubtitleMode(streamPlayerState.selectedSubtitle);
+    const isHls = source.type?.includes('mpegurl') || source.url.toLowerCase().includes('.m3u8');
+    try {
+      if (!isHls || video.canPlayType('application/vnd.apple.mpegurl')) {
+        video.src = streamUrl;
+        video.load();
+        await video.play().catch(() => {});
+      } else {
+        const Hls = await loadHlsLibrary();
+        if (!Hls.isSupported()) throw new Error('This browser cannot play HLS streams.');
+        streamPlayerState.hls = new Hls({ enableWorker: true });
+        streamPlayerState.hls.loadSource(streamUrl);
+        streamPlayerState.hls.attachMedia(video);
+        streamPlayerState.hls.on(Hls.Events.AUDIO_TRACKS_UPDATED, (_event, data) => {
+          renderAudioOptions(source, data.audioTracks || []);
+        });
+        streamPlayerState.hls.on(Hls.Events.MANIFEST_PARSED, () => {
+          renderAudioOptions(source, streamPlayerState.hls.audioTracks || []);
+          video.play().catch(() => {});
+        });
+      }
+      setStreamPlayerStatus('Ready. Use the quality and host controls to switch sources.', 'ready');
+    } catch (error) {
+      console.error('Could not start stream playback:', error);
+      setStreamPlayerStatus('This authorized source could not be played. Try another host or quality.', 'error');
+    }
+  }
+
+  async function openStreamPlayer({ animeId, episode, title, trigger }) {
+    const elements = streamPlayerElements();
+    if (!elements.modal) return;
+    streamPlayerState.lastFocus = trigger || document.activeElement;
+    elements.modal.hidden = false;
+    elements.title.textContent = `${title || 'Episode'} — Episode ${episode}`;
+    setStreamPlayerStatus('Loading authorized stream sources…');
+    streamPlayerState.sources = [];
+    streamPlayerState.selectedSubtitle = 'off';
+    streamPlayerState.selectedAudio = 'auto';
+    renderStreamControls();
+    try {
+      const params = new URLSearchParams({ animeId: String(animeId), episode: String(episode) });
+      const response = await fetchWithPolicy(`${baseURL}/stream/extract?${params.toString()}`, {}, { timeout: 'detail', retries: 0 });
+      const payload = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(payload?.message || `Stream extraction failed: ${response.status}`);
+      streamPlayerState.sources = Array.isArray(payload?.sources) ? payload.sources.filter(source => source?.url && source?.host) : [];
+      if (!streamPlayerState.sources.length) throw new Error('No authorized sources were returned.');
+      streamPlayerState.selectedQuality = streamQualities()[0] || '';
+      streamPlayerState.selectedHost = '';
+      renderStreamControls();
+      await playSelectedStream();
+    } catch (error) {
+      console.error('Could not load stream sources:', error);
+      setStreamPlayerStatus(error.message || 'No authorized stream source is available.', 'error');
+    }
+  }
+
+  document.getElementById('stream-player-close')?.addEventListener('click', () => closeStreamPlayer());
+  document.getElementById('stream-player-modal')?.addEventListener('click', event => {
+    if (event.target.id === 'stream-player-modal') closeStreamPlayer();
+  });
+
+  // ============================================================
   // RENDER ANIME CARD
   // ============================================================
 
@@ -2375,6 +2673,17 @@ document.addEventListener('DOMContentLoaded', () => {
           id: anime.id
         })
         : '<p class="watch-progress-hint">Add this title to your watchlist to track status and episode progress.</p>';
+      const streamEpisode = savedAnime && Number(savedAnime.currentEpisode) > 0
+        ? Number(savedAnime.currentEpisode)
+        : 1;
+      const streamPlayerButton = `
+        <button type="button" class="cta-btn secondary-btn" data-stream-play
+          data-stream-anime-id="${escapeHtml(String(anime.id))}"
+          data-stream-episode="${streamEpisode}"
+          data-stream-title="${escapeHtml(rawTitle)}">
+          ▶ Play authorized episode
+        </button>
+      `;
 
       detailContent.innerHTML = `
         <div class="detail-banner">
@@ -2412,6 +2721,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 <button type="button" class="cta-btn ${isAnimeSaved ? 'primary-btn' : 'secondary-btn'}" id="detail-watchlist-btn" aria-pressed="${isAnimeSaved}">
                   ${isAnimeSaved ? '✓ In Watchlist' : '+ Add to Watchlist'}
                 </button>
+                ${streamPlayerButton}
                 ${trailerHtml}
               </div>
               ${detailWatchControls}
@@ -2423,7 +2733,7 @@ document.addEventListener('DOMContentLoaded', () => {
               </div>
             </div>
           </div>
-          <p class="legal-availability-note">AnimeHub is an anime discovery catalog and does not host or stream copyrighted video. Availability varies by region; find licensed streaming providers on JustWatch or watch official trailers on YouTube.</p>
+          <p class="legal-availability-note">AnimeHub does not host or store video. Playback is available only for operator-configured authorized sources; otherwise, find licensed streaming providers on JustWatch or watch official trailers on YouTube.</p>
           ${(staffHtml || charactersHtml) ? `<div class="detail-credits">${staffHtml}${charactersHtml}</div>` : ''}
           ${relatedHtml}
           ${recommendationsHtml}
@@ -3853,6 +4163,8 @@ document.addEventListener('DOMContentLoaded', () => {
     // Restore unlocked state on page load if key is stored
     if (localStorage.getItem(ADMIN_KEY_STORAGE_KEY)) {
       setAdminUnlocked(true);
+    } else {
+      setAdminUnlocked(false);
     }
   }
 
@@ -5169,6 +5481,19 @@ document.addEventListener('DOMContentLoaded', () => {
       return;
     }
 
+    const streamButton = e.target.closest?.('[data-stream-play]');
+    if (streamButton) {
+      e.preventDefault();
+      e.stopPropagation();
+      await openStreamPlayer({
+        animeId: streamButton.dataset.streamAnimeId,
+        episode: streamButton.dataset.streamEpisode || '1',
+        title: streamButton.dataset.streamTitle || 'Episode',
+        trigger: streamButton
+      });
+      return;
+    }
+
     // Watchlist Bookmark Button
     const bookmarkBtn = e.target.closest('.card-watchlist-btn');
     if (bookmarkBtn) {
@@ -5306,6 +5631,12 @@ document.addEventListener('DOMContentLoaded', () => {
       return;
     }
     if (event.key === 'Escape') {
+      const streamModal = document.getElementById('stream-player-modal');
+      if (streamModal && !streamModal.hidden) {
+        event.preventDefault();
+        closeStreamPlayer();
+        return;
+      }
       // Close search overlay with focus return
       const searchOverlay = document.getElementById('search-overlay');
       if (searchOverlay && !searchOverlay.hidden && searchOverlay.classList.contains('open')) {

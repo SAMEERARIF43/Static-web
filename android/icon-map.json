@@ -1,0 +1,17 @@
+{
+  "sourceRoot": "../public/assets",
+  "mappings": [
+    {
+      "source": "favicon-192.svg",
+      "androidResource": "app/src/main/res/mipmap-anydpi-v26/ic_launcher_192.xml",
+      "resourceName": "@mipmap/ic_launcher_192",
+      "size": "192x192"
+    },
+    {
+      "source": "favicon-512.svg",
+      "androidResource": "app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml",
+      "resourceName": "@mipmap/ic_launcher",
+      "size": "512x512"
+    }
+  ]
+}

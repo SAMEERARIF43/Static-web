@@ -803,13 +803,13 @@
           </div>
         </div>
 
-        <div id="admin-locked" style="display:none;padding:40px;text-align:center;color:var(--text-muted);">
+        <div id="admin-locked" hidden style="padding:40px;text-align:center;color:var(--text-muted);">
           <div style="font-size:48px;margin-bottom:16px;">🔒</div>
           <h2 style="font-size:1.5rem;margin-bottom:8px;">Admin area locked</h2>
           <p>Enter the admin key to unlock moderation tools.</p>
         </div>
 
-        <div id="admin-unlocked" style="display:none;">
+        <div id="admin-unlocked" hidden>
           <div class="admin-tabs" style="display:flex;gap:8px;margin-bottom:20px;border-bottom:1px solid var(--border);">
             <button type="button" class="admin-tab-tab admin-tab-active" id="admin-tab-dmca" role="tab" aria-selected="true">DMCA &amp; Art Takedowns</button>
             <button type="button" class="admin-tab-tab" id="admin-tab-reviews" role="tab" aria-selected="false">Review &amp; Comment Moderation</button>
@@ -929,7 +929,7 @@
   <footer>
     <div class="section-container">
       <p style="margin-bottom: 8px;"><strong>Anime<span style="color: var(--primary);">Hub</span></strong> — Anime &amp; Movie Discovery Catalog</p>
-      <p style="font-size: 13px; color: var(--text-dim); max-width: 700px; margin: 0 auto 16px;">AnimeHub is an anime discovery and indexing platform. We do not host, store, or stream copyrighted video content. All metadata and cover media are sourced via AniList API and belong to their respective copyright owners.</p>
+      <p style="font-size: 13px; color: var(--text-dim); max-width: 700px; margin: 0 auto 16px;">AnimeHub is an anime discovery and indexing platform. We do not host or store video content; any optional playback is limited to operator-configured authorized sources. All metadata and cover media are sourced via AniList API and belong to their respective copyright owners.</p>
       <p style="font-size: 13px; color: var(--text-dim); margin: 0 auto 16px;">Anime data and images provided by <a href="https://anilist.co" target="_blank" rel="noopener noreferrer" style="color: var(--primary);">AniList</a>.</p>
       <nav class="legal-links" aria-label="Legal and contact">
         <a href="privacy.html">Privacy Policy</a>
@@ -956,6 +956,37 @@
     </div>
   </div>
   <div class="notifications-backdrop" id="notifications-backdrop" hidden></div>
+
+  <!-- ========== AUTHORIZED STREAM PLAYER ========== -->
+  <div class="stream-player-modal" id="stream-player-modal" hidden role="dialog" aria-modal="true" aria-labelledby="stream-player-title">
+    <div class="stream-player-card">
+      <div class="stream-player-header">
+        <div>
+          <p class="stream-player-kicker">Authorized playback</p>
+          <h2 id="stream-player-title">Episode player</h2>
+        </div>
+        <button type="button" class="stream-player-close" id="stream-player-close" aria-label="Close episode player">✕</button>
+      </div>
+      <video id="stream-player-video" class="stream-player-video" controls playsinline preload="metadata"></video>
+        <div class="stream-player-controls">
+          <label for="stream-host-select">Host
+            <select id="stream-host-select" aria-label="Select stream host"></select>
+          </label>
+          <label for="stream-subtitle-select">Subtitles / CC
+            <select id="stream-subtitle-select" aria-label="Select subtitles or captions"></select>
+          </label>
+          <label for="stream-audio-select">Audio
+            <select id="stream-audio-select" aria-label="Select audio track"></select>
+          </label>
+          <div>
+            <span class="stream-control-label">Quality</span>
+            <div class="stream-quality-toggles" id="stream-quality-toggles" role="group" aria-label="Select stream quality"></div>
+        </div>
+      </div>
+      <p class="stream-player-status" id="stream-player-status" role="status" aria-live="polite">Loading authorized stream sources…</p>
+      <p class="stream-player-note">Playback is available only when a local operator has configured an authorized stream provider.</p>
+    </div>
+  </div>
 
 
   <!-- ========== SCRIPTS ========== -->
