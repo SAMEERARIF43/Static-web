@@ -281,14 +281,14 @@ select:focus-visible,
   font-family: var(--font-head);
   font-size: 26px;
   font-weight: 900;
-  color: var(--text);
+  color: var(--primary);
   letter-spacing: -0.5px;
   white-space: nowrap;
   flex-shrink: 0;
 }
 
 .logo .dot {
-  color: var(--emerald);
+  color: var(--primary);
 }
 
 .nav-links {
