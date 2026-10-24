@@ -67,7 +67,8 @@ module.exports = defineConfig({
   webServer: {
     command: 'node server.js',
     url: 'http://127.0.0.1:3100/api/health',
-    reuseExistingServer: false,
+    // Reuse a healthy local server when another test process already owns 3100.
+    reuseExistingServer: true,
     timeout: 120000,
     stdout: 'pipe',
     stderr: 'pipe',

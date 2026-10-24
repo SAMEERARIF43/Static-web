@@ -1,0 +1,43 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      NODE_ENV: ${NODE_ENV:-development}
+      PORT: 3000
+      SITE_URL: ${SITE_URL:-http://localhost}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost}
+      TRUST_PROXY: ${TRUST_PROXY:-1}
+      CONTACT_EMAIL: ${CONTACT_EMAIL:-}
+      DMCA_EMAIL: ${DMCA_EMAIL:-}
+      SUPABASE_URL: ${SUPABASE_URL:-}
+      SUPABASE_ANON_KEY: ${SUPABASE_ANON_KEY:-}
+      SUPABASE_SERVICE_ROLE_KEY: ${SUPABASE_SERVICE_ROLE_KEY:-}
+      ANILIST_GRAPHQL_URL: ${ANILIST_GRAPHQL_URL:-}
+      JUSTWATCH_REGION: ${JUSTWATCH_REGION:-us}
+      STREAM_PROVIDER_URL: ${STREAM_PROVIDER_URL:-}
+      STREAM_PROXY_ALLOWED_HOSTS: ${STREAM_PROXY_ALLOWED_HOSTS:-}
+      STREAM_PROXY_SECRET: ${STREAM_PROXY_SECRET:-}
+      STREAM_PROXY_REFERER: ${STREAM_PROXY_REFERER:-}
+      STREAM_PROXY_ORIGIN: ${STREAM_PROXY_ORIGIN:-}
+      STREAM_PROXY_USER_AGENT: ${STREAM_PROXY_USER_AGENT:-}
+      STREAM_PROXY_TIMEOUT_MS: ${STREAM_PROXY_TIMEOUT_MS:-15000}
+    ports:
+      - "3000:3000"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/health').then(r => { if (!r.ok) process.exit(1) }).catch(() => process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+
+  nginx:
+    image: nginx:1.27-alpine
+    depends_on:
+      app:
+        condition: service_healthy
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro

@@ -1,0 +1,10 @@
+{
+  "appId": "com.animehub.app",
+  "appName": "Anime Hub",
+  "webDir": "public",
+  "bundledWebRuntime": false,
+  "ios": {
+    "preferredContentMode": "mobile",
+    "backgroundColor": "#0f1117"
+  }
+}

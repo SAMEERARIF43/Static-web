@@ -356,6 +356,54 @@ const BROWSE_SORT_KEYS = {
 };
 
 /**
+ * Normalize provider pagination into the bounded contract exposed by browse.
+ * Provider metadata is untrusted: malformed totals, page sizes, and booleans
+ * must never make the client advertise a page outside the supported window.
+ */
+function normalizeBrowsePageMeta(pageInfo, {
+  page = 1,
+  perPage = BROWSE_DEFAULT_PER_PAGE,
+  itemCount = 0,
+  totalCount = null,
+  maxPage = BROWSE_MAX_PAGE
+} = {}) {
+  const requestedPage = Number.isSafeInteger(page) && page >= 1 ? page : 1;
+  const requestedPerPage = Number.isSafeInteger(perPage) && perPage >= 1
+    ? perPage
+    : BROWSE_DEFAULT_PER_PAGE;
+  const pageLimit = Number.isSafeInteger(maxPage) && maxPage >= 1 ? maxPage : BROWSE_MAX_PAGE;
+  const provider = pageInfo && typeof pageInfo === 'object' && !Array.isArray(pageInfo)
+    ? pageInfo
+    : {};
+  const providerTotal = Number.isSafeInteger(provider.total) && provider.total >= 0
+    ? provider.total
+    : Number.isSafeInteger(totalCount) && totalCount >= 0
+      ? totalCount
+      : null;
+  const providerLastPage = Number.isSafeInteger(provider.lastPage) && provider.lastPage >= 1
+    ? provider.lastPage
+    : null;
+  const providerHasNext = typeof provider.hasNextPage === 'boolean'
+    ? provider.hasNextPage
+    : Number.isSafeInteger(itemCount) && itemCount >= requestedPerPage;
+  const calculatedPages = providerTotal !== null
+    ? Math.ceil(providerTotal / requestedPerPage)
+    : providerLastPage || requestedPage + (providerHasNext ? 1 : 0);
+  const totalPages = Math.min(
+    pageLimit,
+    Math.max(1, Number.isSafeInteger(calculatedPages) ? calculatedPages : 1)
+  );
+
+  return {
+    page: requestedPage,
+    perPage: requestedPerPage,
+    total: providerTotal,
+    totalPages,
+    hasNext: requestedPage < pageLimit && providerHasNext
+  };
+}
+
+/**
  * Parse and validate the `/api/browse` query string.
  *
  * Every parameter is checked against an allowlist or a numeric range, and a
@@ -680,6 +728,7 @@ module.exports = {
   buildCatalogGraphQL,
   buildRecommendationsGraphQL,
   filterCatalogLocally,
+  normalizeBrowsePageMeta,
   normalizeStatus,
   parseBrowseFilters,
   parseRecommendationInput,

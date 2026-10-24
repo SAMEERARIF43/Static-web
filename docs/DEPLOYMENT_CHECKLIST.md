@@ -110,9 +110,54 @@ After deployment, confirm over the production HTTPS origin:
 
 ---
 
-## 6. Do Not Deploy Until
+## 6. Local Container Stack Validation
+
+The repository includes a local-only Docker Compose stack with a Node.js 22
+Alpine application container and an Nginx reverse proxy. It does not publish
+images or deploy anywhere.
+
+### Files
+
+- `Dockerfile` — multi-stage Node.js 22 Alpine build and non-root runtime
+- `docker-compose.yml` — `app` on port `3000`, Nginx on port `80`
+- `nginx.conf` — reverse proxy, gzip, static caching headers, and rate-limit zones
+- `.dockerignore` — keeps secrets, test artifacts, native wrapper files, and development dependencies out of the image context
+
+### Start locally
+
+From `Static-web/`:
+
+```sh
+docker compose up --build
+```
+
+The default local validation mode is `NODE_ENV=development`, so the stack can
+start without production Supabase/contact settings. Compose reads optional
+values from the shell or the repository-local `.env` file; never commit that
+file or put production secrets in `docker-compose.yml`.
+
+Open `http://localhost/` through Nginx, or use `http://localhost:3000/` to
+inspect the app container directly. Verify the proxy health path with:
+
+```sh
+curl -i http://localhost/api/health
+```
+
+Stop the stack with:
+
+```sh
+docker compose down
+```
+
+For a production-mode local check, provide the required environment variables
+and run `NODE_ENV=production docker compose up --build`; the server's existing
+production startup validation still applies.
+
+---
+
+## 7. Do Not Deploy Until
 
 - [ ] Production domain/environment variables supplied and verified
-- - Production Supabase project configured and schema/RLS applied
-- - Proxy topology confirmed and `TRUST_PROXY` set correctly (if behind a proxy)
-- - HTTPS configured at host or ingress
+- [ ] Production Supabase project configured and schema/RLS applied
+- [ ] Proxy topology confirmed and `TRUST_PROXY` set correctly (if behind a proxy)
+- [ ] HTTPS configured at host or ingress

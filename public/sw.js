@@ -1,10 +1,34 @@
 // Anime Hub Service Worker — PWA Offline Engine (Phase 5, Task 1)
 // Cache versioning with automatic stale-cache cleanup on activation.
+// Version prefix enables cross-deployment cache invalidation.
 const CACHE_NAME = 'anime-hub-v1';
 const STATIC_CACHE = 'anime-hub-static-v1';
 const API_CACHE = 'anime-hub-api-v1';
 
-// Static assets served cache-first (with network fallback).
+// Cache invalidation: triggered on SW activate to purge stale pre-deployment caches.
+self.addEventListener('activate', event => {
+  const currentVersion = 'v1';
+  event.waitUntil(
+    caches.keys().then(cacheNames => {
+      return Promise.all(
+        cacheNames.filter(name => {
+          // Remove caches not matching the current CACHE_PREFIX.
+          return !name.startsWith(CACHE_PREFIX);
+        }).map(name => {
+          return caches.delete(name);
+        })
+      );
+    }).then(() => {
+      // Ensure the required caches exist for the new version.
+      return Promise.all([
+        caches.open(STATIC_CACHE),
+        caches.open(API_CACHE)
+      ]);
+    }).then(() => self.clients.claim())
+  );
+});
+
+// Static asset list with version-aware precaching.
 const STATIC_ASSETS = [
   '/',
   '/index.html',
@@ -20,6 +44,18 @@ const STATIC_ASSETS = [
   '/manifest.json'
 ];
 
+// Install: precache static assets with versioned cache.
+self.addEventListener('install', event => {
+  event.waitUntil(
+    caches.open(STATIC_CACHE).then(cache => {
+      return cache.addAll(STATIC_ASSETS).catch(error => {
+        console.warn('[SW] Install: some static assets failed to cache:', error);
+      });
+    })
+  );
+  self.skipWaiting();
+});
+
 // API endpoints served network-first with stale-cache fallback.
 const API_CACHE_ENDPOINTS = [
   '/api/browse',
@@ -33,33 +69,6 @@ const API_CACHE_ENDPOINTS = [
   '/api/series',
   '/api/animated-movies'
 ];
-
-// Install: precache static assets.
-self.addEventListener('install', event => {
-  event.waitUntil(
-    caches.open(STATIC_CACHE).then(cache => {
-      return cache.addAll(STATIC_ASSETS).catch(error => {
-        console.warn('[SW] Install: some static assets failed to cache:', error);
-      });
-    })
-  );
-  self.skipWaiting();
-});
-
-// Activate: clean up stale caches.
-self.addEventListener('activate', event => {
-  event.waitUntil(
-    caches.keys().then(cacheNames => {
-      return Promise.all(
-        cacheNames.filter(name => {
-          return name !== CACHE_NAME && name !== STATIC_CACHE && name !== API_CACHE;
-        }).map(name => {
-          return caches.delete(name);
-        })
-      );
-    }).then(() => self.clients.claim())
-  );
-});
 
 // Fetch: route requests by strategy.
 self.addEventListener('fetch', event => {
@@ -125,3 +134,4 @@ self.addEventListener('message', event => {
     self.skipWaiting();
   }
 });
+

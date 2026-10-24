@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="512dp"
+    android:height="512dp"
+    android:viewportWidth="512"
+    android:viewportHeight="512">
+    <!-- Shape-equivalent native resource for public/assets/favicon-192.svg and favicon-512.svg. -->
+    <path android:fillColor="#0f1117" android:pathData="M80,0 L432,0 A80,80 0,0 1,512 80 L512,432 A80,80 0,0 1,432 512 L80,512 A80,80 0,0 1,0 432 L0,80 A80,80 0,0 1,80 0 Z" />
+    <path android:fillColor="#ff7200" android:pathData="M256,108 A148,148 0,1 0,256 404 A148,148 0,1 0,256 108 Z" />
+</vector>

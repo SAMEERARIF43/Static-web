@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Anime Hub</string>
+    <string name="pwa_manifest_path">public/manifest.json</string>
+    <string name="service_worker_path">public/sw.js</string>
+</resources>
