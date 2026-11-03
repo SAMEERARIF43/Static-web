@@ -689,6 +689,16 @@ function buildRecommendationsGraphQL(input, { perPage = RECOMMENDATIONS_MAX_RESU
     }
   }`);
   }
+  if (!fields.length) {
+    // Never emit an empty selection set. With no preferences the caller still
+    // receives a parseable document (trending titles) instead of a GraphQL
+    // syntax error, so a partial caller cannot turn into a hard upstream error.
+    fields.push(`trending: Page(page: 1, perPage: $perPage) {
+    media(type: ANIME, isAdult: false, sort: TRENDING_DESC) {
+      ${CATALOG_MEDIA_FIELDS}
+    }
+  }`);
+  }
   return {
     query: `query (${definitions.join(', ')}) {\n${fields.join('\n')}\n}`,
     variables

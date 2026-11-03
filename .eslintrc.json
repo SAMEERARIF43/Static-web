@@ -6,6 +6,12 @@
   },
   "extends": "eslint:recommended",
   "ignorePatterns": ["/frontend/"],
+  "overrides": [
+    {
+      "files": ["tests/**/*.test.js"],
+      "env": { "jest": true, "node": true }
+    }
+  ],
   "parserOptions": {
     "ecmaVersion": 12,
     "sourceType": "script"

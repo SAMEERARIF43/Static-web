@@ -19,3 +19,16 @@ agency-agents
 Dockerfile
 docker-compose.yml
 nginx.conf
+# Nested dependency trees (the bare node_modules rule above does not recurse)
+**/node_modules
+# Unwired React app: never copied into the image, so not part of the build context
+frontend
+# Test harnesses, fixtures and generated output
+tests
+test-fixtures
+*.txt
+*.exe
+*.orig
+# Dead pre-refactor server copies (superseded by server.js + middleware/ + routes/)
+server-github.js
+server-test.js
