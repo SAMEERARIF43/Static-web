@@ -114,6 +114,54 @@ Do not enable a provider or change dashboard settings until you have confirmed t
 
 After deployment, check `/`, `/api/health`, `/api/config`, `/api/anime/206949`, and the legal pages over the generated HTTPS origin. Confirm that `/api/config` contains only `SUPABASE_URL` and `SUPABASE_ANON_KEY`, and exercise search, sign-in, watchlist, and account deletion with a non-production test account. Review the service's **Logs** tab in Render for startup errors and request failures; never copy credentials or tokens into logs or support messages.
 
+## Backup and Recovery
+
+Anime Hub relies on Supabase for database persistence. The repository contains migration SQL files but no automated backup scripts. Backup and recovery are operational responsibilities.
+
+### Critical Data
+
+| Table | Contains | Criticality |
+|-------|----------|-------------|
+| `public.watchlist` | User watchlist items | High — user-generated |
+| `public.progress` | Watch progress (episode, seconds watched) | High — user-generated |
+| `public.profiles` | User profiles | High — user data |
+| `public.admin_users` | Administrator authorization | Critical — security boundary |
+| `public.dmca_reports` | DMCA takedown notices | Medium — administrative |
+| `public.content_reports` | Content moderation reports | Medium — administrative |
+| `public.site_stats` | Site statistics | Low — regeneratable |
+
+### Backup Recommendations
+
+1. **Enable Supabase PITR** (point-in-time recovery) in the Supabase dashboard for the production project. Verify it is enabled before directing public traffic.
+2. **Take a full database backup** (`pg_dump` or Supabase platform backup) before applying any migration.
+3. **Back up `public.admin_users`** — administrator authorizations are stored here and would be lost on table drop.
+4. **Back up migration SQL files** — they are in Git (`supabase/migrations/` and `supabase/schema_hardening.sql`). Ensure `schema_hardening.sql` is tracked; it is not in the `migrations/` directory.
+
+### Restoration Procedure
+
+1. Restore the database from backup (Supabase platform PITR or `pg_restore`).
+2. Verify all tables exist: `watchlist`, `progress`, `profiles`, `dmca_reports`, `content_reports`, `site_stats`, `admin_users`.
+3. Apply `schema_hardening.sql` if not already applied (it is not in the numbered migrations directory).
+4. Apply migrations in order: `001` → `schema_hardening.sql` → `002` → `003` → `004`.
+5. Verify `is_admin()` function exists and is executable by `service_role`.
+6. Verify RLS policies are enabled on all user-owned tables.
+7. Test admin authentication with a known administrator account.
+
+### Migration Rollback Limitations
+
+**No rollback SQL files exist.** There are no `down` migrations. Rolling back requires manually written DROP statements and would result in data loss for tables created by the migration. Take a full backup before applying any migration.
+
+**`schema_hardening.sql` must be applied before migration 002.** Migration 002 adds `public.progress` and `public.profiles` to the `supabase_realtime` publication, but those tables are created by `schema_hardening.sql`.
+
+### What Requires Operator Approval
+
+- Applying any migration to production
+- Restoring from backup
+- Modifying `schema_hardening.sql` or RLS policies
+- Creating rollback SQL
+
+---
+
 ## Generic managed-host checklist
 
 1. Create a persistent Node.js web service from this repository; do not configure it as static-only hosting.

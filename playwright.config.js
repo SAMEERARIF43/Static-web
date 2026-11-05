@@ -7,7 +7,7 @@ module.exports = defineConfig({
   testDir: '.',
   // Temporary diagnostic probe from a concurrent run; it is retained for
   // audit traceability but is not part of the release regression suite.
-  testIgnore: ['**/test-auth-debug.spec.js', '**/frontend/**'],
+  testIgnore: ['**/test-auth-debug.spec.js', '**/frontend/**', '**/tests/**'],
   // A fresh external output path preserves earlier local QA artifacts.
   outputDir: process.env.ANIME_HUB_TEST_OUTPUT_DIR || 'test-results',
   /* Run tests in files in parallel */
@@ -83,6 +83,9 @@ module.exports = defineConfig({
       ANILIST_GRAPHQL_URL: 'http://127.0.0.1:9',
       ANIME_HUB_TEST_MODE: '1',
       JUSTWATCH_REGION: 'us',
+
+      // Disposable test-only admin key. Never a production value.
+      ADMIN_KEY: 'playwright-test-only-admin-key',
 
       // Keep dotenv from filling these from the project .env in the test child.
       TRUST_PROXY: '',

@@ -16,3 +16,4 @@ opencode.json
 .freebuff/
 /test-results/
 /playwright-report/
+frontend/dev-dist/

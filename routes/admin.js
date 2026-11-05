@@ -105,8 +105,18 @@ async function handleAdminMe(req, res) {
 router.get('/', handleAdminMe);
 router.get('/me', handleAdminMe);
 
-// Admin reports GET endpoint — protected by shared admin key.
-router.get('/reports', requireAdmin, async (req, res) => {
+// ---------------------------------------------------------------------------
+// AUTHORIZATION BOUNDARY
+// Everything registered after this line requires admin authorization (bearer
+// token or shared admin key, via requireAdmin). Register new admin data routes
+// BELOW this line so they inherit the guard by default; only the bearer-only
+// status endpoints above are exempt, and they must stay above it.
+// tests/admin-route-boundary.test.js enforces this ordering.
+// ---------------------------------------------------------------------------
+router.use(requireAdmin);
+
+// Admin reports GET endpoint — protected by the authorization boundary above.
+router.get('/reports', async (req, res) => {
   try {
     const { data, error } = await getSupabase()
       .from('dmca_reports')
@@ -133,7 +143,7 @@ router.get('/reports', requireAdmin, async (req, res) => {
 // path. The shipped admin UI posts `{ status }` to /api/admin/reports/:id for
 // the row it is acting on, so this route updates that row; it must never insert
 // a new pending report as a side effect of a moderation action.
-router.post('/reports/:id', requireAdmin, express.json({ limit: '16kb' }), async (req, res) => {
+router.post('/reports/:id', express.json({ limit: '16kb' }), async (req, res) => {
   const { id } = req.params;
   const patch = buildModerationPatch(req.body);
   if (!patch.status) {
@@ -165,7 +175,7 @@ router.post('/reports/:id', requireAdmin, express.json({ limit: '16kb' }), async
 });
 
 // Admin DMCA GET endpoint
-router.get('/dmca', requireAdmin, async (req, res) => {
+router.get('/dmca', async (req, res) => {
   try {
     const { data, error } = await getSupabase()
       .from('dmca_reports')
@@ -188,7 +198,7 @@ router.get('/dmca', requireAdmin, async (req, res) => {
 });
 
 // Admin DMCA POST endpoint
-router.post('/dmca/:id', requireAdmin, express.json({ limit: '16kb' }), async (req, res) => {
+router.post('/dmca/:id', express.json({ limit: '16kb' }), async (req, res) => {
   const { id } = req.params;
   const patch = buildModerationPatch(req.body);
   if (!patch.status) {
@@ -220,7 +230,7 @@ router.post('/dmca/:id', requireAdmin, express.json({ limit: '16kb' }), async (r
 });
 
 // Admin content reports GET endpoint
-router.get('/content-reports', requireAdmin, async (req, res) => {
+router.get('/content-reports', async (req, res) => {
   try {
     const { data, error } = await getSupabase()
       .from('content_reports')
@@ -244,7 +254,7 @@ router.get('/content-reports', requireAdmin, async (req, res) => {
 });
 
 // Admin content reports PUT (moderation) endpoint
-router.put('/content-reports/:id', requireAdmin, express.json({ limit: '16kb' }), async (req, res) => {
+router.put('/content-reports/:id', express.json({ limit: '16kb' }), async (req, res) => {
   try {
     const { id } = req.params;
     const reportData = req.body;
@@ -285,7 +295,7 @@ router.put('/content-reports/:id', requireAdmin, express.json({ limit: '16kb' })
 });
 
 // Admin stats GET endpoint
-router.get('/stats', requireAdmin, async (req, res) => {
+router.get('/stats', async (req, res) => {
   try {
     const { data, error } = await getSupabase()
       .from('site_stats')
@@ -313,9 +323,20 @@ router.get('/stats', requireAdmin, async (req, res) => {
 });
 
 // Admin stats POST endpoint - upsert statistics
-router.post('/stats', requireAdmin, express.json({ limit: '16kb' }), async (req, res) => {
+// updated_by is derived from the verified admin identity — never from the
+// request body — consistent with the content-reports resolved_by pattern.
+// Key-only callers carry no user identity so updated_by is left null.
+router.post('/stats', express.json({ limit: '16kb' }), async (req, res) => {
   try {
-    const { keyName, keyValue, updatedBy } = req.body;
+    const { keyName, keyValue } = req.body;
+
+    if (!keyName || typeof keyName !== 'string' || !keyName.trim()) {
+      return res.status(400).json({ message: 'A stat key name is required.' });
+    }
+
+    if (!keyValue || typeof keyValue !== 'string' || !keyValue.trim()) {
+      return res.status(400).json({ message: 'A stat key value is required.' });
+    }
 
     const { data, error } = await getSupabase()
       .from('site_stats')
@@ -323,7 +344,7 @@ router.post('/stats', requireAdmin, express.json({ limit: '16kb' }), async (req,
         key_name: keyName,
         key_value: keyValue,
         updated_at: new Date().toISOString(),
-        updated_by: updatedBy
+        updated_by: req.adminUserId || null
       }, { onConflict: 'key_name' })
       .select()
       .single();

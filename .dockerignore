@@ -1,34 +1,72 @@
-.git
-.gitignore
+# Git
+.git/
+.github/
+
+# Environment files (never seal secrets into the image)
 .env
 .env.*
 !.env.example
-node_modules
-npm-debug.log*
-*.log
-test-results
-playwright-report
-backups
-docs
-android
-ios
-agency-agents
-.freebuff
-.kiro
-.opencode
-Dockerfile
-docker-compose.yml
-nginx.conf
-# Nested dependency trees (the bare node_modules rule above does not recurse)
+
+# Node.js
+node_modules/
+frontend/node_modules/
 **/node_modules
-# Unwired React app: never copied into the image, so not part of the build context
-frontend
-# Test harnesses, fixtures and generated output
-tests
-test-fixtures
+
+# Logs and temporary files
+*.log
+logs/
+tmp/
+temp/
+*.tmp
+*.temp
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# Build outputs
+frontend/dist/
+frontend/dev-dist/
+
+# Test artifacts
+test-results/
+playwright-report/
 *.txt
 *.exe
 *.orig
+
+# Local tooling and OS files
+.freebuff/
+.kiro/
+.opencode/
+opencode.json
+agency-agents
+
+# Deployment config and docs (not copied into image)
+Dockerfile
+docker-compose.yml
+nginx.conf
+
+# Unwired React app: never copied into the image, so not part of the build context
+frontend/src
+frontend/tests
+frontend/playwright.config.ts
+frontend/vite.config.ts
+frontend/package.json
+frontend/package-lock.json
+
+# Test harnesses (not needed in production image)
+tests
+test-fixtures
+
 # Dead pre-refactor server copies (superseded by server.js + middleware/ + routes/)
 server-github.js
 server-test.js
+
+# Backups
+backups
+
+# Mobile and agent artifacts (not part of Node build)
+android
+ios

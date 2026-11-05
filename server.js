@@ -1,6 +1,14 @@
 // ============================================================
 // ANIME HUB SERVER — Modular Entry Point
 // ============================================================
+// Optionally load an external env file (e.g. to keep secrets outside a
+// synced folder) via ANIME_HUB_ENV_FILE, followed by the local .env file.
+// Real process env vars retain precedence over file values.
+if (process.env.ANIME_HUB_ENV_FILE) {
+  require('dotenv').config({ path: process.env.ANIME_HUB_ENV_FILE });
+}
+require('dotenv').config();
+
 // Core dependencies
 const express = require('express');
 const path = require('path');
@@ -8,12 +16,12 @@ const fs = require('fs');
 const axios = require('axios');
 const ADMIN_KEY = process.env.ADMIN_KEY;
 
-if (!ADMIN_KEY) {
+if (!ADMIN_KEY || typeof ADMIN_KEY !== 'string' || ADMIN_KEY.trim().length === 0) {
   throw new Error('FATAL: ADMIN_KEY environment variable is required.');
 }
 
 // Import modular middleware
-const { securityHeaders, corsMiddleware, requireAdmin } = require('./middleware/security');
+const { securityHeaders, corsMiddleware } = require('./middleware/security');
 const {
   globalApiLimiter,
   proxyLimiter,
@@ -152,9 +160,12 @@ app.use('/api/series', seriesRoutes);
 app.use('/api', catalogRoutes);
 app.use('/api', animeRoutes);
 // Per-user admin status check — uses the caller's own bearer token,
-// not the shared admin key. Mounted before the admin-key-guarded routes.
+// not the shared admin key. Mounted before the data-bearing admin routes.
 app.use('/api/admin/me', adminRoutes);
-app.use('/api/admin', requireAdmin, adminRoutes);
+// Every data-bearing route in routes/admin applies requireAdmin itself, so the
+// router is mounted without a second guard here. A mount-level copy would only
+// repeat the same Auth verification and is_admin RPC for every request.
+app.use('/api/admin', adminRoutes);
 app.use('/api/stream', proxyRoutes);
 
 // Static asset serving

@@ -10,7 +10,6 @@ const https = require('https');
 const net = require('net');
 
 const DEFAULT_USER_AGENT = 'AnimeHub/1.0 (+local authorized media gateway)';
-const SSRF_PROTECTION_ENABLED = true;
 const MAX_PROVIDER_RESPONSE_BYTES = 2 * 1024 * 1024;
 const MAX_MANIFEST_BYTES = 8 * 1024 * 1024;
 const MAX_REDIRECTS = 3;
