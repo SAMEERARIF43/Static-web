@@ -87,6 +87,12 @@ module.exports = defineConfig({
       // Disposable test-only admin key. Never a production value.
       ADMIN_KEY: 'playwright-test-only-admin-key',
 
+      // Prevent inheriting ANIME_HUB_ENV_FILE from the parent Windows
+      // environment, which points to an external secrets file
+      // (L:\anime-hub-secrets\.env). The test server must use only the
+      // explicitly configured test values below.
+      ANIME_HUB_ENV_FILE: '',
+
       // Keep dotenv from filling these from the project .env in the test child.
       TRUST_PROXY: '',
       SUPABASE_URL: '',
