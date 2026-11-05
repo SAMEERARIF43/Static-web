@@ -10,6 +10,7 @@ const {
   suggestionMatchRank,
   deduplicateMediaList
 } = require('../search-utils');
+const { mapAniListMediaToCatalogItem } = require('../catalog-utils');
 const { CURATED_CATALOG } = require('../catalog-fallback');
 const { boundedCacheSet } = require('../catalog-filters');
 const { CATALOG_CACHE_TTL_MS } = require('../catalog-cache');
@@ -123,12 +124,16 @@ router.get('/', async (req, res) => {
     if (pendingSearchRequests.get(cacheKey) === pendingSearch) {
       pendingSearchRequests.delete(cacheKey);
     }
+    // Map raw AniList media items through the catalog mapper so search
+    // results expose the same canonical fields as browse results
+    // (anilistId, countryOfOrigin, language, human-readable status).
+    const mappedResults = results.map(mapAniListMediaToCatalogItem);
     boundedCacheSet(searchCache, cacheKey, {
-      results,
+      results: mappedResults,
       expiresAt: Date.now() + CATALOG_CACHE_TTL_MS
     }, SEARCH_CACHE_LIMIT);
     res.setHeader('X-Catalog-Source', 'anilist');
-    return res.json(results);
+    return res.json(mappedResults);
   } catch (error) {
     if (pendingSearchRequests.get(cacheKey) === pendingSearch) {
       pendingSearchRequests.delete(cacheKey);

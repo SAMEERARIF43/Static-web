@@ -67,7 +67,7 @@ function waitForServer(server) {
 
     server.stdout.on('data', chunk => {
       output += chunk.toString();
-      if (output.includes(`AnimeHub server listening on port ${TEST_PORT}.`)) {
+       if (output.includes('Anime Hub API listening on https://animehub.example')) {
         clearTimeout(timeout);
         resolve();
       }
@@ -396,6 +396,7 @@ async function assertBrowseValidationSkipsProvider() {
       PORT: String(serverPort),
       SITE_URL: 'https://animehub.example',
       CORS_ORIGINS: `http://127.0.0.1:${serverPort}`,
+      ADMIN_KEY: 'test-admin-key-' + Date.now(),
       ANILIST_GRAPHQL_URL: `http://127.0.0.1:${mockPort}`,
       SUPABASE_URL: '',
       SUPABASE_ANON_KEY: '',
@@ -425,7 +426,7 @@ async function assertBrowseValidationSkipsProvider() {
       const timeout = setTimeout(() => reject(new Error('browse validation server did not start')), 10000);
       server.stdout.on('data', chunk => {
         output += chunk.toString();
-        if (output.includes(`AnimeHub server listening on port ${serverPort}.`)) {
+         if (output.includes('Anime Hub API listening on https://animehub.example')) {
           clearTimeout(timeout);
           resolve();
         }
@@ -547,6 +548,7 @@ async function assertBrowsePaginationBoundary() {
       PORT: String(serverPort),
       SITE_URL: 'https://animehub.example',
       CORS_ORIGINS: `http://127.0.0.1:${serverPort}`,
+      ADMIN_KEY: 'test-admin-key-' + Date.now(),
       ANILIST_GRAPHQL_URL: `http://127.0.0.1:${mockPort}`,
       SUPABASE_URL: '',
       SUPABASE_ANON_KEY: '',
@@ -576,7 +578,7 @@ async function assertBrowsePaginationBoundary() {
       const timeout = setTimeout(() => reject(new Error('browse boundary server did not start')), 10000);
       server.stdout.on('data', chunk => {
         output += chunk.toString();
-        if (output.includes(`AnimeHub server listening on port ${serverPort}.`)) {
+         if (output.includes('Anime Hub API listening on https://animehub.example')) {
           clearTimeout(timeout);
           resolve();
         }
@@ -615,11 +617,377 @@ async function assertBrowsePaginationBoundary() {
   }
 }
 
+async function assertKoreanTitleSearch() {
+  const koreanFixtures = [
+    { id: 200001, title: { romaji: 'Solo Leveling', english: 'Solo Leveling', native: '나 혼자만 레벨업' }, format: 'TV', countryOfOrigin: 'KR', genres: ['Action', 'Fantasy'], averageScore: 88, coverImage: { large: '' }, studios: { nodes: [] } },
+    { id: 200002, title: { romaji: 'Tower of God', english: 'Tower of God', native: '신의 탑' }, format: 'TV', countryOfOrigin: 'KR', genres: ['Action', 'Adventure'], averageScore: 82, coverImage: { large: '' }, studios: { nodes: [] } }
+  ];
+  const mockPort = 18994;
+  const serverPort = 3136;
+  const baseURL = `http://127.0.0.1:${serverPort}`;
+
+  const mock = createAniListMock({
+    port: mockPort,
+    handleRequest: ({ res, payload, jsonResponse }) => {
+      const variables = payload.variables || {};
+      const search = String(variables.search || '').toLowerCase();
+      const results = koreanFixtures.filter(item =>
+        item.title.english.toLowerCase().includes(search) ||
+        item.title.romaji.toLowerCase().includes(search) ||
+        item.title.native.toLowerCase().includes(search)
+      );
+      return jsonResponse(res, {
+        data: {
+          Page: {
+            pageInfo: { total: results.length, perPage: results.length, currentPage: 1, lastPage: 1, hasNextPage: false },
+            media: results
+          }
+        }
+      });
+    }
+  });
+  await mock.start();
+  const app = spawn(process.execPath, [path.join(__dirname, 'server.js')], {
+    cwd: __dirname,
+    stdio: ['ignore', 'pipe', 'inherit'],
+    env: {
+      ...process.env,
+      NODE_ENV: 'test',
+      ANIME_HUB_TEST_MODE: '1',
+      PORT: String(serverPort),
+      SITE_URL: 'https://animehub.example',
+      CORS_ORIGINS: `http://127.0.0.1:${serverPort}`,
+      ADMIN_KEY: 'test-admin-key-' + Date.now(),
+      ANILIST_GRAPHQL_URL: mock.url,
+      SUPABASE_URL: '',
+      SUPABASE_ANON_KEY: '',
+      SUPABASE_SERVICE_ROLE_KEY: ''
+    }
+  });
+
+  function requestTo(pathname) {
+    return new Promise((resolve, reject) => {
+      const req = http.request(`${baseURL}${pathname}`, res => {
+        let data = '';
+        res.on('data', chunk => data += chunk);
+        res.on('end', () => {
+          let parsed = data;
+          try { parsed = JSON.parse(data); } catch { parsed = data; }
+          resolve({ statusCode: res.statusCode, headers: res.headers, body: parsed });
+        });
+      });
+      req.on('error', reject);
+      req.end();
+    });
+  }
+
+  try {
+    await new Promise((resolve, reject) => {
+      let output = '';
+      const timeout = setTimeout(() => reject(new Error('Korean search server did not start')), 10000);
+      app.stdout.on('data', chunk => {
+        output += chunk.toString();
+        if (output.includes('Anime Hub API listening on https://animehub.example')) {
+          clearTimeout(timeout);
+          resolve();
+        }
+      });
+      app.once('error', reject);
+      app.once('exit', code => reject(new Error(`Korean search server exited before startup: ${code}`)));
+    });
+
+    const soloLeveling = await requestTo('/api/search?q=Solo%20Leveling');
+    assert.strictEqual(soloLeveling.statusCode, 200, 'Solo Leveling search should return HTTP 200');
+    assert(Array.isArray(soloLeveling.body), 'Solo Leveling search response should be an array');
+    assert(
+      soloLeveling.body.some(item => item.id === 200001),
+      'Solo Leveling should be found in Korean title search'
+    );
+    assert(
+      soloLeveling.body.every(item => item.countryOfOrigin === 'KR'),
+      'All Korean search results should have countryOfOrigin KR'
+    );
+    assert(
+      soloLeveling.body.every(item => item.countryOfOrigin === 'KR'),
+      'All Korean search results should have countryOfOrigin KR'
+    );
+
+    const towerOfGod = await requestTo('/api/search?q=%EC%8B%A0%EC%9D%98%20%ED%83%91');
+    assert.strictEqual(towerOfGod.statusCode, 200, 'Tower of God native title search should return HTTP 200');
+    assert(
+      towerOfGod.body.some(item => item.anilistId === 200002),
+      'Tower of God should be found by native Korean title'
+    );
+    assert(
+      towerOfGod.body.every(item => item.countryOfOrigin === 'KR'),
+      'All Korean search results should have countryOfOrigin KR'
+    );
+
+    const onePiece = await requestTo('/api/search?q=One%20Piece');
+    assert(
+      !onePiece.body.some(item => item.countryOfOrigin === 'KR'),
+      'Japanese title search should not return Korean titles'
+    );
+  } finally {
+    app.kill();
+    await mock.close();
+  }
+}
+
+async function assertSearchProviderFailure() {
+  const mockPort = 18995;
+  const serverPort = 3137;
+  const baseURL = `http://127.0.0.1:${serverPort}`;
+
+  const mock = createAniListMock({
+    port: mockPort,
+    handleRequest: ({ res, jsonResponse }) => {
+      jsonResponse(res, { errors: [{ message: 'AniList service unavailable' }] });
+    }
+  });
+  await mock.start();
+  const app = spawn(process.execPath, [path.join(__dirname, 'server.js')], {
+    cwd: __dirname,
+    stdio: ['ignore', 'pipe', 'inherit'],
+    env: {
+      ...process.env,
+      NODE_ENV: 'test',
+      ANIME_HUB_TEST_MODE: '1',
+      PORT: String(serverPort),
+      SITE_URL: 'https://animehub.example',
+      CORS_ORIGINS: `http://127.0.0.1:${serverPort}`,
+      ADMIN_KEY: 'test-admin-key-' + Date.now(),
+      ANILIST_GRAPHQL_URL: mock.url,
+      SUPABASE_URL: '',
+      SUPABASE_ANON_KEY: '',
+      SUPABASE_SERVICE_ROLE_KEY: ''
+    }
+  });
+
+  function requestTo(pathname) {
+    return new Promise((resolve, reject) => {
+      const req = http.request(`${baseURL}${pathname}`, res => {
+        let data = '';
+        res.on('data', chunk => data += chunk);
+        res.on('end', () => {
+          let parsed = data;
+          try { parsed = JSON.parse(data); } catch { parsed = data; }
+          resolve({ statusCode: res.statusCode, headers: res.headers, body: parsed });
+        });
+      });
+      req.on('error', reject);
+      req.end();
+    });
+  }
+
+  try {
+    await new Promise((resolve, reject) => {
+      let output = '';
+      const timeout = setTimeout(() => reject(new Error('Search provider failure server did not start')), 10000);
+      app.stdout.on('data', chunk => {
+        output += chunk.toString();
+        if (output.includes('Anime Hub API listening on https://animehub.example')) {
+          clearTimeout(timeout);
+          resolve();
+        }
+      });
+      app.once('error', reject);
+      app.once('exit', code => reject(new Error(`Search provider failure server exited before startup: ${code}`)));
+    });
+
+    const response = await requestTo('/api/search?q=One%20Piece');
+    assert.strictEqual(response.statusCode, 200, 'Provider failure on search should fall back to local catalog with HTTP 200');
+    assert.strictEqual(response.headers['x-catalog-source'], 'local', 'Provider failure should fall back to local source');
+    assert(Array.isArray(response.body), 'Provider failure fallback should return an array');
+    assert(
+      response.body.some(item => getTitle(item).toLowerCase().includes('one piece')),
+      'Fallback results should include One Piece from curated catalog'
+    );
+  } finally {
+    app.kill();
+    await mock.close();
+  }
+}
+
+async function assertSearchCacheBehavior() {
+  let providerCallCount = 0;
+  const mockPort = 18996;
+  const serverPort = 3138;
+  const baseURL = `http://127.0.0.1:${serverPort}`;
+
+  const mock = createAniListMock({
+    port: mockPort,
+    handleRequest: ({ res, jsonResponse }) => {
+      providerCallCount++;
+      return jsonResponse(res, {
+        data: {
+          Page: {
+            pageInfo: { total: 1, perPage: 10, currentPage: 1, lastPage: 1, hasNextPage: false },
+            media: [{ id: 1, title: { romaji: 'Cached Title', english: 'Cached Title' }, format: 'TV', countryOfOrigin: 'JP', genres: [], averageScore: 80, coverImage: { large: '' }, studios: { nodes: [] } }]
+          }
+        }
+      });
+    }
+  });
+  await mock.start();
+  const app = spawn(process.execPath, [path.join(__dirname, 'server.js')], {
+    cwd: __dirname,
+    stdio: ['ignore', 'pipe', 'inherit'],
+    env: {
+      ...process.env,
+      NODE_ENV: 'test',
+      ANIME_HUB_TEST_MODE: '1',
+      PORT: String(serverPort),
+      SITE_URL: 'https://animehub.example',
+      CORS_ORIGINS: `http://127.0.0.1:${serverPort}`,
+      ADMIN_KEY: 'test-admin-key-' + Date.now(),
+      ANILIST_GRAPHQL_URL: mock.url,
+      SUPABASE_URL: '',
+      SUPABASE_ANON_KEY: '',
+      SUPABASE_SERVICE_ROLE_KEY: ''
+    }
+  });
+
+  function requestTo(pathname) {
+    return new Promise((resolve, reject) => {
+      const req = http.request(`${baseURL}${pathname}`, res => {
+        let data = '';
+        res.on('data', chunk => data += chunk);
+        res.on('end', () => {
+          let parsed = data;
+          try { parsed = JSON.parse(data); } catch { parsed = data; }
+          resolve({ statusCode: res.statusCode, headers: res.headers, body: parsed });
+        });
+      });
+      req.on('error', reject);
+      req.end();
+    });
+  }
+
+  try {
+    await new Promise((resolve, reject) => {
+      let output = '';
+      const timeout = setTimeout(() => reject(new Error('Search cache server did not start')), 10000);
+      app.stdout.on('data', chunk => {
+        output += chunk.toString();
+        if (output.includes('Anime Hub API listening on https://animehub.example')) {
+          clearTimeout(timeout);
+          resolve();
+        }
+      });
+      app.once('error', reject);
+      app.once('exit', code => reject(new Error(`Search cache server exited before startup: ${code}`)));
+    });
+
+    const first = await requestTo('/api/search?q=Cached%20Title');
+    assert.strictEqual(first.statusCode, 200, 'First search should return HTTP 200');
+    assert.strictEqual(first.headers['x-catalog-source'], 'anilist', 'First search should be labelled as AniList data');
+
+    const second = await requestTo('/api/search?q=Cached%20Title');
+    assert.strictEqual(second.statusCode, 200, 'Second identical search should return HTTP 200');
+    assert.strictEqual(second.headers['x-catalog-source'], 'anilist', 'Cached search should still be labelled as AniList data');
+    assert.deepStrictEqual(second.body, first.body, 'Cached search should return identical results');
+
+    assert.strictEqual(
+      providerCallCount,
+      1,
+      'Same query should only hit provider once due to search caching'
+    );
+  } finally {
+    app.kill();
+    await mock.close();
+  }
+}
+
+async function assertSearchFallbackBehavior() {
+  const mockPort = 18997;
+  const serverPort = 3139;
+  const baseURL = `http://127.0.0.1:${serverPort}`;
+
+  const mock = createAniListMock({
+    port: mockPort,
+    handleRequest: ({ res, jsonResponse }) => {
+      jsonResponse(res, { errors: [{ message: 'Provider down' }] });
+    }
+  });
+  await mock.start();
+  const app = spawn(process.execPath, [path.join(__dirname, 'server.js')], {
+    cwd: __dirname,
+    stdio: ['ignore', 'pipe', 'inherit'],
+    env: {
+      ...process.env,
+      NODE_ENV: 'test',
+      ANIME_HUB_TEST_MODE: '1',
+      PORT: String(serverPort),
+      SITE_URL: 'https://animehub.example',
+      CORS_ORIGINS: `http://127.0.0.1:${serverPort}`,
+      ADMIN_KEY: 'test-admin-key-' + Date.now(),
+      ANILIST_GRAPHQL_URL: mock.url,
+      SUPABASE_URL: '',
+      SUPABASE_ANON_KEY: '',
+      SUPABASE_SERVICE_ROLE_KEY: ''
+    }
+  });
+
+  function requestTo(pathname) {
+    return new Promise((resolve, reject) => {
+      const req = http.request(`${baseURL}${pathname}`, res => {
+        let data = '';
+        res.on('data', chunk => data += chunk);
+        res.on('end', () => {
+          let parsed = data;
+          try { parsed = JSON.parse(data); } catch { parsed = data; }
+          resolve({ statusCode: res.statusCode, headers: res.headers, body: parsed });
+        });
+      });
+      req.on('error', reject);
+      req.end();
+    });
+  }
+
+  try {
+    await new Promise((resolve, reject) => {
+      let output = '';
+      const timeout = setTimeout(() => reject(new Error('Search fallback server did not start')), 10000);
+      app.stdout.on('data', chunk => {
+        output += chunk.toString();
+        if (output.includes('Anime Hub API listening on https://animehub.example')) {
+          clearTimeout(timeout);
+          resolve();
+        }
+      });
+      app.once('error', reject);
+      app.once('exit', code => reject(new Error(`Search fallback server exited before startup: ${code}`)));
+    });
+
+    const response = await requestTo('/api/search?q=One%20Piece');
+    assert.strictEqual(response.statusCode, 200, 'Search fallback should return HTTP 200');
+    assert.strictEqual(response.headers['x-catalog-source'], 'local', 'Provider failure should fall back to local source');
+    assert(Array.isArray(response.body), 'Fallback response should be an array');
+    assert(
+      response.body.some(item => getTitle(item).toLowerCase().includes('one piece')),
+      'Fallback results should include One Piece from curated catalog'
+    );
+
+    const unknownResponse = await requestTo('/api/search?q=NonexistentTitleXyz');
+    assert.strictEqual(unknownResponse.statusCode, 200, 'Search fallback for unknown title should return HTTP 200');
+    assert.strictEqual(unknownResponse.headers['x-catalog-source'], 'local', 'Unknown title fallback should be labelled as local source');
+    assert.deepStrictEqual(unknownResponse.body, [], 'Unknown title fallback should return empty results');
+  } finally {
+    app.kill();
+    await mock.close();
+  }
+}
+
 async function run() {
   assertSharedCatalogHelpers();
   assertBrowseFilterParsing();
   await assertBrowseValidationSkipsProvider();
   await assertBrowsePaginationBoundary();
+  await assertKoreanTitleSearch();
+  await assertSearchProviderFailure();
+  await assertSearchCacheBehavior();
+  await assertSearchFallbackBehavior();
 
   const authServer = http.createServer((req, res) => {
     authRequests.push({ method: req.method, url: req.url, headers: req.headers });
@@ -778,6 +1146,7 @@ const server = spawn(process.execPath, [path.join(__dirname, 'server.js')], {
       PORT: String(TEST_PORT),
       SITE_URL: 'https://animehub.example',
       CORS_ORIGINS: `http://localhost:${TEST_PORT}`,
+      ADMIN_KEY: 'test-admin-key-' + Date.now(),
       ANILIST_GRAPHQL_URL: mockAniList.url,
       SUPABASE_URL: authUrl,
       SUPABASE_ANON_KEY: 'test-public-anon-key',
@@ -1649,7 +2018,7 @@ const server = spawn(process.execPath, [path.join(__dirname, 'server.js')], {
     assert.strictEqual(mappedTitle.studios.nodes[0].name, localTitle.studio, 'Fallback results should include the local studio');
     assert.strictEqual(mappedTitle.countryOfOrigin, 'JP', 'Fallback results should expose the AniList country code');
 
-    console.log('All search and catalog tests passed.');
+    console.log('All search and catalog tests passed, including Korean title search, provider failure, cache behavior, and fallback behavior.');
   } finally {
     server.kill();
     await new Promise(resolve => authServer.close(resolve));
