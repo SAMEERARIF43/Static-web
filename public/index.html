@@ -58,7 +58,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Outfit:wght@400;600;700;800;900&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="style.css?v=2">
   <link rel="manifest" href="manifest.json">
 </head>
 <body>
@@ -306,6 +306,21 @@
                   <option value="OVA">OVA</option>
                   <option value="ONA">ONA</option>
                   <option value="SPECIAL">Special</option>
+                </select>
+              </label>
+              <label for="filter-countryOfOrigin">Country of origin
+                <select id="filter-countryOfOrigin" name="countryOfOrigin">
+                  <option value="">Any country</option>
+                  <option value="JP">Japan</option>
+                  <option value="CN">China</option>
+                  <option value="US">United States</option>
+                  <option value="KR">Korea</option>
+                  <option value="IN">India</option>
+                  <option value="FR">France</option>
+                  <option value="GB">United Kingdom</option>
+                  <option value="CA">Canada</option>
+                  <option value="BR">Brazil</option>
+                  <option value="OTHER">Other</option>
                 </select>
               </label>
               <label for="filter-status">Status
@@ -706,6 +721,12 @@
         <h1 style="font-family: var(--font-display); font-size: 2rem; margin-bottom: 24px;">Your Profile</h1>
         <div class="detail-info-card" style="max-width: 600px;">
           <p style="margin-bottom: 12px;"><strong>Email:</strong> <span id="profile-email" style="color: var(--text-muted);">Not logged in</span></p>
+          <!-- Profile display: username and avatar (shown when authenticated) -->
+          <div id="profile-display" style="display: flex; align-items: center; gap: 12px; margin-bottom: 16px; padding: 12px; background: var(--card); border-radius: var(--radius); hidden>
+            <img id="avatar-img" src="/assets/avatar-default.svg" width="32" height="32" style="border-radius: 50%;" alt="User avatar">
+            <strong id="profile-username" style="font-size: 1rem;">Guest</strong>
+          </div>
+          <!-- End profile display -->
           <p id="profile-verified-status" style="margin-bottom: 20px; font-size: 14px; color: var(--text-dim);"></p>
         </div>
 
@@ -797,19 +818,11 @@
             <p style="font-size: 14px; color: var(--text-muted); margin: 0;">Content moderation, DMCA requests, and system health.</p>
           </div>
           <div style="display:flex;gap:8px;align-items:center;">
-            <input type="password" id="admin-key-input" placeholder="Admin key" aria-label="Admin key" style="padding:6px 10px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface-2);color:var(--text);font:inherit;min-width:160px;">
-            <button type="button" id="admin-key-submit" class="cta-btn primary-btn" style="padding:6px 14px;font-size:14px;">Unlock Admin</button>
-            <button type="button" id="admin-key-clear" class="cta-btn secondary-btn" style="padding:6px 14px;font-size:14px;">Lock</button>
+            <span style="font-size: 14px; color: var(--text-muted);">Admin panel — use the React admin console at /admin for Bearer-token authenticated moderation.</span>
           </div>
         </div>
 
-        <div id="admin-locked" hidden style="padding:40px;text-align:center;color:var(--text-muted);">
-          <div style="font-size:48px;margin-bottom:16px;">🔒</div>
-          <h2 style="font-size:1.5rem;margin-bottom:8px;">Admin area locked</h2>
-          <p>Enter the admin key to unlock moderation tools.</p>
-        </div>
-
-        <div id="admin-unlocked" hidden>
+        <div id="admin-unlocked">
           <div class="admin-tabs" style="display:flex;gap:8px;margin-bottom:20px;border-bottom:1px solid var(--border);">
             <button type="button" class="admin-tab-tab admin-tab-active" id="admin-tab-dmca" role="tab" aria-selected="true">DMCA &amp; Art Takedowns</button>
             <button type="button" class="admin-tab-tab" id="admin-tab-reviews" role="tab" aria-selected="false">Review &amp; Comment Moderation</button>
@@ -995,7 +1008,7 @@
   <script src="script.js"></script>
 
   <!-- Auth Modal -->
-  <div id="auth-modal" class="auth-modal-backdrop" hidden role="dialog" aria-modal="true" aria-labelledby="auth-title">
+  <div id="auth-modal" class="auth-modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="auth-title">
     <div class="auth-modal-card">
       <h2 id="auth-title">Log In</h2>
       <form id="auth-form">

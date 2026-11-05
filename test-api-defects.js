@@ -9,7 +9,6 @@ const ROOT = __dirname;
 const CACHE_PREFIX = 'anime-hub';
 const STATIC_CACHE = `${CACHE_PREFIX}-static-v1`;
 const API_CACHE = `${CACHE_PREFIX}-api-v1`;
-const CACHE_NAME = `${CACHE_PREFIX}-v1`;
 
 function request(baseURL, pathname) {
   return new Promise((resolve, reject) => {
@@ -38,6 +37,7 @@ function startApp(port, anilistURL) {
       PORT: String(port),
       SITE_URL: 'https://animehub.example',
       CORS_ORIGINS: `http://127.0.0.1:${port}`,
+      ADMIN_KEY: 'test-admin-key-' + Date.now(),
       ANILIST_GRAPHQL_URL: anilistURL,
       SUPABASE_URL: '',
       SUPABASE_ANON_KEY: '',
@@ -50,7 +50,7 @@ function startApp(port, anilistURL) {
   const ready = new Promise((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error(`server did not start: ${output.stdout}`)), 10000);
     const check = () => {
-      if (output.stdout.includes(`AnimeHub server listening on port ${port}.`)) {
+      if (output.stdout.includes('Anime Hub API listening on https://animehub.example')) {
         clearTimeout(timer);
         resolve();
       }
@@ -178,6 +178,70 @@ async function assertAH02() {
   }
 }
 
+async function assertCountryFiltering() {
+  const mediaByCountry = {
+    JP: { id: 101, title: { romaji: 'JP Anime', english: 'JP Anime' }, format: 'TV', countryOfOrigin: 'JP', genres: ['Action'], averageScore: 80, coverImage: { large: '' }, studios: { nodes: [] } },
+    CN: { id: 102, title: { romaji: 'CN Donghua', english: 'CN Donghua' }, format: 'TV', countryOfOrigin: 'CN', genres: ['Action'], averageScore: 85, coverImage: { large: '' }, studios: { nodes: [] } },
+    KR: { id: 103, title: { romaji: 'KR Animation', english: 'KR Animation' }, format: 'MOVIE', countryOfOrigin: 'KR', genres: ['Drama'], averageScore: 78, coverImage: { large: '' }, studios: { nodes: [] } },
+    US: { id: 104, title: { romaji: 'US Animation', english: 'US Animation' }, format: 'MOVIE', countryOfOrigin: 'US', genres: ['Action'], averageScore: 82, coverImage: { large: '' }, studios: { nodes: [] } }
+  };
+  const mock = createAniListMock({
+    port: 18992,
+    handleRequest: ({ res, payload, jsonResponse }) => {
+      const variables = payload.variables || {};
+      const country = variables.countryOfOrigin;
+      let media;
+      if (country === 'CN') {
+        media = [mediaByCountry.CN];
+      } else if (country === 'KR') {
+        media = [mediaByCountry.KR];
+      } else if (country === 'US') {
+        media = [mediaByCountry.US];
+      } else {
+        media = [mediaByCountry.JP];
+      }
+      return jsonResponse(res, {
+        data: {
+          Page: {
+            pageInfo: { total: media.length, perPage: media.length, currentPage: 1, lastPage: 1, hasNextPage: false },
+            media
+          }
+        }
+      });
+    }
+  });
+  await mock.start();
+  const app = startApp(3135, mock.url);
+  await app.ready;
+  try {
+    const cnResult = await request('http://127.0.0.1:3135', '/api/browse?countryOfOrigin=CN');
+    assert.strictEqual(cnResult.statusCode, 200, 'CN country filter should return 200');
+    assert(cnResult.body.every(item => item.countryOfOrigin === 'CN'), 'All results should be from China');
+    assert(cnResult.body.some(item => item.anilistId === 102), 'CN Donghua should be present');
+
+    const krResult = await request('http://127.0.0.1:3135', '/api/browse?countryOfOrigin=KR');
+    assert.strictEqual(krResult.statusCode, 200, 'KR country filter should return 200');
+    assert(krResult.body.every(item => item.countryOfOrigin === 'KR'), 'All results should be from Korea');
+
+    const usResult = await request('http://127.0.0.1:3135', '/api/browse?countryOfOrigin=US');
+    assert.strictEqual(usResult.statusCode, 200, 'US country filter should return 200');
+    assert(usResult.body.every(item => item.countryOfOrigin === 'US'), 'All results should be from US');
+
+    const jpResult = await request('http://127.0.0.1:3135', '/api/browse?countryOfOrigin=JP');
+    assert.strictEqual(jpResult.statusCode, 200, 'JP country filter should return 200');
+    assert(jpResult.body.every(item => item.countryOfOrigin === 'JP'), 'All results should be from Japan');
+
+    const invalidResult = await request('http://127.0.0.1:3135', '/api/browse?countryOfOrigin=XX');
+    assert.strictEqual(invalidResult.statusCode, 400, 'Invalid country code should return 400');
+
+    const noFilterResult = await request('http://127.0.0.1:3135', '/api/browse');
+    assert.strictEqual(noFilterResult.statusCode, 200, 'No country filter should return 200');
+  } finally {
+    await stopApp(app.child);
+    await mock.close();
+  }
+}
+
 async function assertAH04() {
   const mock = createAniListMock({
     port: 18992,
@@ -276,6 +340,7 @@ async function assertPWAOffline() {
 async function run() {
   await assertAH01();
   await assertAH02();
+  await assertCountryFiltering();
   await assertAH04();
   await assertLegacyCatalogSources();
   await assertPWAOffline();
