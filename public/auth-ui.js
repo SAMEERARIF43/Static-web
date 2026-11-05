@@ -319,6 +319,32 @@ async function syncLocalWatchlistToCloud(session) {
         localStorage.removeItem('anime_hub_watchlist');
       }
     });
+
+    // Sync guest watch progress to cloud after watchlist migration succeeds.
+    const rawProgress = localStorage.getItem('anime_hub_progress');
+    if (rawProgress) {
+      try {
+        const parsed = JSON.parse(rawProgress);
+        const progressEntry = Array.isArray(parsed) ? parsed[0] : parsed;
+        if (progressEntry && progressEntry.animeId) {
+          await window.supabaseClient.from('progress').upsert(
+            {
+              user_id: session.user.id,
+              anime_id: progressEntry.animeId,
+              episode: progressEntry.currentEpisode,
+              seconds_watched: progressEntry.secondsWatched,
+              completed: progressEntry.completed,
+              updated_at: progressEntry.updatedAt
+            },
+            { onConflict: 'user_id,anime_id' }
+          );
+        }
+      } catch {
+        // Corrupt progress cache: discard it rather than blocking sync.
+        try { localStorage.removeItem('anime_hub_progress'); } catch {}
+      }
+      localStorage.removeItem('anime_hub_progress');
+    }
     return true;
   })();
 
@@ -341,6 +367,24 @@ async function handleAuthState(session) {
   if (logoutNav) logoutNav.hidden = !isAuth;
 
   if (isAuth) {
+    // --- Profile UI: username/avatar ---
+    const profileDisplay = document.getElementById('profile-display');
+    const profileUsername = document.getElementById('profile-username');
+    const avatarImg = document.getElementById('avatar-img');
+    if (profileDisplay) profileDisplay.hidden = false;
+    if (profileUsername && currentSession.user.user_metadata?.display_name) {
+      profileUsername.textContent = currentSession.user.user_metadata.display_name;
+    } else if (profileUsername) {
+      // Fall back to email prefix for display name
+      const emailPrefix = (currentSession.user.email || '').split('@')[0];
+      profileUsername.textContent = emailPrefix ? `[${emailPrefix}]` : '';
+    }
+    if (avatarImg) {
+      const defaultAvatar = '/assets/avatar-default.svg';
+      avatarImg.src = currentSession.user.user_metadata?.avatar_url || defaultAvatar;
+    }
+    // --- End profile UI ---
+
     const profileEmail = document.getElementById('profile-email');
     if (profileEmail) profileEmail.textContent = currentSession.user.email || '';
     const verifiedStatus = document.getElementById('profile-verified-status');
@@ -470,6 +514,10 @@ async function logOut() {
   try {
     const { error } = await window.supabaseClient.auth.signOut();
     if (error) throw error;
+    // Clear guest-only localStorage so a different user signing in on the same
+    // browser cannot inherit the previous user's offline watchlist or progress.
+    try { localStorage.removeItem('anime_hub_watchlist'); } catch {}
+    try { localStorage.removeItem('anime_hub_progress'); } catch {}
     await handleAuthState(null);
   } catch (error) {
     console.error('Logout failed:', error);
