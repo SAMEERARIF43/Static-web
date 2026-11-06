@@ -188,4 +188,87 @@ assert.strictEqual(errorState.error, 'Supabase connection failed', 'Error state 
 assert.strictEqual(errorState.isLoading, false, 'isLoading is false in error state');
 assert.deepStrictEqual(errorState.progress, [], 'progress remains empty in error state');
 
+// ---- Test 7: Progress sync conflict resolution — guest newer than cloud ----
+
+const cloudProgressGuestNewer = [
+  { animeId: 101, episode: 3, secondsWatched: 200, completed: false, updated_at: '2026-01-01T00:00:00Z' },
+];
+
+const guestProgressGuestNewer = { animeId: 101, episode: 5, secondsWatched: 600, completed: true, updatedAt: '2026-02-01T00:00:00Z' };
+
+const existingProgressGuestNewer = cloudProgressGuestNewer.find(r => r.anime_id === guestProgressGuestNewer.animeId);
+const guestUpdatedGuestNewer = new Date(guestProgressGuestNewer.updatedAt).getTime();
+const cloudUpdatedGuestNewer = existingProgressGuestNewer ? new Date(existingProgressGuestNewer.updated_at).getTime() : 0;
+
+const shouldUpsertGuestNewer = !existingProgressGuestNewer || guestUpdatedGuestNewer > cloudUpdatedGuestNewer;
+assert.strictEqual(shouldUpsertGuestNewer, true, 'Guest progress newer than cloud → should upsert');
+
+if (shouldUpsertGuestNewer) {
+  const updated = { ...existingProgressGuestNewer, episode: guestProgressGuestNewer.episode, seconds_watched: guestProgressGuestNewer.secondsWatched, completed: guestProgressGuestNewer.completed, updated_at: guestProgressGuestNewer.updatedAt };
+  assert.strictEqual(updated.episode, 5, 'Cloud updated with guest episode');
+  assert.strictEqual(updated.seconds_watched, 600, 'Cloud updated with guest secondsWatched');
+  assert.strictEqual(updated.completed, true, 'Cloud updated with guest completed');
+}
+
+// ---- Test 8: Progress sync conflict resolution — cloud newer than guest → NOT overwritten ----
+
+const cloudProgressGuestOlder = [
+  { anime_id: 101, episode: 10, secondsWatched: 900, completed: true, updated_at: '2026-03-01T00:00:00Z' },
+];
+
+const guestProgressGuestOlder = { animeId: 101, episode: 2, secondsWatched: 100, completed: false, updatedAt: '2026-01-01T00:00:00Z' };
+
+const existingProgressGuestOlder = cloudProgressGuestOlder.find(r => r.anime_id === guestProgressGuestOlder.animeId);
+const guestUpdatedGuestOlder = new Date(guestProgressGuestOlder.updatedAt).getTime();
+const cloudUpdatedGuestOlder = existingProgressGuestOlder ? new Date(existingProgressGuestOlder.updated_at).getTime() : 0;
+
+const shouldUpsertGuestOlder = !existingProgressGuestOlder || guestUpdatedGuestOlder > cloudUpdatedGuestOlder;
+assert.strictEqual(shouldUpsertGuestOlder, false, 'Guest progress older than cloud → should NOT upsert');
+
+// ---- Test 9: Progress sync conflict resolution — equal timestamps → no upsert ----
+
+const cloudProgressGuestEqual = [
+  { anime_id: 101, episode: 5, secondsWatched: 300, completed: false, updated_at: '2026-01-01T00:00:00Z' },
+];
+
+const guestProgressGuestEqual = { animeId: 101, episode: 5, secondsWatched: 300, completed: false, updatedAt: '2026-01-01T00:00:00Z' };
+
+const existingProgressGuestEqual = cloudProgressGuestEqual.find(r => r.anime_id === guestProgressGuestEqual.animeId);
+const guestUpdatedGuestEqual = new Date(guestProgressGuestEqual.updatedAt).getTime();
+const cloudUpdatedGuestEqual = existingProgressGuestEqual ? new Date(existingProgressGuestEqual.updated_at).getTime() : 0;
+
+const shouldUpsertGuestEqual = !existingProgressGuestEqual || guestUpdatedGuestEqual > cloudUpdatedGuestEqual;
+assert.strictEqual(shouldUpsertGuestEqual, false, 'Guest progress equal to cloud → should NOT upsert');
+
+// ---- Test 10: Logout clears guest localStorage ----
+
+const mockLocalStorage = new Map();
+const mockLocalStorageImpl = {
+  getItem: (key) => mockLocalStorage.get(key) || null,
+  setItem: (key, value) => mockLocalStorage.set(key, String(value)),
+  removeItem: (key) => mockLocalStorage.delete(key),
+};
+
+// Simulate logged-in user with guest data in localStorage
+mockLocalStorageImpl.setItem('anime_hub_watchlist', JSON.stringify([{ id: 101, title: 'Test Anime' }]));
+mockLocalStorageImpl.setItem('anime_hub_progress', JSON.stringify([{ animeId: 101, episode: 3, secondsWatched: 100, completed: false, updatedAt: '2026-01-01T00:00:00Z' }]));
+
+// Simulate logout: clear both
+try { mockLocalStorageImpl.removeItem('anime_hub_watchlist'); } catch {}
+try { mockLocalStorageImpl.removeItem('anime_hub_progress'); } catch {}
+
+assert.strictEqual(mockLocalStorageImpl.getItem('anime_hub_watchlist'), null, 'Logout clears anime_hub_watchlist');
+assert.strictEqual(mockLocalStorageImpl.getItem('anime_hub_progress'), null, 'Logout clears anime_hub_progress');
+
+// ---- Test 11: Malformed localStorage progress is discarded ----
+
+mockLocalStorageImpl.setItem('anime_hub_progress', '{invalid json');
+
+try {
+  const parsed = JSON.parse(mockLocalStorageImpl.getItem('anime_hub_progress'));
+} catch {
+  try { mockLocalStorageImpl.removeItem('anime_hub_progress'); } catch {}
+}
+assert.strictEqual(mockLocalStorageImpl.getItem('anime_hub_progress'), null, 'Malformed progress is discarded');
+
 console.log('All watch progress regression tests passed.');

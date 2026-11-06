@@ -321,23 +321,42 @@ async function syncLocalWatchlistToCloud(session) {
     });
 
     // Sync guest watch progress to cloud after watchlist migration succeeds.
+    // Only upsert if the guest progress is newer than what's already in the
+    // cloud, to avoid overwriting newer cloud progress with older guest data.
     const rawProgress = localStorage.getItem('anime_hub_progress');
     if (rawProgress) {
       try {
         const parsed = JSON.parse(rawProgress);
         const progressEntry = Array.isArray(parsed) ? parsed[0] : parsed;
         if (progressEntry && progressEntry.animeId) {
-          await window.supabaseClient.from('progress').upsert(
-            {
-              user_id: session.user.id,
-              anime_id: progressEntry.animeId,
-              episode: progressEntry.currentEpisode,
-              seconds_watched: progressEntry.secondsWatched,
-              completed: progressEntry.completed,
-              updated_at: progressEntry.updatedAt
-            },
-            { onConflict: 'user_id,anime_id' }
-          );
+          const {
+            data: existingProgress,
+            error: readError
+          } = await window.supabaseClient.from('progress')
+            .select('updated_at, episode, seconds_watched, completed')
+            .eq('user_id', session.user.id)
+            .eq('anime_id', progressEntry.animeId)
+            .maybeSingle();
+          if (readError) throw readError;
+
+          const existing = existingProgress || null;
+          const guestUpdated = new Date(progressEntry.updatedAt).getTime();
+          const cloudUpdated = existing ? new Date(existing.updated_at).getTime() : 0;
+
+          // Only upsert if guest progress is newer or cloud has no entry.
+          if (!existing || guestUpdated > cloudUpdated) {
+            await window.supabaseClient.from('progress').upsert(
+              {
+                user_id: session.user.id,
+                anime_id: progressEntry.animeId,
+                episode: progressEntry.currentEpisode,
+                seconds_watched: progressEntry.secondsWatched,
+                completed: progressEntry.completed,
+                updated_at: progressEntry.updatedAt
+              },
+              { onConflict: 'user_id,anime_id' }
+            );
+          }
         }
       } catch {
         // Corrupt progress cache: discard it rather than blocking sync.
@@ -518,6 +537,8 @@ async function logOut() {
     // browser cannot inherit the previous user's offline watchlist or progress.
     try { localStorage.removeItem('anime_hub_watchlist'); } catch {}
     try { localStorage.removeItem('anime_hub_progress'); } catch {}
+    // Abandon any in-flight migration so the next login starts fresh.
+    watchlistMigration = null;
     await handleAuthState(null);
   } catch (error) {
     console.error('Logout failed:', error);
