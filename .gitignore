@@ -17,3 +17,11 @@ opencode.json
 /test-results/
 /playwright-report/
 frontend/dev-dist/
+
+# Scratch and test execution artifacts
+heap_keeper.cpp
+heap_keeper.exe
+NUL
+frontend/err.txt
+test-output.txt
+playwright-output.txt

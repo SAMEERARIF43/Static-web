@@ -1,0 +1,4 @@
+[submodule "agency-agents"]
+	path = agency-agents
+	url = https://github.com/msitarzewski/agency-agents.git
+
